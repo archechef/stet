@@ -1,5 +1,6 @@
 /** Findings F1–F7 of the Codex security review (2026-09-26): each test reproduces the report's scenario. */
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -9,6 +10,8 @@ import { LOCK_TIMING, Store } from "../src/store.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
 
 const FAKE_CLI = { command: "/usr/bin/node", args: ["/opt/stet/cli.js"] };
+const sha = (s: string) => createHash("sha256").update(Buffer.from(s)).digest("hex");
+const ACCEPTED = PAPER.replace("effective in practice", "effective in real use");
 const outside: string[] = [];
 afterEach(() => {
   for (const d of outside.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5 });
@@ -138,7 +141,11 @@ describe("F4: all-or-nothing accept", () => {
     edit(wt, "main.tex", "effective in practice", "effective in real use");
     const [item] = (await stet.submit("a", { title: "t" })).items;
     const journal = (filesDone: boolean) =>
-      JSON.stringify({ items: [{ id: item!.id, appliedText: "real use", edited: false }], filesDone, files: [{ path: "main.tex", original: Buffer.from(PAPER).toString("base64") }] });
+      JSON.stringify({
+        items: [{ id: item!.id, appliedText: "real use", edited: false }],
+        filesDone,
+        files: [{ path: "main.tex", original: Buffer.from(PAPER).toString("base64"), before: sha(PAPER), after: sha(ACCEPTED) }],
+      });
 
     // Cut off while writing: the file is half-changed, the item still pending.
     edit(repo, "main.tex", "effective in practice", "effective in real use");
@@ -154,6 +161,61 @@ describe("F4: all-or-nothing accept", () => {
     expect(read(repo, "main.tex")).toContain("effective in real use");
     expect((await stet.getItem(item!.id))!.status).toBe("accepted");
     expect(existsSync(join(stet.store.root, "txn.json"))).toBe(false);
+  });
+});
+
+describe("follow-up reports", () => {
+  it("recovery never overwrites a file the user edited after the interruption", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const [item] = (await stet.submit("a", { title: "t" })).items;
+    // Stet stopped after journaling, before writing; then the user edited the file.
+    writeFileSync(
+      join(stet.store.root, "txn.json"),
+      JSON.stringify({
+        items: [{ id: item!.id, appliedText: "real use", edited: false }],
+        filesDone: false,
+        files: [{ path: "main.tex", original: Buffer.from(PAPER).toString("base64"), before: sha(PAPER), after: sha(ACCEPTED) }],
+      }),
+    );
+    edit(repo, "main.tex", "It scales to", "It even scales to");
+    const mine = read(repo, "main.tex");
+    await stet.agentStatus("a"); // triggers recovery
+    expect(read(repo, "main.tex")).toBe(mine);
+    expect(existsSync(join(stet.store.root, "txn.json"))).toBe(false);
+    expect((await stet.getItem(item!.id))!.status).toBe("pending");
+  });
+
+  it("runs no configured filter driver on the agent's files", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const marker = join(outsideDir(), "filter-ran").replace(/\\/g, "/");
+    // The project defines a filter whose command is relative: in a worktree it resolves to the agent's file.
+    git(repo, "config", "filter.x.clean", "./tools/filter.sh");
+    git(repo, "config", "filter.x.smudge", "./tools/filter.sh");
+    git(repo, "config", "filter.x.required", "true");
+    git(repo, "config", "filter.y.process", "./tools/filter.sh");
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "tools/filter.sh", `#!/bin/sh\necho ran >> "${marker}"\ncat\n`);
+    chmodSync(join(wt, "tools/filter.sh"), 0o755);
+    write(wt, ".gitattributes", "*.tex filter=x\n*.bib filter=y\n");
+    write(wt, "refs.bib", "@misc{a, title={A}}\n");
+    // Sanity: plain git in the worktree does run it.
+    git(wt, "add", "-n", "main.tex");
+    git(wt, "hash-object", "main.tex");
+    if (!existsSync(marker)) git(wt, "add", "main.tex");
+    expect(existsSync(marker)).toBe(true);
+    git(wt, "reset", "-q");
+    rmSync(marker);
+
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const { items } = await stet.submit("a", { title: "t" });
+    expect(items.some((i) => i.file === "main.tex")).toBe(true);
+    await stet.reject(items.filter((i) => i.file === "main.tex").map((i) => i.id), {});
+    await stet.sync("a"); // checks files out again (smudge)
+    const { doctor } = await import("../src/doctor.js");
+    await doctor(repo); // runs status in the worktree
+    expect(existsSync(marker)).toBe(false);
   });
 });
 

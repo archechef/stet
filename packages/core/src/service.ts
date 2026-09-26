@@ -1,10 +1,11 @@
 /** Stet service layer (spec §7, §12.1). All frontends go through this class. */
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, rmdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { applyItems, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
 import { anchor, captureContext, type Span } from "./anchor.js";
 import { matchesAny, type StetConfig } from "./config.js";
-import { gitRaw, Repo, STET_IDENTITY, untrustedWorktreeConfig } from "./git.js";
+import { filterOverrides, gitRaw, Repo, STET_IDENTITY, untrustedWorktreeConfig } from "./git.js";
 import {
   autoGroups,
   joinTitles,
@@ -40,6 +41,7 @@ export class StetError extends Error {}
 
 export const BASE_REF = "refs/stet/base";
 const now = () => new Date().toISOString();
+const hashOf = (b: Buffer | null) => (b === null ? null : createHash("sha256").update(b).digest("hex"));
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -91,8 +93,12 @@ export interface ItemFilter {
 interface AcceptJournal {
   items: { id: string; appliedText: string; edited: boolean }[];
   filesDone: boolean;
-  /** Original content (base64) of every file the accept writes; null = did not exist. */
-  files: { path: string; original: string | null }[];
+  /**
+   * Every file the accept writes: original content (base64; null = did not exist) and content
+   * hashes before and after Stet's write (null = absent). Undo restores a file only while it still
+   * holds exactly what Stet wrote, so later edits by the user are never overwritten.
+   */
+  files: { path: string; original: string | null; before: string | null; after: string | null }[];
 }
 
 interface Candidate extends Edit {
@@ -262,7 +268,11 @@ export class Stet {
     for (const [p, c] of changes) data.set(p, c === null ? null : "blob" in c ? await this.blobBytes(c.blob) : fromLf(c.text, c.eol));
 
     const journal: AcceptJournal = { items: resolutions, filesDone: false, files: [] };
-    for (const [p, t] of targets) journal.files.push({ path: p, original: t.exists ? (await readFile(t.path)).toString("base64") : null });
+    for (const [p, t] of targets) {
+      const orig = t.exists ? await readFile(t.path) : null;
+      const d = data.get(p) ?? null;
+      journal.files.push({ path: p, original: orig?.toString("base64") ?? null, before: hashOf(orig), after: hashOf(d === null ? null : Buffer.from(d)) });
+    }
     await writeJsonAtomic(this.journalPath, journal);
 
     const createdDirs: string[] = [];
@@ -277,25 +287,41 @@ export class Stet {
         await replaceFile(t.path, d);
       }
     } catch (e: any) {
-      await this.rollbackFiles(journal.files, createdDirs);
+      const kept = await this.rollbackFiles(journal.files, createdDirs);
       await rm(this.journalPath, { force: true });
-      throw new StetError(`Nothing was applied: writing ${e?.path ?? "a file"} failed (${e?.code ?? e?.message ?? e}). All files were restored.`);
+      throw new StetError(
+        `Nothing was applied: writing ${e?.path ?? "a file"} failed (${e?.code ?? e?.message ?? e}). ` +
+          (kept.length ? `Files restored, except ${kept.join(", ")} (changed meanwhile; left as it is).` : "All files were restored."),
+      );
     }
     journal.filesDone = true;
     await writeJsonAtomic(this.journalPath, journal);
   }
 
-  private async rollbackFiles(files: AcceptJournal["files"], createdDirs: string[]): Promise<void> {
+  /**
+   * Undo Stet's writes. A file is restored only if it still holds exactly what Stet wrote; if it
+   * holds anything else (e.g. the user edited it after an interrupted accept), it is left alone.
+   * Returns the files left alone.
+   */
+  private async rollbackFiles(files: AcceptJournal["files"], createdDirs: string[]): Promise<string[]> {
+    const kept: string[] = [];
     for (const f of files) {
-      const abs = join(this.mainPath, f.path);
       try {
+        const now = hashOf(await readInside(this.mainPath, f.path));
+        if (now === f.before) continue; // not written yet, or already back
+        if (now !== f.after) {
+          kept.push(f.path);
+          continue;
+        }
+        const abs = join(this.mainPath, f.path);
         if (f.original === null) await rm(abs, { force: true });
         else await replaceFile(abs, Buffer.from(f.original, "base64"));
       } catch {
-        /* keep restoring the others */
+        kept.push(f.path); // keep restoring the others
       }
     }
     for (const d of createdDirs.reverse()) await rmdir(d).catch(() => undefined);
+    return kept;
   }
 
   /** Finish (files all written) or undo (cut off while writing) an interrupted accept. Call under lock. */
@@ -530,8 +556,17 @@ export class Stet {
 
   /** The agent's worktree, after checking it still belongs to this repository (spec §9). */
   private async agentRepo(agent: Agent): Promise<Repo> {
-    await this.checkWorktree(agent.worktree);
-    return new Repo(agent.worktree, this.untrustedConfig);
+    return this.agentWorktreeRepo(agent.worktree);
+  }
+
+  /**
+   * Git access to an agent worktree for commands that read or write its files (status, add,
+   * commit, reset): verified first, then run without hooks, submodules or filter drivers.
+   */
+  async agentWorktreeRepo(path: string): Promise<Repo> {
+    await this.checkWorktree(path);
+    const base = new Repo(path, this.untrustedConfig);
+    return new Repo(path, [...this.untrustedConfig, ...(await filterOverrides(base))]);
   }
 
   /** Git settings for calls inside agent worktrees (no hooks, no submodules). */

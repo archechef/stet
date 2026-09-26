@@ -49,6 +49,22 @@ export function untrustedWorktreeConfig(storeFile: string): string[] {
   return [`core.hooksPath=${storeFile.replace(/\\/g, "/")}/no-hooks`, "diff.ignoreSubmodules=all", "submodule.recurse=false", "status.submoduleSummary=false"];
 }
 
+/**
+ * Settings that switch off every filter driver configured for `repo` (clean, smudge, process).
+ * In an agent worktree the agent writes `.gitattributes`, so it could attach any configured
+ * filter to its files, and a filter command such as `./clean.sh` would run the agent's code.
+ * Stet stores and checks out the files unfiltered there.
+ */
+export async function filterOverrides(repo: Repo): Promise<string[]> {
+  const out = await repo.tryRun(["config", "--null", "--get-regexp", String.raw`^filter\..+\.(clean|smudge|process|required)$`]);
+  const names = new Set<string>();
+  for (const entry of (out ?? "").split("\0")) {
+    const key = entry.split("\n")[0]!;
+    if (key.startsWith("filter.") && key.lastIndexOf(".") > 7) names.add(key.slice(7, key.lastIndexOf(".")));
+  }
+  return [...names].flatMap((n) => [`filter.${n}.clean=`, `filter.${n}.smudge=`, `filter.${n}.process=`, `filter.${n}.required=false`]);
+}
+
 export function gitRaw(args: string[], opts: RunOptions): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = execFile(

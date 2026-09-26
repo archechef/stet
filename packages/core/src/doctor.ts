@@ -187,7 +187,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
       add({ name: n, status: "error", message: e.message, fix: `stet agent archive ${a.id} --remove  (then create a new one)` });
       continue;
     }
-    const dirty = (await new Repo(a.worktree, stet.untrustedConfig).status()).filter((l) => !isWorkspaceFile(l.slice(3))).length;
+    const dirty = (await (await stet.agentWorktreeRepo(a.worktree)).status()).filter((l) => !isWorkspaceFile(l.slice(3))).length;
     const live = items.filter((i) => i.agent === a.id && isLive(i.status)).length;
     const parts = [`${live} pending`];
     if (dirty) parts.push(`${dirty} unsubmitted file change(s)`);

@@ -408,7 +408,7 @@ Hook installation chains existing hooks (kept as `<name>.stet-orig`) rather than
 **Stet-side checks** (they hold even when layer 2 is bypassed):
 - **Worktree integrity:** before running git in an agent worktree (submit, sync, workspace refresh, doctor), Stet verifies that its `.git` file points to `<common git dir>/worktrees/<name>`, that `commondir` points back to the project's repository, and that there is no `config.worktree`. Otherwise an agent could redirect Stet's git calls to a git dir of its own whose config runs commands (filters, hooks) outside the sandbox.
 - **No `core.fsmonitor`** for any git command Stet runs (`-c core.fsmonitor=false`).
-- **No hooks, no submodules in agent worktrees:** git calls there run with `core.hooksPath` set to a path that cannot contain hooks (a relative hooks path such as `.hooks` would otherwise resolve to the agent's files; `--no-verify` does not stop `post-commit` or `prepare-commit-msg`), and with submodules ignored (their config is agent-writable).
+- **No hooks, no submodules in agent worktrees:** git calls there run with `core.hooksPath` set to a path that cannot contain hooks (a relative hooks path such as `.hooks` would otherwise resolve to the agent's files; `--no-verify` does not stop `post-commit` or `prepare-commit-msg`), with submodules ignored (their config is agent-writable), and with every configured filter driver switched off (`filter.<name>.clean/smudge/process` empty): the agent writes `.gitattributes` there, so it could attach any configured filter to its files, and a relative filter command would run the agent's own script. Files in agent branches are therefore stored unfiltered.
 - **No writes through links:** Stet never writes through a symlink or junction, like git. In the agent worktree (workspace files) it replaces planted links with real files and folders; in the project (accept) it refuses, and it checks the real location of every destination (inside the project, not in `.git`). Working-copy reads do not follow links either.
 - **Paths:** submitted and accepted paths must be relative, without `.`/`..` segments, and must not reach the git dir on any platform (`.git`, `GIT~1`, `.git.`, `:` streams). Accept re-checks this, since the store is plain files.
 - **Ids** from agents are validated before they are used as file names in the store.
@@ -578,7 +578,7 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 ## 15. Concurrency
 
 - **Writers:** extension, MCP servers (one per agent session), CLI. All mutations take `.git/stet/lock` and hold it only for the duration of a single operation. The lock file names its owner (host, PID, random token); the owner refreshes its time every 5 s while holding it. It is taken over only when its owner process is gone (same host) or its heartbeat stopped for 30 s, by renaming exactly that file away (so two waiters cannot both take it), and it is removed only by the owner whose token it holds.
-- **Accepts are all-or-nothing:** every destination is checked before anything is written, the original contents are journaled in `.git/stet/txn.json`, and a failed write restores all files. An accept cut off by a crash is undone (if it was still writing) or completed (if all files were written) by the next Stet operation.
+- **Accepts are all-or-nothing:** every destination is checked before anything is written, the original contents are journaled in `.git/stet/txn.json`, and a failed write restores all files. An accept cut off by a crash is undone (if it was still writing) or completed (if all files were written) by the next Stet operation. The journal also records content hashes before and after Stet's write; undo restores a file only while it still holds exactly what Stet wrote, so edits the user made after the interruption are never overwritten.
 - **Git access:** git operations on the main repo are serialized through the same lock. Agents' own git activity happens in their worktrees. Stet uses git plumbing (`commit-tree`, `update-ref`) for `refs/stet/base`, so it never touches the user's index or working tree except when applying accepts.
 - **Parallel agents:** they share nothing except the review base. Overlaps between them are detected at the item level (§6.3).
 
@@ -634,6 +634,7 @@ A second review (a local Codex report, not kept in the repository) reproduced se
 - **F5** a stale-lock timeout let a second owner in while the first was still working → owned lock with heartbeat, liveness check and token-checked release.
 - **F6** an accepted binary replacement was marked committed because the file existed → whole-file items compare content (and, for renames, that the old path is gone).
 - **F7** a JSON `null` message stalled the MCP server → envelope validation, per-request error isolation, runtime validation of tool arguments.
+- Follow-ups: recovery of an accept interrupted before writing restored old content over a later user edit → undo only files that still hold Stet's write; a configured clean filter ran during `stet_submit` with agent-chosen `.gitattributes` → filter drivers are off in agent worktrees.
 
 ## 17. Open points to verify
 
