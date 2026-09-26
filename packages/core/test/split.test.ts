@@ -74,6 +74,15 @@ describe("splitText (LaTeX)", () => {
     expect(pairs(splitText("tex", old, neu, cfg))).toEqual([["\\ref{sec:intro}", "\\ref{sec:introduction}"]]);
   });
 
+  it("keeps a label rename separate from a rewrite of the same paragraph", () => {
+    const old = "\\section{Introduction}\\label{sec:intro}\nIn this work we study the problem of reviewing changes that are proposed by an AI system.\n";
+    const neu = "\\section{Introduction}\\label{sec:introduction}\nWe study how to review changes proposed by an AI system.\n";
+    const edits = splitText("tex", old, neu, { ...cfg, rewriteRatio: 0.1, mergeGap: 10 });
+    expect(edits[0]!.oldText).toBe("\\label{sec:intro}");
+    expect(edits[0]!.newText).toBe("\\label{sec:introduction}");
+    expect(edits.slice(1).every((e) => !e.oldText.includes("\\label"))).toBe(true);
+  });
+
   it("ignores pure reflow by default", () => {
     const old = "A sentence that is\nwrapped here and there.\n";
     const neu = "A sentence that is wrapped\nhere and there.\n";

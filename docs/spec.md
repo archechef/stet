@@ -588,7 +588,10 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 
 ### M2 notes (implemented 2026-09-26)
 - Done: MCP server, workspace files (instructions, MCP configs, Claude Code guard settings, Codex config), `stet guard`, git hooks, `stet setup claude|codex`, `stet agent refresh`, `stet hooks`, doctor checks for all of it. Tested with automated tests (protocol, guard rules, hooks against real git, workspace files).
-- Still to do for the M2 acceptance criteria: the live end-to-end runs with Claude Code (desktop app and CLI) and Codex (§17 items 1–2).
+- **Live test with the Claude desktop app (2026-09-26): passed.** Only a folder-trust prompt, no MCP approval prompt (`enabledMcpjsonServers` works); all tools and instructions loaded; full propose → review → feedback → revise → accept loop without copy-paste, including linked groups, an edited accept, a rejected change not re-proposed, and a parallel user edit re-anchored. Guardrails: editing the project (guard hook), `git merge`/`push`/`checkout master` (guard hook), editing `.claude/settings.json` (deny rule), and merging/pushing the agent branch from the project (git hooks) were all blocked.
+- Fixes from the live test: key-argument edits (`\label`, `\ref`, `\cite`) are never merged with neighbouring edits (merge gap, paragraph coarsening, touching ranges, atomic hints); a replacement item inherits the groups of the item it supersedes; auto-detection also looks at the agent's earlier pending items; superseded members no longer make a linked group "broken"; duplicate group titles are merged; the guard also blocks shell commands that change Stet's own workspace files.
+- Still to do for the M2 acceptance criteria: live runs with Claude Code CLI and Codex (§17 item 2).
+- Ideas from the test: tell the agent in the sync result *what* changed in the document (it first guessed "another agent's edit"); an MCP server started before a Stet update keeps old code until the session restarts.
 - Workspace files are untracked and excluded from submits; if the project tracks one of them, Stet leaves it alone.
 - `pre-merge-commit` was dropped: `reference-transaction` catches both merge styles.
 
@@ -597,7 +600,7 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 ## 17. Open points to verify
 
 1. **Claude desktop app:**
-   - Does it load the workspace's `.claude/settings.json` (deny rules, guard hook) and `.mcp.json` when a worktree folder is opened in the Code tab? (Docs say the Code tab prefers user-scope servers of the same name, implying it reads `.mcp.json` too.)
+   - ~~Does it load the workspace's `.claude/settings.json` and `.mcp.json`?~~ Yes (live test 2026-09-26): hooks, deny rules, MCP server and `CLAUDE.local.md` all active; only a folder-trust prompt.
    - Can its "worktree per session" feature be pointed at the `stet/` prefix so Stet adopts those worktrees?
    - Does it offer to merge or create a PR from the session branch? The hooks must block that.
 2. **Codex:**

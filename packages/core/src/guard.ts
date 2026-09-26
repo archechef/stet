@@ -121,6 +121,23 @@ export function checkToolUse(input: HookInput, ctx: GuardContext): string | null
         `Work only inside your proposal workspace (${ctx.worktree}).`
       );
     }
+
+    // Stet's own workspace files (settings, MCP config, instructions) may be read but not changed.
+    // Match the names anywhere, including inside quoted code such as python -c "open('.claude/…')".
+    const names = cmd.match(/[\w:.\/\\~-]*?(?:\.claude|\.codex|CLAUDE\.local\.md|AGENTS\.override\.md|\.mcp\.json)[\w.\/\\-]*/g) ?? [];
+    const touchesOwn = names.some((t) => {
+      try {
+        const p = abs(t, cwd);
+        if (!isInside(p, ctx.worktree)) return false;
+        const rel = relative(ctx.worktree, p).replace(/\\/g, "/");
+        return isWorkspaceFile(rel) || rel === ".claude" || rel === ".codex" || rel.startsWith(".claude/") || rel.startsWith(".codex/");
+      } catch {
+        return false;
+      }
+    });
+    if (touchesOwn && (WRITE_HINT.test(cmd) || /\b(python3?|node|perl|ruby|powershell|pwsh)\b/i.test(cmd) || !READ_ONLY_START.test(cmd))) {
+      return `Stet: this command would change files that Stet manages in this workspace (settings, MCP config, instructions). Leave them as they are.`;
+    }
     return null;
   }
   return null;

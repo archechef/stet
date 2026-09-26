@@ -7,6 +7,7 @@ import { matchesAny, type StetConfig } from "./config.js";
 import { gitRaw, Repo, STET_IDENTITY } from "./git.js";
 import {
   autoGroups,
+  joinTitles,
   normalizeGroups,
   parseWhere,
   unitMatches,
@@ -27,7 +28,7 @@ import {
   type ItemStatus,
   type StetEvent,
 } from "./model.js";
-import { splitText, type Edit, type FileClass } from "./split.js";
+import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store } from "./store.js";
 import { installHooks } from "./hooks.js";
 import { isWorkspaceFile, WORKSPACE_EXCLUDES, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
@@ -537,7 +538,7 @@ export class Stet {
     );
 
     // Re-merge candidates that fall inside an existing item's range (keeps atomic merges stable).
-    for (const e of existing.filter((e) => e.kind === "modify")) {
+    for (const e of existing.filter((e) => e.kind === "modify" && e.status === "pending")) {
       const inside = cands.filter((c) => c.kind === "modify" && c.file === e.file && c.start >= e.range.start && c.end <= e.range.end);
       if (inside.length < 2 && !(inside.length === 1 && (inside[0]!.start !== e.range.start || inside[0]!.end !== e.range.end))) continue;
       const crossing = cands.some((c) => c.kind === "modify" && c.file === e.file && !inside.includes(c) && overlaps(c, e.range));
@@ -594,7 +595,11 @@ export class Stet {
         effectiveHints.push(h);
         continue;
       }
-      const members = (await hintMatches(h.where, fresh)).filter((c) => c.kind === "modify");
+      const matchedC = (await hintMatches(h.where, fresh)).filter((c) => c.kind === "modify");
+      const keyEdits = matchedC.filter((c) => isKeyEdit(c.oldText, c.newText));
+      const members = matchedC.filter((c) => !keyEdits.includes(c));
+      if (keyEdits.length)
+        result.warnings.push(`Atomic group '${h.title}': kept ${keyEdits.map((k) => JSON.stringify(k.newText.trim())).join(", ")} separate (renames are items of their own; link them instead).`);
       if (members.length < 2) continue;
       const files = new Set(members.map((m) => m.file));
       members.sort((a, b) => a.start - b.start);
@@ -603,6 +608,11 @@ export class Stet {
       const baseText = files.size === 1 ? (await this.textAt(base, first.file))!.text : "";
       const between = baseText.slice(first.end, last.start);
       const others = fresh.filter((c) => !members.includes(c) && c.file === first.file && c.start < last.end && c.end > first.start);
+      if (others.some((o) => keyEdits.includes(o))) {
+        result.warnings.push(`Atomic group '${h.title}' would swallow a rename; treated as related.`);
+        effectiveHints.push({ ...h, kind: "related" });
+        continue;
+      }
       if (files.size !== 1 || /\n[ \t]*\n/.test(between) || others.length) {
         result.warnings.push(`Atomic group '${h.title}' spans more than one paragraph or file; treated as linked.`);
         effectiveHints.push({ ...h, kind: "linked" });
@@ -677,9 +687,11 @@ export class Stet {
       created.push(item);
       candOf.set(item, c);
     }
+    const inherited: { from: Item; to: Item }[] = [];
     for (const [e, c] of replacedBy) {
       const item = created[fresh.indexOf(c)]!;
       item.supersedes ??= e.id;
+      inherited.push({ from: e, to: item });
       this.setStatus(e, "superseded", "agent", `superseded by ${item.id}`);
       await this.store.putItem(e);
       result.superseded.push(e.id);
@@ -717,10 +729,23 @@ export class Stet {
       const members = (await hintMatches(h.where, pool)).map(idOfCand).filter((x): x is string => !!x);
       if (members.length) drafts.push({ kind: h.kind, title: h.title, rationale: h.rationale ?? null, source: "agent", items: members });
     }
-    drafts.push(...autoGroups(live, cfg.grouping));
+    // Auto-detection also sees the agent's earlier pending items (a \label here, its \ref from before).
+    const newIds = new Set(created.map((i) => i.id));
+    const earlier = (await this.store.items()).filter((i) => i.agent === agent.id && isLive(i.status) && !newIds.has(i.id) && !result.superseded.includes(i.id));
+    drafts.push(...autoGroups([...earlier, ...live], cfg.grouping).filter((d) => d.items.some((i) => newIds.has(i))));
     const finalDrafts = normalizeGroups(drafts);
     const gids = await this.store.allocate("group", finalDrafts.length);
-    const byId = new Map<string, Item>([...created, ...matched.values()].map((i) => [i.id, i]));
+    const byId = new Map<string, Item>([...created, ...matched.values(), ...earlier].map((i) => [i.id, i]));
+    // A replacement takes over the groups of the item it supersedes.
+    for (const { from, to } of inherited) {
+      for (const gid of from.groups) {
+        const g = await this.store.getGroup(gid);
+        if (!g || g.state === "resolved") continue;
+        g.items = g.items.map((i) => (i === from.id ? to.id : i)).filter((x, k, arr) => arr.indexOf(x) === k);
+        await this.store.putGroup(g);
+        if (!to.groups.includes(gid)) to.groups.push(gid);
+      }
+    }
     const groups: Group[] = finalDrafts.map((d, k) => ({
       id: gids[k]!, agent: agent.id, changeset: csId!, kind: d.kind, title: d.title, rationale: d.rationale,
       source: d.source, items: d.items, state: "open",
@@ -730,7 +755,7 @@ export class Stet {
     for (const g of groups.filter((g) => g.kind === "linked")) {
       for (const pg of priorGroups.filter((pg) => pg.items.some((i) => g.items.includes(i)))) {
         for (const i of pg.items) if (!g.items.includes(i)) g.items.push(i);
-        g.title = `${pg.title} + ${g.title}`;
+        g.title = joinTitles(pg.title, g.title);
         for (const i of pg.items) {
           const it = byId.get(i) ?? (await this.store.getItem(i));
           if (it) {
@@ -852,12 +877,16 @@ export class Stet {
     for (const gid of gids) {
       const g = await this.store.getGroup(gid);
       if (!g) continue;
-      const members = (await Promise.all(g.items.map((i) => this.store.getItem(i)))).filter((x): x is Item => !!x);
+      // Superseded members have been replaced by newer versions; they no longer count.
+      const members = (await Promise.all(g.items.map((i) => this.store.getItem(i)))).filter(
+        (x): x is Item => !!x && x.status !== "superseded",
+      );
+      if (!members.length) continue;
       const statuses = members.map((m) => m.status);
       let state: Group["state"] = statuses.every((s) => !isLive(s)) ? "resolved" : "open";
       if (g.kind === "linked") {
         const accepted = statuses.filter((s) => s === "accepted").length;
-        const dead = statuses.filter((s) => ["rejected", "stale", "withdrawn", "superseded"].includes(s)).length;
+        const dead = statuses.filter((s) => ["rejected", "stale", "withdrawn"].includes(s)).length;
         if ((accepted && accepted < members.length) || (dead && statuses.some((s) => isLive(s)))) state = "broken";
       }
       if (state === "broken" && g.state !== "broken") {
@@ -1130,7 +1159,7 @@ export class Stet {
       if (kind === "linked") {
         for (const pg of (await this.store.groups()).filter((g) => g.kind === "linked" && g.items.some((i) => group.items.includes(i)))) {
           for (const i of pg.items) if (!group.items.includes(i)) group.items.push(i);
-          group.title = `${pg.title} + ${group.title}`;
+          group.title = joinTitles(pg.title, group.title);
           await this.store.deleteGroup(pg.id);
           for (const i of pg.items) {
             const it = await this.store.getItem(i);

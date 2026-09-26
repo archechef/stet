@@ -171,7 +171,7 @@ export function normalizeGroups(drafts: GroupDraft[]): GroupDraft[] {
     for (const h of [g, ...hits.slice(1)]) {
       for (const i of h.items) if (!target.items.includes(i)) target.items.push(i);
       if (h !== g) merged.splice(merged.indexOf(h), 1);
-      if (!target.title.includes(h.title)) target.title += " + " + h.title;
+      target.title = joinTitles(target.title, h.title);
       if (h.rationale) target.rationale = target.rationale ? target.rationale + "\n\n" + h.rationale : h.rationale;
       if (h.source === "agent") target.source = "agent";
     }
@@ -188,4 +188,11 @@ export function normalizeGroups(drafts: GroupDraft[]): GroupDraft[] {
     seen.add(s + g.source);
     return true;
   });
+}
+
+/** Join two group titles, skipping near-duplicates ("a -> b" vs "a → b"). */
+export function joinTitles(a: string, b: string): string {
+  const norm = (t: string) => t.toLowerCase().replace(/->|→/g, "→").replace(/\s+/g, " ").trim();
+  const parts = a.split(" + ");
+  return parts.some((p) => norm(p) === norm(b)) ? a : `${a} + ${b}`;
 }

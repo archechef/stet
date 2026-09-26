@@ -60,6 +60,19 @@ describe("guard: shell commands", () => {
     expect(bash(`cat "${main}/main.tex"`)).toBeNull();
   });
 
+  it("blocks shell commands that change Stet's own workspace files", () => {
+    for (const c of [
+      "sed -i '/hooks/d' .claude/settings.json",
+      "python -c \"open('.claude/settings.json','w').write('{}')\"",
+      "rm -rf .claude",
+      "echo x > CLAUDE.local.md",
+      "mv .mcp.json .mcp.json.bak",
+    ])
+      expect(bash(c), c).toMatch(/Stet manages/);
+    expect(bash("cat .claude/settings.json")).toBeNull();
+    expect(bash("grep -n hooks .claude/settings.json")).toBeNull();
+  });
+
   it("applies the same rules to PowerShell", () => {
     expect(checkToolUse({ cwd: wt, tool_name: "PowerShell", tool_input: { command: "git push" } }, ctx)).toMatch(/not allowed/);
   });

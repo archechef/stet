@@ -205,6 +205,43 @@ describe("grouping", () => {
     expect((await stet.listGroups())[0]!.state).toBe("resolved");
   });
 
+  it("links a label and its references across submissions, and keeps the link through revisions", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "Section~\\ref{sec:intro}", "Section~\\ref{sec:introduction}");
+    const r1 = await stet.submit("a", { title: "ref first" });
+    expect(r1.groups).toEqual([]);
+    edit(wt, "main.tex", "\\label{sec:intro}", "\\label{sec:introduction}");
+    const r2 = await stet.submit("a", { title: "then the label" });
+    expect(r2.groups).toHaveLength(1);
+    expect(r2.groups[0]!.items.sort()).toEqual([r1.items[0]!.id, r2.items[0]!.id].sort());
+    expect(r2.groups[0]!.title).toBe("Rename label sec:intro → sec:introduction");
+
+    // Revising the \ref keeps it in the linked group.
+    await stet.requestRevision(r1.items[0]!.id, "use Section~\\cref");
+    edit(wt, "main.tex", "Section~\\ref{sec:introduction}", "\\Cref{sec:introduction}");
+    const r3 = await stet.submit("a", { title: "revised" });
+    expect(r3.superseded).toEqual([r1.items[0]!.id]);
+    const g = (await stet.listGroups()).find((x) => x.kind === "linked")!;
+    expect(g.items).toContain(r3.items[0]!.id);
+    expect(g.items).not.toContain(r1.items[0]!.id);
+
+    // Accepting the current members resolves the group without a false "broken" alarm.
+    await stet.acceptGroup(g.id);
+    expect((await stet.listGroups()).find((x) => x.id === g.id)!.state).toBe("resolved");
+    expect((await stet.feedback("a")).map((e) => e.type)).not.toContain("group_broken");
+  });
+
+  it("never merges a label rename into an atomic rewrite", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "\\label{sec:intro}\nIn this work we study the problem of reviewing changes.", "\\label{sec:introduction}\nWe study how to review changes.");
+    const r = await stet.submit("a", { title: "t", groups: [{ kind: "atomic", title: "Rewrite opening", where: ["main.tex:3-4"] }] });
+    const label = r.items.find((i) => i.newText === "\\label{sec:introduction}");
+    expect(label).toBeDefined();
+    expect(r.items.some((i) => i.newText.startsWith("We study") && !i.newText.includes("\\label"))).toBe(true);
+  });
+
   it("breaks a linked group on a forced partial accept", async () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");

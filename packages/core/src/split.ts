@@ -277,6 +277,8 @@ interface Side {
   braces: Map<number, number>;
   /** Spans that must be taken whole: math and key arguments. */
   math: [number, number][];
+  /** Key-argument spans only (never merged with neighbouring edits). */
+  keys: [number, number][];
 }
 
 function side(toks: Token[], u: U[], key: "o" | "n"): Side {
@@ -285,7 +287,8 @@ function side(toks: Token[], u: U[], key: "o" | "n"): Side {
     if (e[key] >= 0) pos[e[key]] = i;
   });
   const braces = braceMatches(toks);
-  return { toks, pos, braces, math: [...mathSpans(toks), ...keyArgSpans(toks, braces)] };
+  const keys = keyArgSpans(toks, braces);
+  return { toks, pos, braces, math: [...mathSpans(toks), ...keys], keys };
 }
 
 /** Extend [s, e) in U so that braces and math spans on this side are whole. */
@@ -410,20 +413,32 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     return false;
   };
 
+  const os = side(ot, u, "o");
+  const ns = side(nt, u, "n");
+  // Edits inside a key argument (\label{...}, \ref{...}, \cite{...}) stay separate items,
+  // so renames can be accepted or linked on their own.
+  const keyU = [...os.keys.map(([a, b]) => [os.pos[a]!, os.pos[b]! + 1]), ...ns.keys.map(([a, b]) => [ns.pos[a]!, ns.pos[b]! + 1])];
+  const isKey = (r: [number, number]) => keyU.some(([a, b]) => a! <= r[0] && r[1] <= b!);
+  const structuralIn = (a: number, b: number) => {
+    for (let i = a; i < b; i++) {
+      const t = oldTok(i);
+      if (t && (t.type === "parbreak" || isBoundaryCmd(t))) return true;
+    }
+    return false;
+  };
+
   // Merge edits separated by a small gap without a boundary.
   const merged: [number, number][] = [ranges[0]!];
   for (const r of ranges.slice(1)) {
     const last = merged[merged.length - 1]!;
     let content = 0;
     for (let i = last[1]; i < r[0]; i++) if (!isBlank(oldTok(i)!)) content++;
-    if (content <= cfg.mergeGap && !boundaryIn(last[1], r[0])) last[1] = r[1];
+    if (content <= cfg.mergeGap && !boundaryIn(last[1], r[0]) && !isKey(last) && !isKey(r)) last[1] = r[1];
     else merged.push(r);
   }
   ranges = merged;
 
   // Grow to balanced braces / whole math, merging overlaps, until stable.
-  const os = side(ot, u, "o");
-  const ns = side(nt, u, "n");
   for (let changed = true; changed; ) {
     changed = false;
     for (const r of ranges) {
@@ -433,7 +448,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     const out: [number, number][] = [];
     for (const r of ranges) {
       const last = out[out.length - 1];
-      if (last && r[0] <= last[1]) {
+      if (last && (r[0] < last[1] || (r[0] === last[1] && !isKey(last) && !isKey(r)))) {
         last[1] = Math.max(last[1], r[1]);
         changed = true;
       } else out.push([r[0], r[1]]);
@@ -463,7 +478,8 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     const last = coarse[coarse.length - 1];
     const pid = para[r[0]]!;
     const ratio = (changedCount.get(pid) ?? 0) / Math.max(1, totals.get(pid) ?? 0);
-    if (last && para[last[0]] === pid && ratio > cfg.rewriteRatio) last[1] = r[1];
+    const join = last && para[last[0]] === pid && ratio > cfg.rewriteRatio && !isKey(last) && !isKey(r) && !structuralIn(last[1], r[0]);
+    if (join) last[1] = r[1];
     else coarse.push([r[0], r[1]]);
   }
 
@@ -482,4 +498,13 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     if (edit.oldText !== edit.newText) edits.push(edit);
   }
   return edits;
+}
+
+/** Is this edit a whole key argument such as `\label{a}` → `\label{b}`? */
+export function isKeyEdit(oldText: string, newText: string): boolean {
+  const whole = (t: string) => {
+    const m = /^\s*(\\[A-Za-z@]+\*?)(?:\[[^\]]*\])*\{[^{}]*\}\s*$/.exec(t);
+    return !!m && KEY_ARG_CMDS.test(m[1]!);
+  };
+  return (whole(oldText) || !oldText.trim()) && (whole(newText) || !newText.trim()) && (whole(oldText) || whole(newText));
 }
