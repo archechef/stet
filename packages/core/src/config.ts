@@ -17,7 +17,7 @@ export interface GroupingConfig {
 export interface StetConfig {
   mainBranch: string;
   /** How to run the `stet` CLI; recorded by `stet init` for hooks and MCP configs. */
-  cli?: { command: string; args: string[] };
+  cli?: { command: string; args: string[]; env?: Record<string, string> };
   /** Install git hooks that block merges/pushes of agent branches (spec §9). */
   guardHooks: boolean;
   agentBranchPrefix: string;

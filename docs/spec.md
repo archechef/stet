@@ -2,7 +2,7 @@
 
 > *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-Status: **v0.4** (M1 done, M2 implemented pending live agent tests; see §16 notes) · 2026-09-26
+Status: **v0.5** (M1 done; M2 live-tested with the Claude desktop app, CLI/Codex runs pending; M3 implemented; see §16 notes) · 2026-09-26
 
 Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
 
@@ -520,7 +520,7 @@ An optional **committed** `stet.json` in the repo root supplies team defaults (f
 The web UI will expose this API as REST plus Server-Sent Events on `localhost`, protected by a random token, with no other code changes.
 
 ### 12.2 VS Code extension (M3)
-- **Stet panel** (a webview built from `@stet/ui`):
+- **Stet panel** (a native VS Code tree view; see the M3 notes in §16 for why it is not a webview):
   - Tree: agent → changeset → group → item. Ungrouped items sit directly under the changeset, and an item in several related groups appears in each.
   - Linked groups get a chain icon, broken groups a warning icon, and auto-detected groups an "auto" tag that can be dismissed.
   - Filters, plus keyboard review: `j`/`k` to move, `a` accept, `r` reject, `e` edit, `c` comment, `A` / `R` accept or reject the whole group.
@@ -532,7 +532,7 @@ The web UI will expose this API as REST plus Server-Sent Events on `localhost`, 
 - **Commands:** `Stet: Set up project`, `New agent workspace`, `Open agent workspace in…`, `Finish review (commit)`, `Preview S<n> in PDF`.
 - **Status bar:** number of pending items, with a warning when agents need a sync.
 - **Setup without a command line:** `Set up project` runs the equivalent of `stet init`. MCP configs point at the extension's bundled `stet` entry point.
-- **Node-free option (to evaluate in M3):** the extension can launch the bundled server with VS Code's own Electron binary (`ELECTRON_RUN_AS_NODE=1`), so users without Node still get the MCP server.
+- **Node-free option (implemented in M3):** the extension launches the bundled server with VS Code's own Electron binary (`ELECTRON_RUN_AS_NODE=1`) when Node.js ≥ 20 is not on PATH (setting `stet.runtime`: `auto` | `node` | `vscode`), so users without Node still get the MCP server.
 
 ### 12.3 Web UI (M6)
 `stet serve [--port] [--open]` serves `@stet/ui` as a full page with a read-only source view around each item. Features match the panel. Editor integration is replaced by a context view.
@@ -590,12 +590,22 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 - Done: MCP server, workspace files (instructions, MCP configs, Claude Code guard settings, Codex config), `stet guard`, git hooks, `stet setup claude|codex`, `stet agent refresh`, `stet hooks`, doctor checks for all of it. Tested with automated tests (protocol, guard rules, hooks against real git, workspace files).
 - **Live test with the Claude desktop app (2026-09-26): passed.** Only a folder-trust prompt, no MCP approval prompt (`enabledMcpjsonServers` works); all tools and instructions loaded; full propose → review → feedback → revise → accept loop without copy-paste, including linked groups, an edited accept, a rejected change not re-proposed, and a parallel user edit re-anchored. Guardrails: editing the project (guard hook), `git merge`/`push`/`checkout master` (guard hook), editing `.claude/settings.json` (deny rule), and merging/pushing the agent branch from the project (git hooks) were all blocked.
 - Fixes from the live test: key-argument edits (`\label`, `\ref`, `\cite`) are never merged with neighbouring edits (merge gap, paragraph coarsening, touching ranges, atomic hints); a replacement item inherits the groups of the item it supersedes; auto-detection also looks at the agent's earlier pending items; superseded members no longer make a linked group "broken"; duplicate group titles are merged; the guard also blocks shell commands that change Stet's own workspace files.
-- Still to do for the M2 acceptance criteria: live runs with Claude Code CLI and Codex (§17 item 2).
+- Still to do for the M2 acceptance criteria: live runs with Claude Code CLI and Codex (§17 item 2); plans in [live-tests.md](live-tests.md) §B–C.
 - Ideas from the test: tell the agent in the sync result *what* changed in the document (it first guessed "another agent's edit"); an MCP server started before a Stet update keeps old code until the session restarts.
 - Workspace files are untracked and excluded from submits; if the project tracks one of them, Stet leaves it alone.
 - `pre-merge-commit` was dropped: `reference-transaction` catches both merge styles.
 
 ---
+
+### M3 notes (implemented 2026-09-26)
+- Done: `stet-vscode` extension with the Stet panel (tree agent → changeset → group → item, view badge, show/hide resolved), keyboard review (`a` `r` `e` `v` `c` `d`, `A`/`R` for groups, `j`/`k`), inline decorations (old text struck through, new text as ghost text), CodeLens actions, hovers with diff and action links, diff view (`stet-diff:` documents), item threads via the Comments API (replies go to the agent as comments), status bar, and the commands *Set up project* (creates a git repository and first commit if needed), *New agent workspace*, *Open agent workspace*, *Archive agent*, *Finish review*, *Check setup (doctor)*.
+- **Tree view instead of a webview:** a native tree gives keyboard navigation, theming, accessibility and context menus for free and needs far less code. `@stet/ui` is deferred to the web UI (M6), which will need its own rendering anyway.
+- **Runtime:** the extension bundles the CLI (`dist/stet.mjs`) and copies it to `.git/stet/bin/stet.mjs`, a path that survives extension updates; `config.cli` records it (with `env: {ELECTRON_RUN_AS_NODE: "1"}` when it runs on VS Code's runtime) and agent workspaces are rewritten when it changes. A `stet` configured by the user (e.g. an npm install) is left alone. The guard hook command uses a POSIX `VAR=value` prefix for that env; Claude Code runs hooks through a POSIX shell (Git Bash on Windows) — **unverified live** for the VS Code-runtime case.
+- Core additions: `locateInText` (items in unsaved editor buffers), `uncommittedAccepted` / `commitAcceptedItems` (*Finish review*, CLI `stet commit`), `setCli`, `CliCommand.env`.
+- Accepting saves open, modified documents of the affected files first, so unsaved edits are neither lost nor overwritten; the accept is then not auto-committed (the file had the user's own edits).
+- Tests: unit tests for the view model; `npm run test:integration -w stet-vscode` starts the installed VS Code with a throwaway profile against a fixture project and checks activation, runtime install for both runtimes, an MCP handshake through the recorded command, CodeLens, hover, diff document, lenses following unsaved edits, accept, and go-to-change (18 checks, both runtimes pass). Not in CI (needs a VS Code install and a display).
+- Still to do for the M3 acceptance criteria: a hands-on run of the full workflow from VS Code plus the desktop app (panel, dialogs, keyboard review, threads, setup from scratch, *Finish review*). Test plan: [live-tests.md](live-tests.md) §A; user guide: [vscode.md](vscode.md).
+- Not done: *Preview in PDF* (M5), undo of accepted items, dismissing auto groups from the UI (use *Dissolve group*).
 
 ## 17. Open points to verify
 
@@ -613,3 +623,4 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
    - How reliably do Claude Code and Codex supply `linked` hints unprompted, given only the instructions?
    - Is automatic detection plus "check the submit result" enough, or should submit *warn* when the auto-detectors find a linked pattern the agent didn't declare?
 5. ~~Line endings~~: handled in M1 (LF internally, original endings preserved on write).
+6. **VS Code extension:** whether `j`/`k` (bound to `list.focusDown`/`Up`) move the selection as well as the focus in the Stet tree, so the editor follows while reviewing by keyboard.

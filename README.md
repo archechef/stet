@@ -4,9 +4,29 @@
 
 Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while you review them one by one. Agents work in their own git worktree and never touch your files; a change reaches your document only when you accept it. See [docs/spec.md](docs/spec.md) for the design.
 
-**Status:** M1 (core + command-line tool) and M2 (MCP server for agents, guardrails) are implemented. The VS Code extension (M3) comes next.
+**Status:** M1 (core + command-line tool), M2 (MCP server for agents, guardrails) and M3 (VS Code extension) are implemented. Live-tested with the Claude desktop app; Claude Code CLI and Codex are covered by automated tests only so far (their live runs are still to do, see spec §16/§17). The VS Code extension passes an automated run in real VS Code; its panel and dialogs still need a hands-on test. The plans for all pending live tests are in [docs/live-tests.md](docs/live-tests.md).
 
-## Try it
+## VS Code (no command line needed)
+
+Build the extension package and install it:
+
+```bash
+npm install
+npm run build
+npm run package:vscode
+code --install-extension packages/vscode/stet-vscode.vsix
+```
+
+(or in VS Code: Extensions view → `…` → *Install from VSIX…* → `packages/vscode/stet-vscode.vsix`). Share the `.vsix` with coworkers; they need neither Node.js nor this repository.
+
+1. Open your LaTeX project folder in VS Code, open the **Stet** view in the activity bar and click **Set up project** (creates a git repository first if there is none).
+2. **New agent workspace** → pick Claude or Codex → copy the folder path and open that folder in the Claude desktop app (Code tab), Claude Code or Codex.
+3. Ask the agent to improve the paper. Its proposals appear in the Stet panel and inline in your `.tex` files: accept (`a`), reject (`r`), edit (`e`), request a revision (`v`), comment (`c`), diff (`d`); `A`/`R` for the whole group. CodeLens actions above each change and hovers do the same.
+4. **Finish review** (commit icon) commits accepted changes that were not committed automatically because you had your own unsaved or uncommitted edits in the file.
+
+Full guide: [docs/vscode.md](docs/vscode.md). The extension brings its own copy of `stet` for the agents (in `.git/stet/bin/`), run with Node.js if installed, otherwise with VS Code's own runtime (setting `stet.runtime`).
+
+## Command line
 
 Requirements: Node.js ≥ 20 and git ≥ 2.28.
 
@@ -43,6 +63,7 @@ stet show S3                # an item with its context
 stet accept S3 S4           # or a whole group: stet accept G1
 stet reject S5 -m "keep the original formula"
 stet revise S6 -m "shorter, please"
+stet commit                 # commit accepted changes left uncommitted (you had your own edits)
 ```
 
 The agent picks up your decisions with `stet_get_feedback` (or `stet feedback`) and moves onto your latest text with `stet_sync`. Run `stet doctor` if anything looks off, and `stet --help` for all commands.
@@ -56,3 +77,4 @@ npm test          # vitest: unit tests + end-to-end tests on temporary git repos
 
 - `packages/core` (`@stet/core`): store, git plumbing, LaTeX-aware splitting, anchoring, the review service, MCP server, guard, git hooks, workspace files, doctor.
 - `packages/cli` (`stet-tex`): the `stet` command.
+- `packages/vscode` (`stet-vscode`): the VS Code extension (bundled with esbuild; `npm run package:vscode` builds the `.vsix`). `npm run test:integration -w stet-vscode` starts your installed VS Code with a throwaway profile and runs the integration checks.

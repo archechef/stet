@@ -144,6 +144,20 @@ export class Stet {
     return this.store.config();
   }
 
+  /**
+   * Record how agents' tools invoke `stet` and rewrite the active agents' workspace files.
+   * Returns false when nothing changed.
+   */
+  async setCli(cli: CliCommand): Promise<boolean> {
+    return this.store.withLock(async () => {
+      const cfg = await this.config();
+      if (JSON.stringify(cfg.cli ?? null) === JSON.stringify(cli)) return false;
+      await this.store.saveConfig({ ...cfg, cli });
+      for (const a of await this.store.agents()) if (a.state === "active") await this.refreshWorkspace(a);
+      return true;
+    });
+  }
+
   /** The repository's shared git dir (where the store and hooks live). */
   get commonDir(): string {
     return dirname(this.store.root);
@@ -925,6 +939,37 @@ export class Stet {
     const f = await this.workingView().read(item.file);
     const span = f ? anchor(item, f.text, await this.refText(item)) : null;
     return { line: span && f ? lineOf(f.text, span.start) : await this.itemLine(item), span };
+  }
+
+  /** Where an item's old text sits in `text` (LF line endings), e.g. an editor buffer with unsaved edits. */
+  async locateInText(item: Item, text: string): Promise<Span | null> {
+    if (item.kind !== "modify") return null;
+    return anchor(item, text, await this.refText(item));
+  }
+
+  /** Accepted items whose changes are in the working copy but not yet committed. */
+  async uncommittedAccepted(): Promise<Item[]> {
+    return (await this.store.items()).filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
+  }
+
+  /**
+   * Commit accepted-but-uncommitted items ("Finish review"). Commits their whole files,
+   * so the user's own edits in those files are included.
+   */
+  async commitAcceptedItems(): Promise<{ commit: string | null; items: Item[] }> {
+    return this.store.withLock(async () => {
+      const cfg = await this.config();
+      const onBranch = await this.repo.tryRun(["symbolic-ref", "--short", "HEAD"]);
+      if (onBranch !== cfg.mainBranch)
+        throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back first.`);
+      await this.ensureBase(); // marks items the user already committed
+      const items = (await this.uncommittedAccepted()).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+      if (!items.length) return { commit: null, items };
+      const paths = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
+      const commit = await this.commitAccepted(items, paths);
+      await this.ensureBase();
+      return { commit, items: commit ? items : [] };
+    });
   }
 
   private async requireItems(ids: string[]): Promise<Item[]> {

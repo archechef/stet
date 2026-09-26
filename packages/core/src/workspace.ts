@@ -9,6 +9,8 @@ import type { Agent } from "./model.js";
 export interface CliCommand {
   command: string;
   args: string[];
+  /** Extra environment, e.g. ELECTRON_RUN_AS_NODE when running on VS Code's own runtime. */
+  env?: Record<string, string>;
 }
 
 /** Untracked files Stet manages in a workspace. They are never part of proposals. */
@@ -53,7 +55,9 @@ export interface WorkspaceContext {
 
 function claudeSettings(ctx: WorkspaceContext): object {
   const { cli, mainPath, commonDir } = ctx;
-  const hookCmd = [cli.command, ...cli.args].map(quote).join(" ") + " guard";
+  // Hook commands run in a POSIX shell (Git Bash on Windows), so `VAR=value cmd` works everywhere.
+  const envPrefix = Object.entries(cli.env ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)} `).join("");
+  const hookCmd = envPrefix + [cli.command, ...cli.args].map(quote).join(" ") + " guard";
   const main = claudeAbsPath(mainPath);
   const settings: Record<string, unknown> = {
     permissions: {
@@ -98,7 +102,7 @@ function mcpServer(ctx: WorkspaceContext) {
   return {
     command: fwd(ctx.cli.command),
     args: [...ctx.cli.args.map(fwd), "mcp"],
-    env: { STET_WORKSPACE: fwd(ctx.agent.worktree) },
+    env: { ...ctx.cli.env, STET_WORKSPACE: fwd(ctx.agent.worktree) } as Record<string, string>,
   };
 }
 
@@ -112,7 +116,7 @@ function codexConfig(ctx: WorkspaceContext): string {
     `[mcp_servers.stet]`,
     `command = ${str(s.command)}`,
     `args = [${s.args.map(str).join(", ")}]`,
-    `env = { STET_WORKSPACE = ${str(s.env.STET_WORKSPACE)} }`,
+    `env = { ${Object.entries(s.env).map(([k, v]) => `${k} = ${str(v)}`).join(", ")} }`,
     ``,
   ].join("\n");
 }

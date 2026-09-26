@@ -47,6 +47,7 @@ Review:
   stet reject <S12|G3>... [-m <reason>] [--all | --revise-rest | --only]
   stet revise <S12> -m <what to change>
   stet comment <S12> -m <text>
+  stet commit                           commit accepted items that are not committed yet
   stet group <S1> <S2>... --kind atomic|linked|related -t <title> [-m <rationale>]
   stet ungroup <G3>
 
@@ -171,8 +172,13 @@ function need(v: string | undefined, what: string): string {
 const isGroupId = (s: string) => /^G\d+$/i.test(s);
 
 /** How other tools should invoke this CLI: absolute node + script paths. */
-const SELF: CliCommand = { command: process.execPath, args: [fileURLToPath(import.meta.url)] };
-const VERSION = "0.2.0";
+const SELF: CliCommand = {
+  command: process.execPath,
+  args: [fileURLToPath(import.meta.url)],
+  // Running on VS Code's own runtime (bundled with the extension): keep it in Node mode.
+  ...(process.env.ELECTRON_RUN_AS_NODE ? { env: { ELECTRON_RUN_AS_NODE: "1" } } : {}),
+};
+const VERSION = "0.3.0";
 
 function readAll(stream: NodeJS.ReadableStream): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -282,14 +288,15 @@ async function main() {
   if (cmd === "setup") {
     const target = args[0];
     const server = [SELF.command, ...SELF.args, "mcp"];
+    const envFlags = (flag: string) => Object.entries(SELF.env ?? {}).flatMap(([k, v]) => [flag, `${k}=${v}`]);
     let tool: string;
     let steps: string[][];
     if (target === "claude") {
       tool = "claude";
-      steps = [["mcp", "remove", "--scope", "user", "stet"], ["mcp", "add", "--scope", "user", "stet", "--", ...server]];
+      steps = [["mcp", "remove", "--scope", "user", "stet"], ["mcp", "add", "--scope", "user", ...envFlags("-e"), "stet", "--", ...server]];
     } else if (target === "codex") {
       tool = "codex";
-      steps = [["mcp", "remove", "stet"], ["mcp", "add", "stet", "--", ...server]];
+      steps = [["mcp", "remove", "stet"], ["mcp", "add", "stet", ...envFlags("--env"), "--", ...server]];
     } else throw new StetError("Usage: stet setup claude|codex [--print]");
     const add = steps[1]!;
     const shown = [tool, ...add].map(winQuote).join(" ");
@@ -502,6 +509,14 @@ async function main() {
     case "revise": {
       const it = await stet.requestRevision(need(args[0], "item id"), need(opt.message, "-m <what to change>"));
       return out(() => `${yellow("Revision requested")} for ${it.id}.`, it);
+    }
+
+    case "commit": {
+      const r = await stet.commitAcceptedItems();
+      return out(
+        () => (r.commit ? `Committed ${r.items.map((i) => i.id).join(", ")} as ${r.commit.slice(0, 7)}.` : "Nothing to commit: all accepted items are committed."),
+        r,
+      );
     }
 
     case "comment": {

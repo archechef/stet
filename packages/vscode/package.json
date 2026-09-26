@@ -1,0 +1,449 @@
+{
+  "name": "stet-vscode",
+  "displayName": "Stet",
+  "description": "Review AI-proposed changes to LaTeX projects: accept, reject, edit or comment on each change.",
+  "version": "0.3.0",
+  "publisher": "stet",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "latex",
+    "tex",
+    "review",
+    "ai",
+    "claude",
+    "codex"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.tex",
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "build": "tsc -p . && node esbuild.mjs",
+    "package": "npm run build && vsce package --no-dependencies --skip-license --allow-missing-repository -o stet-vscode.vsix",
+    "test:integration": "node test/integration/run.mjs"
+  },
+  "dependencies": {
+    "@stet/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "~1.100.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.28.2"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "stet",
+          "title": "Stet",
+          "icon": "media/stet.svg"
+        }
+      ]
+    },
+    "views": {
+      "stet": [
+        {
+          "id": "stet.review",
+          "name": "Review",
+          "icon": "media/stet.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "stet.review",
+        "contents": "Stet is not set up for this folder yet.\n[Set up project](command:stet.setup)\nStet keeps AI agents in their own workspace and lets you review each proposed change.",
+        "when": "workspaceFolderCount > 0 && !stet.active"
+      },
+      {
+        "view": "stet.review",
+        "contents": "Open the folder of your LaTeX project to use Stet.\n[Open Folder](command:vscode.openFolder)",
+        "when": "workspaceFolderCount == 0"
+      },
+      {
+        "view": "stet.review",
+        "contents": "No agents yet. Create a workspace for an AI agent, then open it in the Claude desktop app, Claude Code or Codex.\n[New agent workspace](command:stet.newAgent)",
+        "when": "stet.active && !stet.hasAgents"
+      }
+    ],
+    "commands": [
+      {
+        "command": "stet.setup",
+        "title": "Set up project",
+        "category": "Stet",
+        "icon": "$(add)"
+      },
+      {
+        "command": "stet.newAgent",
+        "title": "New agent workspace",
+        "category": "Stet",
+        "icon": "$(add)"
+      },
+      {
+        "command": "stet.openAgent",
+        "title": "Open agent workspace…",
+        "category": "Stet",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "stet.copyAgentPath",
+        "title": "Copy workspace path",
+        "category": "Stet"
+      },
+      {
+        "command": "stet.archiveAgent",
+        "title": "Archive agent…",
+        "category": "Stet"
+      },
+      {
+        "command": "stet.refresh",
+        "title": "Refresh",
+        "category": "Stet",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "stet.doctor",
+        "title": "Check setup (doctor)",
+        "category": "Stet",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "stet.finishReview",
+        "title": "Finish review (commit accepted changes)",
+        "category": "Stet",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "stet.showResolved",
+        "title": "Show resolved items",
+        "category": "Stet",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "stet.hideResolved",
+        "title": "Hide resolved items",
+        "category": "Stet",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "stet.accept",
+        "title": "Accept",
+        "category": "Stet",
+        "icon": "$(check)"
+      },
+      {
+        "command": "stet.reject",
+        "title": "Reject…",
+        "category": "Stet",
+        "icon": "$(close)"
+      },
+      {
+        "command": "stet.edit",
+        "title": "Edit and accept…",
+        "category": "Stet",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "stet.comment",
+        "title": "Comment…",
+        "category": "Stet",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "stet.revise",
+        "title": "Request revision…",
+        "category": "Stet",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "stet.acceptGroup",
+        "title": "Accept all",
+        "category": "Stet",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "stet.rejectGroup",
+        "title": "Reject all…",
+        "category": "Stet",
+        "icon": "$(close-all)"
+      },
+      {
+        "command": "stet.ungroup",
+        "title": "Dissolve group",
+        "category": "Stet"
+      },
+      {
+        "command": "stet.showItem",
+        "title": "Go to change",
+        "category": "Stet",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "stet.showDiff",
+        "title": "Show diff",
+        "category": "Stet",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "stet.replyThread",
+        "title": "Send to agent",
+        "category": "Stet"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "stet.finishReview",
+          "when": "view == stet.review && stet.uncommitted",
+          "group": "navigation@1"
+        },
+        {
+          "command": "stet.newAgent",
+          "when": "view == stet.review && stet.active",
+          "group": "navigation@2"
+        },
+        {
+          "command": "stet.showResolved",
+          "when": "view == stet.review && stet.active && !stet.showingResolved",
+          "group": "navigation@3"
+        },
+        {
+          "command": "stet.hideResolved",
+          "when": "view == stet.review && stet.showingResolved",
+          "group": "navigation@3"
+        },
+        {
+          "command": "stet.refresh",
+          "when": "view == stet.review",
+          "group": "navigation@4"
+        },
+        {
+          "command": "stet.doctor",
+          "when": "view == stet.review",
+          "group": "more@1"
+        },
+        {
+          "command": "stet.setup",
+          "when": "view == stet.review",
+          "group": "more@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "stet.accept",
+          "when": "view == stet.review && viewItem =~ /^item\\.live/",
+          "group": "inline@1"
+        },
+        {
+          "command": "stet.reject",
+          "when": "view == stet.review && viewItem =~ /^item\\.live/",
+          "group": "inline@2"
+        },
+        {
+          "command": "stet.showDiff",
+          "when": "view == stet.review && viewItem =~ /^item/",
+          "group": "inline@0"
+        },
+        {
+          "command": "stet.accept",
+          "when": "view == stet.review && viewItem =~ /^item\\.live/",
+          "group": "1_review@1"
+        },
+        {
+          "command": "stet.edit",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
+          "group": "1_review@2"
+        },
+        {
+          "command": "stet.reject",
+          "when": "view == stet.review && viewItem =~ /^item\\.live/",
+          "group": "1_review@3"
+        },
+        {
+          "command": "stet.revise",
+          "when": "view == stet.review && viewItem =~ /^item\\.live/",
+          "group": "1_review@4"
+        },
+        {
+          "command": "stet.comment",
+          "when": "view == stet.review && viewItem =~ /^item/",
+          "group": "2_talk@1"
+        },
+        {
+          "command": "stet.showItem",
+          "when": "view == stet.review && viewItem =~ /^item/",
+          "group": "3_nav@1"
+        },
+        {
+          "command": "stet.showDiff",
+          "when": "view == stet.review && viewItem =~ /^item/",
+          "group": "3_nav@2"
+        },
+        {
+          "command": "stet.acceptGroup",
+          "when": "view == stet.review && viewItem =~ /^group\\.live/",
+          "group": "inline@1"
+        },
+        {
+          "command": "stet.rejectGroup",
+          "when": "view == stet.review && viewItem =~ /^group\\.live/",
+          "group": "inline@2"
+        },
+        {
+          "command": "stet.acceptGroup",
+          "when": "view == stet.review && viewItem =~ /^(group|changeset)\\.live/",
+          "group": "1_review@1"
+        },
+        {
+          "command": "stet.rejectGroup",
+          "when": "view == stet.review && viewItem =~ /^(group|changeset)\\.live/",
+          "group": "1_review@2"
+        },
+        {
+          "command": "stet.ungroup",
+          "when": "view == stet.review && viewItem =~ /^group/",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "stet.openAgent",
+          "when": "view == stet.review && viewItem == agent",
+          "group": "inline@1"
+        },
+        {
+          "command": "stet.openAgent",
+          "when": "view == stet.review && viewItem == agent",
+          "group": "1_open@1"
+        },
+        {
+          "command": "stet.copyAgentPath",
+          "when": "view == stet.review && viewItem == agent",
+          "group": "1_open@2"
+        },
+        {
+          "command": "stet.archiveAgent",
+          "when": "view == stet.review && viewItem == agent",
+          "group": "2_manage@1"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "stet.replyThread",
+          "group": "inline",
+          "when": "commentController == stet"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "stet.replyThread",
+          "when": "false"
+        },
+        {
+          "command": "stet.showResolved",
+          "when": "stet.active && !stet.showingResolved"
+        },
+        {
+          "command": "stet.hideResolved",
+          "when": "stet.showingResolved"
+        },
+        {
+          "command": "stet.ungroup",
+          "when": "false"
+        },
+        {
+          "command": "stet.copyAgentPath",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "key": "a",
+        "command": "stet.accept",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "r",
+        "command": "stet.reject",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "e",
+        "command": "stet.edit",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "c",
+        "command": "stet.comment",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "v",
+        "command": "stet.revise",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "d",
+        "command": "stet.showDiff",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "shift+a",
+        "command": "stet.acceptGroup",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "shift+r",
+        "command": "stet.rejectGroup",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "j",
+        "command": "list.focusDown",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "k",
+        "command": "list.focusUp",
+        "when": "focusedView == stet.review && !inputFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Stet",
+      "properties": {
+        "stet.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Accept / Reject / Edit / Comment actions above each proposed change."
+        },
+        "stet.inlineChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show proposed changes inline in the editor (old text struck through, new text as ghost text)."
+        },
+        "stet.runtime": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "node",
+            "vscode"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Use Node.js (≥ 20) if it is installed, otherwise VS Code's own runtime.",
+            "Always use Node.js from PATH.",
+            "Always use VS Code's own runtime (no Node.js needed)."
+          ],
+          "description": "What runs the Stet server that AI agents talk to."
+        }
+      }
+    }
+  }
+}

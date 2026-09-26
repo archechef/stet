@@ -4,11 +4,13 @@
   "type": "module",
   "workspaces": [
     "packages/core",
-    "packages/cli"
+    "packages/cli",
+    "packages/vscode"
   ],
   "scripts": {
-    "build": "tsc -b packages/core packages/cli",
-    "test": "vitest run"
+    "build": "tsc -b packages/core packages/cli && npm run build -w stet-vscode",
+    "test": "vitest run",
+    "package:vscode": "npm run package -w stet-vscode"
   },
   "engines": {
     "node": ">=20"
