@@ -1,12 +1,24 @@
 /** On-disk store in `<git-common-dir>/stet/` (spec §4, §15). */
-import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 import { defaultConfig, mergeConfig, type StetConfig } from "./config.js";
 import type { Agent, Changeset, Group, Item, StetEvent, StoreState } from "./model.js";
 
-const LOCK_STALE_MS = 30_000;
-const LOCK_TIMEOUT_MS = 20_000;
+/** A held lock is refreshed every `heartbeat` ms; one not refreshed for `stale` ms is abandoned. Adjustable for tests. */
+export const LOCK_TIMING = { heartbeat: 5_000, stale: 30_000, timeout: 60_000 };
+
+/** Whether a process with this pid exists on this machine. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e.code === "EPERM";
+  }
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -94,29 +106,74 @@ export class Store {
     return writeJsonAtomic(join(this.root, "state.json"), s);
   }
 
-  /** Run `fn` holding the store lock. Re-entrant within the same async call chain. */
+  /**
+   * Run `fn` holding the store lock. Re-entrant within the same async call chain.
+   *
+   * The lock file names its owner (host, pid, random token). While held, the owner refreshes the
+   * file's time every few seconds, so a long operation is never mistaken for an abandoned one.
+   * A lock is taken over only if its owner process is gone (same host) or its heartbeat stopped;
+   * the takeover renames that exact file away first, so two waiters cannot both take it.
+   * The owner removes the lock only if it still holds its token.
+   */
   async withLock<T>(fn: () => Promise<T>): Promise<T> {
     if (lockContext.getStore() === this) return fn();
+    const token = randomUUID();
     const started = Date.now();
     for (;;) {
       try {
         const fh = await open(this.lockPath, "wx");
-        await fh.writeFile(JSON.stringify({ pid: process.pid, at: Date.now() }));
+        await fh.writeFile(JSON.stringify({ pid: process.pid, host: hostname(), token, at: Date.now() }));
         await fh.close();
         break;
       } catch (e: any) {
         if (e.code !== "EEXIST" && e.code !== "EPERM") throw e;
-        const info = await readJson<{ at: number }>(this.lockPath).catch(() => null);
-        if (info && Date.now() - info.at > LOCK_STALE_MS) await rm(this.lockPath, { force: true });
-        else if (Date.now() - started > LOCK_TIMEOUT_MS) throw new Error(`Timed out waiting for the Stet lock (${this.lockPath}).`);
-        else await sleep(30 + Math.random() * 70);
+        if (await this.takeOverIfAbandoned()) continue;
+        if (Date.now() - started > LOCK_TIMING.timeout) throw new Error(`Timed out waiting for the Stet lock (${this.lockPath}).`);
+        await sleep(30 + Math.random() * 70);
       }
     }
+    const beat = setInterval(() => {
+      const t = new Date();
+      utimes(this.lockPath, t, t).catch(() => undefined);
+    }, LOCK_TIMING.heartbeat);
+    beat.unref();
     try {
       return await lockContext.run(this, fn);
     } finally {
-      await rm(this.lockPath, { force: true });
+      clearInterval(beat);
+      const cur = await readJson<{ token?: string }>(this.lockPath).catch(() => null);
+      if (cur?.token === token) await rm(this.lockPath, { force: true });
     }
+  }
+
+  /** Remove the lock if its owner is gone. Returns true if it was removed. */
+  private async takeOverIfAbandoned(): Promise<boolean> {
+    let info: { pid?: number; host?: string; token?: string } | null;
+    let mtime: number;
+    try {
+      info = await readJson(this.lockPath);
+      mtime = (await stat(this.lockPath)).mtimeMs;
+    } catch {
+      return false; // released meanwhile, or unreadable for a moment: just retry
+    }
+    const heartbeatStopped = Date.now() - mtime > LOCK_TIMING.stale;
+    const ownerGone = !!info?.pid && info.host === hostname() && !processAlive(info.pid);
+    if (!heartbeatStopped && !ownerGone) return false;
+    // Move exactly this lock file away; if someone else was faster, the rename fails or moves a
+    // newer lock, which we then put back.
+    const aside = `${this.lockPath}.${randomUUID()}.stale`;
+    try {
+      await rename(this.lockPath, aside);
+    } catch {
+      return false;
+    }
+    const moved = await readJson<{ token?: string }>(aside).catch(() => null);
+    if (info?.token && moved?.token !== info.token) {
+      await rename(aside, this.lockPath).catch(() => undefined);
+      return false;
+    }
+    await rm(aside, { force: true });
+    return true;
   }
 
   /** Allocate sequential ids. Call while holding the lock. */

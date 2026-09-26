@@ -2,7 +2,7 @@
 
 > *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-Status: **v0.6** (M1 done; M2 live-tested with the Claude desktop app, CLI/Codex runs pending; M3 implemented; security audit fixes; see §16 notes) · 2026-09-26
+Status: **v0.6** (M1 done; M2 live-tested with the Claude desktop app, CLI/Codex runs pending; M3 implemented; security audit and code review fixes; see §16 notes) · 2026-09-26
 
 Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
 
@@ -408,6 +408,8 @@ Hook installation chains existing hooks (kept as `<name>.stet-orig`) rather than
 **Stet-side checks** (they hold even when layer 2 is bypassed):
 - **Worktree integrity:** before running git in an agent worktree (submit, sync, workspace refresh, doctor), Stet verifies that its `.git` file points to `<common git dir>/worktrees/<name>`, that `commondir` points back to the project's repository, and that there is no `config.worktree`. Otherwise an agent could redirect Stet's git calls to a git dir of its own whose config runs commands (filters, hooks) outside the sandbox.
 - **No `core.fsmonitor`** for any git command Stet runs (`-c core.fsmonitor=false`).
+- **No hooks, no submodules in agent worktrees:** git calls there run with `core.hooksPath` set to a path that cannot contain hooks (a relative hooks path such as `.hooks` would otherwise resolve to the agent's files; `--no-verify` does not stop `post-commit` or `prepare-commit-msg`), and with submodules ignored (their config is agent-writable).
+- **No writes through links:** Stet never writes through a symlink or junction, like git. In the agent worktree (workspace files) it replaces planted links with real files and folders; in the project (accept) it refuses, and it checks the real location of every destination (inside the project, not in `.git`). Working-copy reads do not follow links either.
 - **Paths:** submitted and accepted paths must be relative, without `.`/`..` segments, and must not reach the git dir on any platform (`.git`, `GIT~1`, `.git.`, `:` streams). Accept re-checks this, since the store is plain files.
 - **Ids** from agents are validated before they are used as file names in the store.
 - **UI:** agent-written text is escaped in Markdown (hovers, tooltips) and shown as plain text in comment threads; only Stet's own action links are trusted.
@@ -575,7 +577,8 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 
 ## 15. Concurrency
 
-- **Writers:** extension, MCP servers (one per agent session), CLI. All mutations take `.git/stet/lock`, a lock file with PID and timestamp that is treated as stale after 30 s, and hold it only for the duration of a single operation.
+- **Writers:** extension, MCP servers (one per agent session), CLI. All mutations take `.git/stet/lock` and hold it only for the duration of a single operation. The lock file names its owner (host, PID, random token); the owner refreshes its time every 5 s while holding it. It is taken over only when its owner process is gone (same host) or its heartbeat stopped for 30 s, by renaming exactly that file away (so two waiters cannot both take it), and it is removed only by the owner whose token it holds.
+- **Accepts are all-or-nothing:** every destination is checked before anything is written, the original contents are journaled in `.git/stet/txn.json`, and a failed write restores all files. An accept cut off by a crash is undone (if it was still writing) or completed (if all files were written) by the next Stet operation.
 - **Git access:** git operations on the main repo are serialized through the same lock. Agents' own git activity happens in their worktrees. Stet uses git plumbing (`commit-tree`, `update-ref`) for `refs/stet/base`, so it never touches the user's index or working tree except when applying accepts.
 - **Parallel agents:** they share nothing except the review base. Overlaps between them are detected at the item level (§6.3).
 
@@ -621,6 +624,16 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 
 ### Security audit (2026-09-26)
 An independent audit (read-only, with reproductions against scratch repositories) found the shared git dir writable to agents: the guard exempted it for shell commands, and the macOS/Linux sandbox allowed it. Confirmed consequences: `git config core.fsmonitor '<cmd>'` from the agent ran `<cmd>` on the user's next `git status` and modified the real file; the bundled CLI and the store could be overwritten. Fixed: sandbox and guard now keep the shared git dir read-only (see §9), `git config`/`remote`/`submodule` writes and case variants/aliases are blocked, worktree integrity is verified before Stet runs git there, `core.fsmonitor` is disabled for Stet's git calls, paths and ids are validated, agent text in the UI is escaped. Remaining (documented in §9): guard indirection bypasses on native Windows. Regression tests: `packages/core/test/security.test.ts` and the guard tests.
+
+### Code review (Codex, 2026-09-26)
+A second review (a local Codex report, not kept in the repository) reproduced seven issues, all fixed with regression tests in `packages/core/test/review-findings.test.ts` (each fails on the previous code):
+- **F1** hooks from the agent worktree ran during `stet_submit` when the project uses a relative `core.hooksPath` → no hooks and no submodules for git calls in agent worktrees.
+- **F2** workspace refresh wrote through a planted `.claude` junction → links in the worktree are replaced, writes go through a temp file + rename.
+- **F3** accept wrote through a junction in the project → no writes or reads through links; real destination must be inside the project and outside `.git`.
+- **F4** a failing write left a linked group half-applied with all items pending → preflight, journal, rollback, crash recovery.
+- **F5** a stale-lock timeout let a second owner in while the first was still working → owned lock with heartbeat, liveness check and token-checked release.
+- **F6** an accepted binary replacement was marked committed because the file existed → whole-file items compare content (and, for renames, that the old path is gone).
+- **F7** a JSON `null` message stalled the MCP server → envelope validation, per-request error isolation, runtime validation of tool arguments.
 
 ## 17. Open points to verify
 

@@ -20,6 +20,8 @@ export interface RunOptions {
   input?: string | Buffer;
   env?: Record<string, string>;
   allowFail?: boolean;
+  /** Extra `-c key=value` settings for this call. */
+  config?: string[];
 }
 
 export interface RunResult {
@@ -37,11 +39,21 @@ export const STET_IDENTITY = ["-c", "user.name=Stet", "-c", "user.email=stet@loc
  */
 const SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
 
+/**
+ * Settings for git calls Stet makes inside an agent worktree, whose files the agent controls.
+ * No hooks run: `core.hooksPath` names a path below a regular file, which can never contain
+ * hooks (a relative hooks path would otherwise resolve to the agent's own files). Submodules,
+ * whose config the agent could write, are not entered.
+ */
+export function untrustedWorktreeConfig(storeFile: string): string[] {
+  return [`core.hooksPath=${storeFile.replace(/\\/g, "/")}/no-hooks`, "diff.ignoreSubmodules=all", "submodule.recurse=false", "status.submoduleSummary=false"];
+}
+
 export function gitRaw(args: string[], opts: RunOptions): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       "git",
-      [...SAFE_CONFIG, ...args],
+      [...SAFE_CONFIG, ...(opts.config ?? []).flatMap((c) => ["-c", c]), ...args],
       {
         cwd: opts.cwd,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0", STET_INTERNAL: "1", ...opts.env },
@@ -88,13 +100,17 @@ export function compareVersions(a: string, b: string): number {
 
 /** A repository location: commands run in `cwd` (any worktree of the repo). */
 export class Repo {
-  constructor(readonly cwd: string) {}
+  /** `config`: extra settings for every git call in this repo (see `untrustedWorktreeConfig`). */
+  constructor(
+    readonly cwd: string,
+    readonly config: string[] = [],
+  ) {}
 
   run(args: string[], opts: Partial<RunOptions> = {}) {
-    return git(args, { cwd: this.cwd, ...opts });
+    return git(args, { cwd: this.cwd, config: this.config, ...opts });
   }
   tryRun(args: string[], opts: Partial<RunOptions> = {}) {
-    return tryGit(args, { cwd: this.cwd, ...opts });
+    return tryGit(args, { cwd: this.cwd, config: this.config, ...opts });
   }
 
   revParse(rev: string) {
@@ -102,7 +118,7 @@ export class Repo {
   }
 
   async readBlob(rev: string, path: string): Promise<Buffer | null> {
-    const r = await gitRaw(["cat-file", "blob", `${rev}:${path}`], { cwd: this.cwd, allowFail: true });
+    const r = await gitRaw(["cat-file", "blob", `${rev}:${path}`], { cwd: this.cwd, config: this.config, allowFail: true });
     return r.code === 0 ? r.stdout : null;
   }
 
@@ -119,7 +135,7 @@ export class Repo {
 
   /** Changed paths between two commits (renames detected). */
   async diffNames(a: string, b: string): Promise<{ status: string; path: string; oldPath?: string }[]> {
-    const out = await gitRaw(["diff", "--name-status", "-z", "-M", a, b], { cwd: this.cwd });
+    const out = await gitRaw(["diff", "--name-status", "-z", "-M", a, b], { cwd: this.cwd, config: this.config });
     const parts = out.stdout.toString("utf8").split("\0");
     const res: { status: string; path: string; oldPath?: string }[] = [];
     for (let i = 0; i < parts.length; ) {

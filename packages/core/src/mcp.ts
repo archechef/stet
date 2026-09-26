@@ -191,7 +191,14 @@ export class StetMcpServer {
   }
 
   /** Handle one JSON-RPC message; returns the response, or null for notifications. */
-  async handle(msg: JsonRpcRequest): Promise<object | null> {
+  async handle(raw: unknown): Promise<object | null> {
+    // Validate the envelope before touching any field (a client may send null, scalars, …).
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof (raw as any).method !== "string") {
+      const id = raw && typeof raw === "object" && !Array.isArray(raw) && validId((raw as any).id) ? (raw as any).id : null;
+      return { jsonrpc: "2.0", id, error: { code: -32600, message: "Invalid Request" } };
+    }
+    const msg = raw as JsonRpcRequest;
+    if (msg.id !== undefined && msg.id !== null && !validId(msg.id)) return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request: bad id" } };
     const isNotification = msg.id === undefined || msg.id === null;
     const reply = (result: unknown) => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, result });
     const fail = (code: number, message: string) => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, error: { code, message } });
@@ -244,8 +251,8 @@ export class StetMcpServer {
           const r = await stet.submit(agent, {
             title: String(args.title ?? "Untitled"),
             ...(args.rationale ? { rationale: String(args.rationale) } : {}),
-            ...(Array.isArray(args.groups) ? { groups: args.groups as GroupHint[] } : {}),
-            ...(Array.isArray(args.notes) ? { notes: args.notes as NoteHint[] } : {}),
+            ...(args.groups !== undefined ? { groups: groupHints(args.groups) } : {}),
+            ...(args.notes !== undefined ? { notes: noteHints(args.notes) } : {}),
           });
           const lines: string[] = [];
           if (r.changeset) lines.push(`Submitted ${r.changeset.id} "${r.changeset.title}" with ${r.items.length} item(s):`, ...r.items.map((i) => "  " + itemLine(i)));
@@ -304,11 +311,11 @@ export class StetMcpServer {
           return text(`Replied on ${it.id}.`);
         }
         case "stet_withdraw": {
-          const w = await stet.withdraw(agent, (args.itemIds ?? []).map(String), args.reason ? String(args.reason) : undefined);
+          const w = await stet.withdraw(agent, strings(args.itemIds ?? [], "itemIds"), args.reason ? String(args.reason) : undefined);
           return text(`Withdrawn: ${w.map((i) => i.id).join(", ")}. They disappear from your workspace at the next stet_sync.`);
         }
         case "stet_group": {
-          const r = await stet.group(agent, (args.itemIds ?? []).map(String), args.kind as GroupKind, String(args.title ?? ""), args.rationale ? String(args.rationale) : undefined);
+          const r = await stet.group(agent, strings(args.itemIds ?? [], "itemIds"), groupKind(args.kind), String(args.title ?? ""), args.rationale ? String(args.rationale) : undefined);
           return text(r.merged ? `Merged into ${itemLine(r.merged)}` : `Created group ${r.group!.id} (${r.group!.kind}): ${r.group!.items.join(", ")}`);
         }
         case "stet_ungroup": {
@@ -325,6 +332,45 @@ export class StetMcpServer {
 }
 
 /** Serve MCP over newline-delimited JSON on the given streams. Resolves when input ends. */
+// Tool arguments come from the agent: check their shape instead of trusting the published schema.
+const bad = (what: string): never => {
+  throw new StetError(`Invalid argument: ${what}.`);
+};
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+function strings(v: unknown, what: string): string[] {
+  if (!Array.isArray(v) || !v.every((x) => typeof x === "string" || typeof x === "number")) bad(`${what} must be a list of strings`);
+  return (v as unknown[]).map(String);
+}
+
+function groupKind(v: unknown): GroupKind {
+  if (v !== "linked" && v !== "atomic" && v !== "related") bad(`kind must be "linked", "atomic" or "related"`);
+  return v as GroupKind;
+}
+
+function groupHints(v: unknown): GroupHint[] {
+  if (!Array.isArray(v)) bad("groups must be a list");
+  return (v as unknown[]).map((g, n) => {
+    if (!isObj(g)) return bad(`groups[${n}] must be an object`);
+    return {
+      kind: groupKind(g.kind),
+      title: typeof g.title === "string" ? g.title : bad(`groups[${n}].title must be a string`),
+      ...(g.rationale !== undefined ? { rationale: String(g.rationale) } : {}),
+      where: strings(g.where, `groups[${n}].where`),
+    };
+  });
+}
+
+function noteHints(v: unknown): NoteHint[] {
+  if (!Array.isArray(v)) bad("notes must be a list");
+  return (v as unknown[]).map((x, n) => {
+    if (!isObj(x) || typeof x.note !== "string") return bad(`notes[${n}] must be an object with a "note" string`);
+    return { where: typeof x.where === "string" ? x.where : strings(x.where, `notes[${n}].where`), note: x.note };
+  });
+}
+
+const validId = (id: unknown) => typeof id === "string" || (typeof id === "number" && Number.isFinite(id));
+
 export async function serveStdio(server: StetMcpServer, input: Readable, output: Writable): Promise<void> {
   const rl = createInterface({ input, crlfDelay: Infinity });
   const send = (o: object) => output.write(JSON.stringify(o) + "\n");
@@ -339,13 +385,17 @@ export async function serveStdio(server: StetMcpServer, input: Readable, output:
       continue;
     }
     // Process in order; Stet operations are serialized by the store lock anyway.
-    queue = queue.then(async () => {
-      const batch = Array.isArray(msg) ? msg : [msg];
-      const out = (await Promise.all(batch.map((m) => server.handle(m)))).filter(Boolean) as object[];
-      if (Array.isArray(msg)) {
-        if (out.length) send(out);
-      } else if (out[0]) send(out[0]);
-    });
+    // One failing request must never stall the ones after it.
+    queue = queue
+      .then(async () => {
+        if (Array.isArray(msg) && msg.length === 0) return void send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } });
+        const batch: unknown[] = Array.isArray(msg) ? msg : [msg];
+        const out = (await Promise.all(batch.map((m) => server.handle(m).catch((e: any) => ({ jsonrpc: "2.0", id: null, error: { code: -32603, message: e?.message ?? String(e) } }))))).filter(Boolean) as object[];
+        if (Array.isArray(msg)) {
+          if (out.length) send(out);
+        } else if (out[0]) send(out[0]);
+      })
+      .catch(() => undefined);
   }
   await queue;
 }

@@ -1,10 +1,10 @@
 /** Stet service layer (spec §7, §12.1). All frontends go through this class. */
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, rmdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { applyItems, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
 import { anchor, captureContext, type Span } from "./anchor.js";
 import { matchesAny, type StetConfig } from "./config.js";
-import { gitRaw, Repo, STET_IDENTITY } from "./git.js";
+import { gitRaw, Repo, STET_IDENTITY, untrustedWorktreeConfig } from "./git.js";
 import {
   autoGroups,
   joinTitles,
@@ -29,7 +29,8 @@ import {
   type StetEvent,
 } from "./model.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
-import { Store } from "./store.js";
+import { Store, writeJsonAtomic } from "./store.js";
+import { inspect, prepare, readInside, replaceFile, UnsafePathError, type Target } from "./safefs.js";
 import { installHooks } from "./hooks.js";
 import { isWorkspaceFile, WORKSPACE_EXCLUDES, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
 import { verifyAgentWorktree, WorktreeIntegrityError } from "./worktree.js";
@@ -85,6 +86,14 @@ export interface ItemFilter {
 }
 
 // ---------------------------------------------------------------------------
+
+/** Journal of an accept in progress (`.git/stet/txn.json`). */
+interface AcceptJournal {
+  items: { id: string; appliedText: string; edited: boolean }[];
+  filesDone: boolean;
+  /** Original content (base64) of every file the accept writes; null = did not exist. */
+  files: { path: string; original: string | null }[];
+}
 
 interface Candidate extends Edit {
   file: string;
@@ -196,20 +205,15 @@ export class Stet {
 
   private workingView(): FileView {
     return {
+      // Like git, never follow links in the working copy (they could lead outside the project).
       read: async (p) => {
-        try {
-          const raw = await readFile(join(this.mainPath, p), "utf8");
-          return { text: toLf(raw), eol: detectEol(raw) };
-        } catch {
-          return null;
-        }
+        const buf = isSafeRepoPath(p) ? await readInside(this.mainPath, p) : null;
+        if (!buf) return null;
+        const raw = buf.toString("utf8");
+        return { text: toLf(raw), eol: detectEol(raw) };
       },
       blobId: async (p) => {
-        try {
-          await stat(join(this.mainPath, p));
-        } catch {
-          return null;
-        }
+        if (!isSafeRepoPath(p) || !(await readInside(this.mainPath, p))) return null;
         return this.repo.run(["hash-object", "--", p]);
       },
     };
@@ -231,19 +235,88 @@ export class Stet {
     return (await gitRaw(["cat-file", "blob", blob], { cwd: this.mainPath })).stdout;
   }
 
-  private async writeWorking(changes: Map<string, FileChange>): Promise<void> {
+  private get journalPath(): string {
+    return join(this.store.root, "txn.json");
+  }
+
+  /**
+   * Write accepted changes to the working copy, all or nothing (spec §7.4). Every destination is
+   * checked first (no links, nothing outside the project or in .git); the original contents are
+   * journaled; any failure restores them. `recoverInterrupted` finishes or undoes an accept that
+   * was cut off (crash, killed process).
+   */
+  private async writeWorking(changes: Map<string, FileChange>, resolutions: AcceptJournal["items"]): Promise<void> {
     // Items come from the store, which is plain files: re-check every path before touching disk.
     const bad = [...changes.keys()].filter((p) => !isSafeRepoPath(p));
     if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
-    for (const [p, c] of changes) {
-      const abs = join(this.mainPath, p);
-      if (c === null) await rm(abs, { force: true });
-      else {
-        await mkdir(dirname(abs), { recursive: true });
-        if ("blob" in c) await writeFile(abs, await this.blobBytes(c.blob));
-        else await writeFile(abs, fromLf(c.text, c.eol), "utf8");
+    const targets = new Map<string, Target>();
+    for (const p of changes.keys()) {
+      try {
+        targets.set(p, await inspect(this.mainPath, p, { forbidden: [this.commonDir] }));
+      } catch (e) {
+        if (e instanceof UnsafePathError) throw new StetError(`Nothing was applied: ${e.message}.`);
+        throw e;
       }
     }
+    const data = new Map<string, Buffer | string | null>();
+    for (const [p, c] of changes) data.set(p, c === null ? null : "blob" in c ? await this.blobBytes(c.blob) : fromLf(c.text, c.eol));
+
+    const journal: AcceptJournal = { items: resolutions, filesDone: false, files: [] };
+    for (const [p, t] of targets) journal.files.push({ path: p, original: t.exists ? (await readFile(t.path)).toString("base64") : null });
+    await writeJsonAtomic(this.journalPath, journal);
+
+    const createdDirs: string[] = [];
+    try {
+      for (const [p, d] of data) {
+        const t = targets.get(p)!;
+        if (d === null) {
+          if (t.exists) await rm(t.path);
+          continue;
+        }
+        createdDirs.push(...(await prepare(this.mainPath, t)));
+        await replaceFile(t.path, d);
+      }
+    } catch (e: any) {
+      await this.rollbackFiles(journal.files, createdDirs);
+      await rm(this.journalPath, { force: true });
+      throw new StetError(`Nothing was applied: writing ${e?.path ?? "a file"} failed (${e?.code ?? e?.message ?? e}). All files were restored.`);
+    }
+    journal.filesDone = true;
+    await writeJsonAtomic(this.journalPath, journal);
+  }
+
+  private async rollbackFiles(files: AcceptJournal["files"], createdDirs: string[]): Promise<void> {
+    for (const f of files) {
+      const abs = join(this.mainPath, f.path);
+      try {
+        if (f.original === null) await rm(abs, { force: true });
+        else await replaceFile(abs, Buffer.from(f.original, "base64"));
+      } catch {
+        /* keep restoring the others */
+      }
+    }
+    for (const d of createdDirs.reverse()) await rmdir(d).catch(() => undefined);
+  }
+
+  /** Finish (files all written) or undo (cut off while writing) an interrupted accept. Call under lock. */
+  private async recoverInterrupted(): Promise<void> {
+    let j: AcceptJournal;
+    try {
+      j = JSON.parse(await readFile(this.journalPath, "utf8"));
+    } catch {
+      return;
+    }
+    if (j.filesDone) {
+      for (const r of j.items) {
+        const it = await this.store.getItem(r.id);
+        if (!it || !isLive(it.status)) continue;
+        this.setStatus(it, "accepted", "user", "completed after an interruption");
+        it.resolution = { appliedText: r.appliedText, edited: r.edited, committed: null };
+        await this.store.putItem(it);
+        await this.store.appendEvent({ type: "accepted", agent: it.agent, items: [it.id], data: { item: await this.describe(it) } });
+      }
+    } else await this.rollbackFiles(j.files, []);
+    await rm(this.journalPath, { force: true });
   }
 
   private setStatus(item: Item, status: ItemStatus, by: "user" | "agent" | "stet", note?: string) {
@@ -268,11 +341,36 @@ export class Stet {
     };
   }
 
+  /**
+   * For an accepted whole-file item: is its effect in `view` ("done"), is the file still in its
+   * state before the change ("open"), or is something else there ("other")?
+   */
+  private async wholeFileState(it: Item, view: FileView): Promise<"done" | "open" | "other"> {
+    const blob = await view.blobId(it.file);
+    const text = async (p: string) => (await view.read(p))?.text ?? null;
+    switch (it.kind) {
+      case "binary":
+        return blob === (it.newBlob ?? null) ? "done" : blob === (it.oldBlob ?? null) ? "open" : "other";
+      case "delete-file":
+        return blob === null ? "done" : "open";
+      case "add-file":
+        return (await text(it.file)) === it.resolution!.appliedText ? "done" : blob === null ? "open" : "other";
+      case "rename-file": {
+        const oldGone = (await view.blobId(it.oldFile!)) === null;
+        if (oldGone && (await text(it.file)) === it.resolution!.appliedText) return "done";
+        return blob === null && !oldGone ? "open" : "other";
+      }
+      default:
+        return "other";
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Review base (§7.3)
 
   /** Make sure refs/stet/base = main HEAD + accepted-but-uncommitted items. Call under lock. */
   async ensureBase(): Promise<string> {
+    await this.recoverInterrupted();
     const cfg = await this.config();
     const head = await this.mainHead(cfg);
     const pending = (await this.store.items()).filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
@@ -281,12 +379,13 @@ export class Stet {
     for (const it of pending) {
       const applied = it.resolution!.appliedText;
       if (it.kind !== "modify") {
-        const exists = (await view.blobId(it.file)) !== null;
-        const done = it.kind === "delete-file" ? !exists : exists;
-        if (done) {
-          it.resolution!.committed = head;
+        // Compare content, not just existence: a replaced binary exists before and after.
+        const state = await this.wholeFileState(it, view);
+        if (state === "open") stillOpen.push(it);
+        else {
+          it.resolution!.committed = state === "done" ? head : `external:${head}`;
           await this.store.putItem(it);
-        } else stillOpen.push(it);
+        }
         continue;
       }
       const f = await view.read(it.file);
@@ -373,7 +472,7 @@ export class Stet {
 
   /** The agent whose worktree contains `cwd`; adopts matching worktrees made by other tools. */
   async agentForCwd(cwd: string): Promise<Agent> {
-    const wt = new Repo(cwd);
+    const wt = new Repo(cwd, this.untrustedConfig);
     const top = await wt.tryRun(["rev-parse", "--show-toplevel"]);
     const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
     const cfg = await this.config();
@@ -432,7 +531,12 @@ export class Stet {
   /** The agent's worktree, after checking it still belongs to this repository (spec §9). */
   private async agentRepo(agent: Agent): Promise<Repo> {
     await this.checkWorktree(agent.worktree);
-    return new Repo(agent.worktree);
+    return new Repo(agent.worktree, this.untrustedConfig);
+  }
+
+  /** Git settings for calls inside agent worktrees (no hooks, no submodules). */
+  get untrustedConfig(): string[] {
+    return untrustedWorktreeConfig(join(this.store.root, "config.json"));
   }
 
   private async checkWorktree(path: string): Promise<string> {
@@ -1040,6 +1144,7 @@ export class Stet {
     opts: { edited?: Record<string, string>; overrideLinked?: boolean; commit?: boolean } = {},
   ): Promise<AcceptResult> {
     return this.store.withLock(async () => {
+      await this.recoverInterrupted();
       const cfg = await this.config();
       const items = await this.requireItems(ids);
       for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
@@ -1088,18 +1193,24 @@ export class Stet {
         if (hit) stale.push(o);
       }
 
-      await this.writeWorking(res.changes);
+      const appliedText = (a: (typeof res.applied)[number]) => (a.item.kind === "binary" || a.item.kind === "delete-file" ? a.item.newText : a.text);
+      const editedOf = (a: (typeof res.applied)[number]) => overrides.has(a.item.id) && overrides.get(a.item.id) !== a.item.newText;
+      await this.writeWorking(
+        res.changes,
+        res.applied.map((a) => ({ id: a.item.id, appliedText: appliedText(a), edited: editedOf(a) })),
+      );
 
       for (const a of res.applied) {
-        const edited = overrides.has(a.item.id) && overrides.get(a.item.id) !== a.item.newText;
+        const edited = editedOf(a);
         this.setStatus(a.item, "accepted", "user");
-        a.item.resolution = { appliedText: a.item.kind === "modify" ? a.text : a.item.newText, edited, committed: null };
+        a.item.resolution = { appliedText: appliedText(a), edited, committed: null };
         await this.store.putItem(a.item);
         await this.store.appendEvent({
           type: "accepted", agent: a.item.agent, items: [a.item.id],
           data: { item: await this.describe(a.item), ...(edited ? { finalText: a.text } : {}) },
         });
       }
+      await rm(this.journalPath, { force: true });
       for (const s of stale) await this.markStale(s, `overlaps accepted ${res.applied.find((a) => a.item.file === s.file)!.item.id}`);
 
       let committed: string | null = null;

@@ -1,7 +1,7 @@
 /** Files Stet writes into agent workspaces: instructions, MCP config, guardrails (spec §9, §10). */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { Repo } from "./git.js";
+import { readInside, writeInside } from "./safefs.js";
+import { join } from "node:path";
+import { Repo, untrustedWorktreeConfig } from "./git.js";
 import { agentInstructions, STET_MARKER } from "./instructions.js";
 import type { Agent } from "./model.js";
 
@@ -128,7 +128,7 @@ function codexConfig(ctx: WorkspaceContext): string {
 
 /** Write (or refresh) the workspace files. Files tracked by the project are never touched. */
 export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<WorkspaceResult> {
-  const wt = new Repo(ctx.agent.worktree);
+  const wt = new Repo(ctx.agent.worktree, untrustedWorktreeConfig(join(ctx.commonDir, "stet", "config.json")));
   const tracked = new Set((await wt.run(["ls-files", "--", ...WORKSPACE_FILES])).split("\n").filter(Boolean));
   const result: WorkspaceResult = { written: [], skipped: [] };
   const put = async (file: string, content: string) => {
@@ -136,9 +136,8 @@ export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<Worksp
       result.skipped.push({ file, reason: "tracked by the project" });
       return false;
     }
-    const abs = join(ctx.agent.worktree, file);
-    await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, content, "utf8");
+    // The agent controls this folder: never follow links it may have planted.
+    await writeInside(ctx.agent.worktree, file, content);
     result.written.push(file);
     return true;
   };
@@ -147,12 +146,7 @@ export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<Worksp
   await put("CLAUDE.local.md", instructions);
 
   // Codex reads AGENTS.override.md *instead of* AGENTS.md: carry the project's own instructions over.
-  let projectAgents = "";
-  try {
-    projectAgents = await readFile(join(ctx.agent.worktree, "AGENTS.md"), "utf8");
-  } catch {
-    /* no AGENTS.md */
-  }
+  const projectAgents = (await readInside(ctx.agent.worktree, "AGENTS.md"))?.toString("utf8") ?? "";
   await put("AGENTS.override.md", (projectAgents && !projectAgents.includes(STET_MARKER) ? projectAgents.trimEnd() + "\n\n" : "") + instructions);
 
   await put(".mcp.json", JSON.stringify({ mcpServers: { stet: mcpServer(ctx) } }, null, 2) + "\n");
