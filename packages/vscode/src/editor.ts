@@ -181,7 +181,8 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   }
 }
 
-const esc = (s: string) => s.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, "\\$&");
+/** Escape agent-written text for Markdown, so it cannot add links or formatting. */
+export const esc = (s: string) => s.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, "\\$&");
 
 /** Markdown description of an item (hover, tooltips). */
 export function itemMarkdown(item: Item, model: TreeModel): string {

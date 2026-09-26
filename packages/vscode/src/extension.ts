@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { doctor, Stet, type Agent, type AgentKind, type Group, type Item } from "@stet/core";
-import { itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
+import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
   AGENT_ID,
@@ -191,7 +191,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         t.description = parts.join(" · ");
         t.iconPath = new vscode.ThemeIcon(n.agent.kind === "codex" ? "terminal" : "hubot");
         t.tooltip = new vscode.MarkdownString(
-          `**${n.agent.id}** (${n.agent.kind})\n\nWorkspace: \`${n.agent.worktree}\`` +
+          `**${esc(n.agent.id)}** (${n.agent.kind})\n\nWorkspace: ${esc(n.agent.worktree)}` +
             (snap.syncNeeded.has(n.agent.id) ? "\n\nThe agent works on an older version of your text; it catches up when it calls `stet_sync`." : ""),
         );
         t.contextValue = n.agent.state === "active" ? "agent" : "agent.archived";
@@ -203,7 +203,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const live = model.liveCount((i) => i.changeset === cs.id);
         t.description = `${cs.id} · ${live} pending`;
         t.iconPath = new vscode.ThemeIcon("layers");
-        t.tooltip = new vscode.MarkdownString(`**${cs.id}** ${cs.title}\n\n${cs.rationale}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`);
+        t.tooltip = new vscode.MarkdownString(`**${cs.id}** ${esc(cs.title)}\n\n${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`);
         t.contextValue = live ? "changeset.live" : "changeset.done";
         return t;
       }
@@ -217,8 +217,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
             ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
             : new vscode.ThemeIcon(g.kind === "linked" ? "link" : "symbol-namespace");
         t.tooltip = new vscode.MarkdownString(
-          `**${g.id}** ${g.kind}${g.source === "auto" ? " (detected by Stet)" : ""}: ${g.title}` +
-            (g.rationale ? `\n\n${g.rationale}` : "") +
+          `**${g.id}** ${g.kind}${g.source === "auto" ? " (detected by Stet)" : ""}: ${esc(g.title)}` +
+            (g.rationale ? `\n\n${esc(g.rationale)}` : "") +
             (g.kind === "linked" ? "\n\nAccept or reject these together: accepting only some can break the document." : "") +
             (g.state === "broken" ? "\n\n⚠ Some members were resolved differently; the agent was asked to repair the document." : ""),
         );

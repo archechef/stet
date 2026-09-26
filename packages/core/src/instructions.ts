@@ -17,6 +17,7 @@ here reaches the real document until a human accepts it.
 - When a coherent set of changes is done, call the \`stet_submit\` tool (or run
   \`stet submit -t "<title>" -m "<rationale>"\`) with a short title and a
   rationale. Submit in logical batches (e.g. one per section or concern).
+  Don't commit yourself or change git config: submitting commits your edits.
 - Tell Stet how changes belong together via \`groups\` in \`stet_submit\`.
   Locations are "file:line" or "file:from-to" in THIS folder after your edits:
   - \`linked\`: REQUIRED whenever accepting only some of the edits would break

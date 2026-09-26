@@ -32,7 +32,8 @@ import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store } from "./store.js";
 import { installHooks } from "./hooks.js";
 import { isWorkspaceFile, WORKSPACE_EXCLUDES, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
-import { detectEol, fromLf, isBinary, lineOf, lineRange, normalizeWs, sha256, toLf } from "./text.js";
+import { verifyAgentWorktree, WorktreeIntegrityError } from "./worktree.js";
+import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normalizeWs, sha256, toLf } from "./text.js";
 
 export class StetError extends Error {}
 
@@ -231,6 +232,9 @@ export class Stet {
   }
 
   private async writeWorking(changes: Map<string, FileChange>): Promise<void> {
+    // Items come from the store, which is plain files: re-check every path before touching disk.
+    const bad = [...changes.keys()].filter((p) => !isSafeRepoPath(p));
+    if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
     for (const [p, c] of changes) {
       const abs = join(this.mainPath, p);
       if (c === null) await rm(abs, { force: true });
@@ -363,7 +367,8 @@ export class Stet {
     const agent = typeof agentOrId === "string" ? await this.requireAgent(agentOrId) : agentOrId;
     const cfg = await this.config();
     if (!cfg.cli) return null;
-    return writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, cli: cfg.cli });
+    const gitDir = await this.checkWorktree(agent.worktree);
+    return writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, gitDir, cli: cfg.cli });
   }
 
   /** The agent whose worktree contains `cwd`; adopts matching worktrees made by other tools. */
@@ -378,6 +383,7 @@ export class Stet {
           `Create one with \`stet agent new <name>\` in the project and work inside the folder it prints.`,
       );
     }
+    await this.checkWorktree(top);
     const id = branch.slice(cfg.agentBranchPrefix.length);
     const existing = await this.store.getAgent(id);
     if (existing) return existing;
@@ -423,6 +429,21 @@ export class Stet {
     return (await wt.status()).map((l) => l.slice(3)).filter((p) => p && !isWorkspaceFile(p));
   }
 
+  /** The agent's worktree, after checking it still belongs to this repository (spec §9). */
+  private async agentRepo(agent: Agent): Promise<Repo> {
+    await this.checkWorktree(agent.worktree);
+    return new Repo(agent.worktree);
+  }
+
+  private async checkWorktree(path: string): Promise<string> {
+    try {
+      return await verifyAgentWorktree(path, this.commonDir);
+    } catch (e) {
+      if (e instanceof WorktreeIntegrityError) throw new StetError(e.message);
+      throw e;
+    }
+  }
+
   private async requireAgent(id: string): Promise<Agent> {
     const a = await this.store.getAgent(id);
     if (!a) throw new StetError(`Unknown agent '${id}'.`);
@@ -452,6 +473,9 @@ export class Stet {
     const changes = await this.repo.diffNames(base, tip);
     for (const ch of changes) {
       if (!touched.has(ch.path) && !(ch.oldPath && touched.has(ch.oldPath))) continue;
+      for (const p of [ch.path, ch.oldPath ?? ch.path]) {
+        if (!isSafeRepoPath(p)) throw new StetError(`The path '${p}' is not allowed in a proposal (it could reach the git directory on some systems). Remove or rename it, then submit again.`);
+      }
       // Stet's own workspace files are never proposals (unless the project tracks them).
       if (isWorkspaceFile(ch.path) && ch.status === "A") continue;
       const oldPath = ch.status === "R" ? ch.oldPath! : ch.path;
@@ -502,7 +526,7 @@ export class Stet {
       const agent = await this.requireAgent(agentId);
       if (agent.state !== "active") throw new StetError(`Agent '${agentId}' is archived.`);
       const base = await this.ensureBase();
-      const wt = new Repo(agent.worktree);
+      const wt = await this.agentRepo(agent);
       const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
       if (branch !== agent.branch) throw new StetError(`The agent workspace is on '${branch}', expected '${agent.branch}'.`);
 
@@ -819,7 +843,9 @@ export class Stet {
   async sync(agentId: string): Promise<SyncResult> {
     return this.store.withLock(async () => {
       const agent = await this.requireAgent(agentId);
-      const wt = new Repo(agent.worktree);
+      const wt = await this.agentRepo(agent);
+      const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
+      if (branch !== agent.branch) throw new StetError(`The agent workspace is on '${branch}', expected '${agent.branch}'.`);
       const dirty = await this.dirtyFiles(wt);
       if (dirty.length) {
         throw new StetError(
@@ -1017,6 +1043,8 @@ export class Stet {
       const cfg = await this.config();
       const items = await this.requireItems(ids);
       for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
+      const bad = items.flatMap((i) => [i.file, ...(i.oldFile !== undefined ? [i.oldFile] : [])]).filter((f) => !isSafeRepoPath(f));
+      if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
       const onBranch = await this.repo.tryRun(["symbolic-ref", "--short", "HEAD"]);
       if (onBranch !== cfg.mainBranch)
         throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before accepting.`);

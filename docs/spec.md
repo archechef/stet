@@ -2,7 +2,7 @@
 
 > *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-Status: **v0.5** (M1 done; M2 live-tested with the Claude desktop app, CLI/Codex runs pending; M3 implemented; see §16 notes) · 2026-09-26
+Status: **v0.6** (M1 done; M2 live-tested with the Claude desktop app, CLI/Codex runs pending; M3 implemented; security audit fixes; see §16 notes) · 2026-09-26
 
 Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
 
@@ -390,19 +390,31 @@ Anchoring is used for accepts, replay, and VS Code decorations on files the user
 
 ## 9. Guardrails (G1)
 
-Threat model: an agent that tries to be helpful and edits the wrong file, merges its branch, or pushes. Not an adversary.
+Threat model:
+- **Primary:** an agent that tries to be helpful and edits the wrong file, merges its branch, or pushes.
+- **Secondary:** an agent steered by text in the document or its sources (prompt injection) that tries to get changes past the reviewer. Where the agent tool has an OS sandbox (Claude Code on macOS/Linux/WSL2, Codex), Stet must hold against this too. Without a sandbox (Claude Code on native Windows), the agent runs shell commands as the user; the guard hook catches mistakes, not a determined adversary (see *Known limitations*).
+
+**Invariant:** an agent can write only its worktree (plus temp dirs) and the worktree's private git dir. The project folder, the shared git dir (config, hooks, objects, refs) and Stet's store in it are read-only to the agent. Stet's own processes (MCP server, CLI, VS Code), which the agent's sandbox does not cover, do all writes on the agent's behalf and treat everything the agent controls as untrusted.
 
 | Layer | Mechanism | Covers |
 |---|---|---|
 | **1. Isolation** | The agent's working folder is its worktree, which lives outside the repo. It contains no path into the user's working copy. | Normal edits: >99% of the risk. |
-| **2. Agent permissions — Claude Code** | Stet writes `.claude/settings.json` into the worktree (Claude Code loads hooks and settings from the session folder; `settings.local.json` would be read from the *main* checkout on macOS/Linux). It contains: <ul><li>`deny` for `Edit` on the user's project (`Edit(//c/…/paper/**)`) and on Stet's own workspace files</li><li>`deny` for `Bash(git push *)`, `git merge`, `git rebase`, `git switch`, `git worktree`, `git update-ref`, `git branch -f/-D/-m/-M`</li><li>a `PreToolUse` hook `stet guard` (Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell) that blocks writes outside the workspace (temp and scratchpad dirs allowed), edits to Stet's files, git commands that bypass review, pointing git elsewhere, and shell commands that write into the user's project</li><li>on macOS/Linux/WSL2: the Bash sandbox (`sandbox.enabled`), writable = workspace + temp + the repo's git dir. Native Windows has no sandbox.</li></ul> If the project tracks `.claude/settings.json`, Stet uses `.claude/settings.local.json` instead. | Absolute-path writes and git misuse. Applies in the CLI and the desktop app. |
+| **2. Agent permissions — Claude Code** | Stet writes `.claude/settings.json` into the worktree (Claude Code loads hooks and settings from the session folder; `settings.local.json` would be read from the *main* checkout on macOS/Linux). It contains: <ul><li>`deny` for `Edit` on the user's project (`Edit(//c/…/paper/**)`) and on Stet's own workspace files</li><li>`deny` for `Bash(git push *)`, `git merge`, `git rebase`, `git switch`, `git worktree`, `git update-ref`, `git branch -f/-D/-m/-M`</li><li>a `PreToolUse` hook `stet guard` (Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell) that blocks writes outside the workspace (temp and scratchpad dirs allowed), writes into the shared git dir, edits to Stet's files and to the worktree's `.git` link (case-insensitive on Windows), git commands that bypass review, `git config`/`git remote`/`git submodule` changes, pointing git elsewhere (`--git-dir`, `GIT_DIR`/`GIT_CONFIG_*`, `core.hooksPath`, aliases), and shell commands that write into the user's project</li><li>on macOS/Linux/WSL2: the Bash sandbox (`sandbox.enabled`), writable = workspace + temp + the worktree's *private* git dir (`.git/worktrees/<name>`: index, HEAD). The shared git dir stays read-only, so agents cannot commit themselves; `stet_submit` commits for them. Native Windows has no sandbox.</li></ul> If the project tracks `.claude/settings.json`, Stet uses `.claude/settings.local.json` instead. | Absolute-path writes and git misuse. Applies in the CLI and the desktop app. |
 | **2'. Agent permissions — Codex** | `.codex/config.toml` in the worktree sets `sandbox_mode = "workspace-write"` (project config needs the folder to be trusted). | Same. |
 | **3. Git hooks** (installed in the common hooks dir, so they apply to all worktrees) | <ul><li>`reference-transaction`: rejects any update to `refs/heads/<main>` made from an agent worktree; any update of the main branch that brings in commits only agent branches have (fast-forward or merge commit); and any update to `refs/stet/*` not made by Stet (Stet sets `STET_INTERNAL=1`)</li><li>`pre-push`: rejects pushing from an agent worktree and pushing `stet/*` branches</li></ul> | Merges and pushes that bypass review, including an accidental "merge branch" button click in some UI. |
 
 Hook installation chains existing hooks (kept as `<name>.stet-orig`) rather than replacing them, and `stet hooks uninstall` restores them. With a custom `core.hooksPath` (e.g. husky) nothing is installed unless forced. It can be turned off (`guardHooks: false`).
 
+**Stet-side checks** (they hold even when layer 2 is bypassed):
+- **Worktree integrity:** before running git in an agent worktree (submit, sync, workspace refresh, doctor), Stet verifies that its `.git` file points to `<common git dir>/worktrees/<name>`, that `commondir` points back to the project's repository, and that there is no `config.worktree`. Otherwise an agent could redirect Stet's git calls to a git dir of its own whose config runs commands (filters, hooks) outside the sandbox.
+- **No `core.fsmonitor`** for any git command Stet runs (`-c core.fsmonitor=false`).
+- **Paths:** submitted and accepted paths must be relative, without `.`/`..` segments, and must not reach the git dir on any platform (`.git`, `GIT~1`, `.git.`, `:` streams). Accept re-checks this, since the store is plain files.
+- **Ids** from agents are validated before they are used as file names in the store.
+- **UI:** agent-written text is escaped in Markdown (hovers, tooltips) and shown as plain text in comment threads; only Stet's own action links are trusted.
+
 Known limitations:
-- A shell command writing through an absolute path is stopped only by layers 2 and 2' (and only best effort on native Windows, where there is no sandbox).
+- **Native Windows (Claude Code):** there is no OS sandbox, so layer 2 is the only barrier for shell commands, and it parses commands heuristically. Indirection (`cd` chains, shell variables, `~`, paths assembled inside a script) gets past it (security audit 2026-09-26). An agent that deliberately does so can write the project's git dir or Stet's store, e.g. forge a proposal or replace the bundled CLI (the VS Code extension restores it on its next start). For documents or sources that may contain prompt injection, run the agent in WSL2 or another sandboxed setup.
+- A shell command writing through an absolute path is stopped only by layers 2 and 2'.
 - **Fast-forward merges:** git writes the working tree *before* any hook can object. The hook stops the branch from moving and prints how to undo the file changes (`git restore --staged --worktree :/`), but the files are already touched.
 
 ---
@@ -606,6 +618,9 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 - Tests: unit tests for the view model; `npm run test:integration -w stet-vscode` starts the installed VS Code with a throwaway profile against a fixture project and checks activation, runtime install for both runtimes, an MCP handshake through the recorded command, CodeLens, hover, diff document, lenses following unsaved edits, accept, and go-to-change (18 checks, both runtimes pass). Not in CI (needs a VS Code install and a display).
 - Still to do for the M3 acceptance criteria: a hands-on run of the full workflow from VS Code plus the desktop app (panel, dialogs, keyboard review, threads, setup from scratch, *Finish review*). Test plan: [live-tests.md](live-tests.md) §A; user guide: [vscode.md](vscode.md).
 - Not done: *Preview in PDF* (M5), undo of accepted items, dismissing auto groups from the UI (use *Dissolve group*).
+
+### Security audit (2026-09-26)
+An independent audit (read-only, with reproductions against scratch repositories) found the shared git dir writable to agents: the guard exempted it for shell commands, and the macOS/Linux sandbox allowed it. Confirmed consequences: `git config core.fsmonitor '<cmd>'` from the agent ran `<cmd>` on the user's next `git status` and modified the real file; the bundled CLI and the store could be overwritten. Fixed: sandbox and guard now keep the shared git dir read-only (see §9), `git config`/`remote`/`submodule` writes and case variants/aliases are blocked, worktree integrity is verified before Stet runs git there, `core.fsmonitor` is disabled for Stet's git calls, paths and ids are validated, agent text in the UI is escaped. Remaining (documented in §9): guard indirection bypasses on native Windows. Regression tests: `packages/core/test/security.test.ts` and the guard tests.
 
 ## 17. Open points to verify
 

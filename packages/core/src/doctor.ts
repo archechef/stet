@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { compareVersions, gitVersion, Repo } from "./git.js";
 import { hookStatus } from "./hooks.js";
+import { verifyAgentWorktree } from "./worktree.js";
 import { isWorkspaceFile } from "./workspace.js";
 import { isLive } from "./model.js";
 import { BASE_REF, Stet } from "./service.js";
@@ -178,6 +179,12 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
     }
     if (wt.branch !== a.branch) {
       add({ name: n, status: "error", message: `workspace is on '${wt.branch}', expected '${a.branch}'`, fix: `git -C "${a.worktree}" switch ${a.branch}` });
+      continue;
+    }
+    try {
+      await verifyAgentWorktree(a.worktree, stet.commonDir);
+    } catch (e: any) {
+      add({ name: n, status: "error", message: e.message, fix: `stet agent archive ${a.id} --remove  (then create a new one)` });
       continue;
     }
     const dirty = (await new Repo(a.worktree).status()).filter((l) => !isWorkspaceFile(l.slice(3))).length;

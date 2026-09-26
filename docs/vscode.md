@@ -17,7 +17,7 @@ The extension is not on the Marketplace yet. It is distributed as a single file,
 - VS Code 1.100 or newer
 - git 2.28 or newer (on Windows: *Git for Windows*, which Claude Code needs anyway)
 
-Node.js is optional (see [§8](#8-settings)).
+Node.js is optional (see [§9](#9-settings)).
 
 **Building the `.vsix` yourself** (in the Stet repository):
 
@@ -184,7 +184,13 @@ Run **Stet: Check setup (doctor)** first. It checks git, the hooks, the agent wo
 
 ---
 
-## 8. Settings
+## 8. Security
+
+Agents can write only their own workspace folder. Your project, its `.git` folder and Stet's data are read-only to them, and Stet checks what they submit (paths, git links, ids) before using it. On macOS, Linux and WSL2 the agent tools' sandbox enforces this. On native Windows, Claude Code has no sandbox: a guard hook blocks edits and commands aimed at your project, which reliably catches mistakes, but a deliberately evasive agent (for example one following instructions hidden in a source document) can get around it. For untrusted material, run the agent in WSL2. Details: [spec.md](spec.md) §9.
+
+---
+
+## 9. Settings
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -199,7 +205,7 @@ Run **Stet: Check setup (doctor)** first. It checks git, the hooks, the agent wo
 
 ---
 
-## 9. For developers
+## 10. For developers
 
 - **Source:** `packages/vscode/src`
   - `extension.ts`: panel, commands, setup

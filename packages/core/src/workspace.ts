@@ -49,12 +49,14 @@ export interface WorkspaceContext {
   agent: Agent;
   mainPath: string;
   commonDir: string;
+  /** The worktree's private git dir (`<commonDir>/worktrees/<name>`), already verified. */
+  gitDir: string;
   cli: CliCommand;
   platform?: NodeJS.Platform;
 }
 
 function claudeSettings(ctx: WorkspaceContext): object {
-  const { cli, mainPath, commonDir } = ctx;
+  const { cli, mainPath, gitDir } = ctx;
   // Hook commands run in a POSIX shell (Git Bash on Windows), so `VAR=value cmd` works everywhere.
   const envPrefix = Object.entries(cli.env ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)} `).join("");
   const hookCmd = envPrefix + [cli.command, ...cli.args].map(quote).join(" ") + " guard";
@@ -90,10 +92,13 @@ function claudeSettings(ctx: WorkspaceContext): object {
     },
     enabledMcpjsonServers: ["stet"],
   };
-  // The Bash sandbox exists on macOS, Linux and WSL2 only. By default it lets
-  // commands write to this workspace; Stet's store lives in the git dir.
+  // The Bash sandbox exists on macOS, Linux and WSL2 only. By default it lets commands write
+  // to this workspace. Of the shared git dir, only the worktree's private part (index, HEAD) is
+  // writable: the repository config, hooks, objects, refs and Stet's store stay read-only, so
+  // the agent cannot plant commands that run outside the sandbox. Stet itself commits for the
+  // agent (stet_submit), from outside the sandbox.
   if ((ctx.platform ?? process.platform) !== "win32") {
-    settings.sandbox = { enabled: true, filesystem: { allowWrite: [fwd(commonDir)] } };
+    settings.sandbox = { enabled: true, filesystem: { allowWrite: [fwd(gitDir)] } };
   }
   return settings;
 }

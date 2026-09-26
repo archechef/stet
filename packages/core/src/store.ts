@@ -48,6 +48,9 @@ async function readJson<T>(path: string): Promise<T | null> {
 
 const lockContext = new AsyncLocalStorage<Store>();
 
+/** Item, group, changeset and agent ids: a name, never a path. */
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export class Store {
 
   constructor(readonly root: string) {}
@@ -128,6 +131,8 @@ export class Store {
   }
 
   private async getOne<T>(kind: "agents" | "changesets" | "groups" | "items", id: string): Promise<T | null> {
+    // Ids come from agents (MCP arguments): never let one name a path.
+    if (!SAFE_ID.test(id)) return null;
     return readJson<T>(join(this.dir(kind), `${id}.json`));
   }
   private async list<T>(kind: "agents" | "changesets" | "groups" | "items"): Promise<T[]> {
@@ -146,6 +151,7 @@ export class Store {
     return out.sort((a, b) => num(a) - num(b) || String((a as any).id).localeCompare(String((b as any).id)));
   }
   private put(kind: "agents" | "changesets" | "groups" | "items", v: { id: string }) {
+    if (!SAFE_ID.test(v.id)) throw new Error(`Invalid id '${v.id}'.`);
     return writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
   }
 

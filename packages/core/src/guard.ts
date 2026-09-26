@@ -5,7 +5,7 @@
  */
 import { tmpdir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
-import { isWorkspaceFile } from "./workspace.js";
+import { WORKSPACE_FILES } from "./workspace.js";
 
 export interface GuardContext {
   /** Root of the agent workspace (worktree). */
@@ -52,12 +52,34 @@ function abs(p: string, cwd: string): string {
   return isAbsolute(n) ? resolve(n) : resolve(cwd, n);
 }
 
-const GIT_BLOCKED = /\bgit\b(?:\s+(?:-c\s+\S+|-C\s+\S+|--[\w-]+(?:=\S+)?))*\s+(push|merge|rebase|switch|worktree|update-ref|filter-branch|filter-repo|replace|symbolic-ref)\b/;
-const GIT_CHECKOUT = /\bgit\b(?:\s+(?:-c\s+\S+|-C\s+\S+|--[\w-]+(?:=\S+)?))*\s+checkout\b(?![^;&|]*\s--(\s|$))/;
+const GIT_OPTS = String.raw`\bgit\b(?:\s+(?:-c\s+\S+|-C\s+\S+|--[\w-]+(?:=\S+)?))*\s+`;
+const GIT_BLOCKED = new RegExp(GIT_OPTS + String.raw`(push|merge|rebase|switch|worktree|update-ref|filter-branch|filter-repo|replace|symbolic-ref|submodule)\b`);
+const GIT_CHECKOUT = new RegExp(GIT_OPTS + String.raw`checkout\b(?![^;&|]*\s--(\s|$))`);
 const GIT_BRANCH_WRITE = /\bgit\b(?:\s+\S+)*?\s+branch\b[^;&|]*\s(-[a-zA-Z]*[fdDmMcC][a-zA-Z]*|--force|--delete|--move|--copy)\b/;
-const GIT_DIR_OVERRIDE = /\bgit\b[^;&|]*\s(--git-dir|--work-tree)\b|\bGIT_(DIR|WORK_TREE|INDEX_FILE)=|core\.hooksPath|STET_INTERNAL/;
+/** Git config is shared with the user's project: writing it could make the user's git run commands. */
+const GIT_CONFIG_WRITE = new RegExp(
+  GIT_OPTS + String.raw`config\b(?![^;&|]*\s(?:--get(?:-all|-regexp|-urlmatch|-color|-colorbool)?|--list|-l|get|list)(?:\s|$))`,
+);
+const GIT_REMOTE_WRITE = new RegExp(GIT_OPTS + String.raw`remote\s+(add|set-url|rename|remove|rm|set-head|set-branches|prune|update)\b`);
+// Config keys are case-insensitive (core.HOOKSPATH); aliases would get around the verb checks.
+const GIT_DIR_OVERRIDE =
+  /\bgit\b[^;&|]*\s(--git-dir|--work-tree)\b|\bGIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|CONFIG\w*)=|core\.hooksPath|\balias\.|STET_INTERNAL/i;
 const READ_ONLY_START = /^\s*(cat|less|more|head|tail|ls|dir|grep|rg|find|wc|type|file|stat|Get-Content|Get-ChildItem|Select-String|diff|cmp)\b/i;
 const WRITE_HINT = /(^|[^<>])>{1,2}(?!&)|\|\s*tee\b|\b(rm|mv|cp|touch|mkdir|rmdir|sed\s+-i|perl\s+-i|truncate|dd|ln|chmod|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b/i;
+
+/**
+ * Files in the worktree that belong to Stet: its settings and instructions, the `.claude` and
+ * `.codex` folders, and the `.git` link. Case-insensitive on Windows (`.CLAUDE/settings.json`
+ * is the same file there).
+ */
+function isOwnFile(rel: string): boolean {
+  const fold = (s: string) => (process.platform === "win32" ? s.toLowerCase() : s);
+  const r = fold(rel);
+  return (
+    WORKSPACE_FILES.some((f) => fold(f) === r) ||
+    [".claude", ".codex", ".git"].some((d) => r === d || r.startsWith(d + "/"))
+  );
+}
 
 /** Returns a reason to block, or null to allow. */
 export function checkToolUse(input: HookInput, ctx: GuardContext): string | null {
@@ -68,6 +90,7 @@ export function checkToolUse(input: HookInput, ctx: GuardContext): string | null
 
   const checkWrite = (file: string): string | null => {
     const p = abs(file, cwd);
+    if (isInside(p, ctx.commonDir)) return `Stet: ${file} is inside the project's git directory, which agents must not change.`;
     if (isInside(p, ctx.mainPath) || !writable.some((w) => isInside(p, w))) {
       return (
         `Stet: ${file} is outside your proposal workspace (${ctx.worktree}). ` +
@@ -76,7 +99,7 @@ export function checkToolUse(input: HookInput, ctx: GuardContext): string | null
     }
     if (isInside(p, ctx.worktree)) {
       const rel = relative(ctx.worktree, p).replace(/\\/g, "/");
-      if (isWorkspaceFile(rel)) return `Stet: ${rel} is managed by Stet and must not be edited.`;
+      if (isOwnFile(rel)) return `Stet: ${rel} is managed by Stet and must not be edited.`;
     }
     return null;
   };
@@ -100,15 +123,18 @@ export function checkToolUse(input: HookInput, ctx: GuardContext): string | null
     if (GIT_BLOCKED.test(cmd)) return gitMsg(`\`git ${GIT_BLOCKED.exec(cmd)![1]}\``);
     if (GIT_CHECKOUT.test(cmd)) return gitMsg("switching branches with `git checkout`") + " To discard a file's changes use `git restore <file>`.";
     if (GIT_BRANCH_WRITE.test(cmd)) return gitMsg("changing branches with `git branch`");
-    if (GIT_DIR_OVERRIDE.test(cmd)) return gitMsg("pointing git at another repository or hooks path");
+    if (GIT_DIR_OVERRIDE.test(cmd)) return gitMsg("pointing git at another repository, hooks path or alias");
+    if (GIT_CONFIG_WRITE.test(cmd)) return gitMsg("changing git config (it is shared with the reviewer's project)") + " Reading it with `git config --get <key>` is fine.";
+    if (GIT_REMOTE_WRITE.test(cmd)) return gitMsg("changing git remotes");
 
     // Paths mentioned in the command that lead into the user's project.
     const tokens = cmd.match(/"[^"]*"|'[^']*'|[^\s;&|<>()]+/g) ?? [];
     const pathLike = tokens.map((t) => t.replace(/^["']|["']$/g, "")).filter((t) => /[\\/]/.test(t) && !/^https?:/.test(t));
+    // The git dir counts as part of the project: its config and hooks run in the reviewer's git.
     const touchesMain = pathLike.some((t) => {
       try {
         const p = abs(t, cwd);
-        return isInside(p, ctx.mainPath) && !isInside(p, ctx.commonDir);
+        return isInside(p, ctx.mainPath) || isInside(p, ctx.commonDir);
       } catch {
         return false;
       }
@@ -124,13 +150,13 @@ export function checkToolUse(input: HookInput, ctx: GuardContext): string | null
 
     // Stet's own workspace files (settings, MCP config, instructions) may be read but not changed.
     // Match the names anywhere, including inside quoted code such as python -c "open('.claude/…')".
-    const names = cmd.match(/[\w:.\/\\~-]*?(?:\.claude|\.codex|CLAUDE\.local\.md|AGENTS\.override\.md|\.mcp\.json)[\w.\/\\-]*/g) ?? [];
+    // The worktree's `.git` file links it to the repository; changing it would redirect Stet's git calls.
+    const names = cmd.match(/[\w:.\/\\~-]*?(?:\.claude|\.codex|CLAUDE\.local\.md|AGENTS\.override\.md|\.mcp\.json|\.git\b)[\w.\/\\-]*/gi) ?? [];
     const touchesOwn = names.some((t) => {
       try {
         const p = abs(t, cwd);
         if (!isInside(p, ctx.worktree)) return false;
-        const rel = relative(ctx.worktree, p).replace(/\\/g, "/");
-        return isWorkspaceFile(rel) || rel === ".claude" || rel === ".codex" || rel.startsWith(".claude/") || rel.startsWith(".codex/");
+        return isOwnFile(relative(ctx.worktree, p).replace(/\\/g, "/"));
       } catch {
         return false;
       }

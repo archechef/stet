@@ -73,6 +73,44 @@ describe("guard: shell commands", () => {
     expect(bash("grep -n hooks .claude/settings.json")).toBeNull();
   });
 
+  it("blocks git config and remote changes (shared with the user's project), allows reading", () => {
+    for (const c of [
+      "git config core.fsmonitor 'echo pwned'",
+      "git config --global alias.x push",
+      "git config core.hooksPath hooks",
+      "git -c core.HOOKSPATH=h commit -m x",
+      "git -c alias.p=push p",
+      "GIT_CONFIG_COUNT=1 git status",
+      "git remote add evil https://example.com/x.git",
+      "git remote set-url origin x",
+      "git submodule add https://example.com/x.git",
+    ])
+      expect(bash(c), c).toMatch(/not allowed/);
+    for (const c of ["git config --get user.name", "git config --list", "git config -l", "git config get user.email", "git remote -v", "git remote show origin"])
+      expect(bash(c), c).toBeNull();
+  });
+
+  it("treats the project's git dir as part of the project", () => {
+    const hooks = join(ctx.commonDir, "hooks", "post-checkout").replace(/\\/g, "/");
+    expect(bash(`echo evil > "${hooks}"`)).toMatch(/project folder/);
+    expect(bash("cp evil.mjs ../../paper/.git/stet/bin/stet.mjs")).toMatch(/project folder/);
+    expect(bash("echo {} > ../../paper/.git/stet/items/S1.json")).toMatch(/project folder/);
+    expect(edit(join(ctx.commonDir, "config"), "Write")).toMatch(/git directory/);
+    expect(bash("cat ../../paper/.git/config")).toBeNull();
+  });
+
+  it("protects the worktree's .git link", () => {
+    expect(bash('echo "gitdir: ./evil" > .git')).toMatch(/Stet manages/);
+    expect(edit(".git", "Write")).toMatch(/managed by Stet/);
+    expect(bash("cat .git")).toBeNull();
+    expect(edit(".gitignore")).toBeNull();
+  });
+
+  it.runIf(process.platform === "win32")("matches Stet's files case-insensitively on Windows", () => {
+    expect(bash("echo {} > .CLAUDE/settings.json")).toMatch(/Stet manages/);
+    expect(edit(".Claude/Settings.json", "Write")).toMatch(/managed by Stet/);
+  });
+
   it("applies the same rules to PowerShell", () => {
     expect(checkToolUse({ cwd: wt, tool_name: "PowerShell", tool_input: { command: "git push" } }, ctx)).toMatch(/not allowed/);
   });

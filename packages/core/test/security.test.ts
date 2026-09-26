@@ -1,0 +1,112 @@
+/** Findings of the 2026-09-26 security audit: each test reproduces an attack and checks it fails. */
+import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { doctor } from "../src/doctor.js";
+import { isSafeRepoPath } from "../src/text.js";
+import { writeWorkspaceFiles } from "../src/workspace.js";
+import { verifyAgentWorktree } from "../src/worktree.js";
+import { edit, git, PAPER, read, setup } from "./helpers.js";
+
+/** Overwrite a file in place (git marks a worktree's .git file hidden, and Windows refuses to replace hidden files). */
+function overwrite(path: string, text: string) {
+  const fd = openSync(path, "r+");
+  ftruncateSync(fd);
+  writeSync(fd, text);
+  closeSync(fd);
+}
+
+const FAKE_CLI = { command: "/usr/bin/node", args: ["/opt/stet/cli.js"] };
+
+describe("agent workspace integrity", () => {
+  it("refuses to run git in a worktree whose .git file was redirected", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    // The agent builds its own git dir with a config that would run commands, and points .git at it.
+    const evil = join(wt, "evil");
+    git(wt, "init", "-q", "--bare", evil);
+    overwrite(join(wt, ".git"), `gitdir: ${evil.replace(/\\/g, "/")}\n`);
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    await expect(stet.submit("a", { title: "t" })).rejects.toThrow(/refuses to run git/);
+    await expect(stet.sync("a")).rejects.toThrow(/refuses to run git/);
+    await expect(stet.agentForCwd(wt)).rejects.toThrow(/not a Stet agent workspace|refuses/);
+    const checks = await doctor(repo);
+    expect(checks.find((c) => c.name.includes("agent a"))?.status).toBe("error");
+  });
+
+  it("refuses a worktree whose git dir points to another repository", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    const gitDir = await verifyAgentWorktree(wt, stet.commonDir);
+    const other = join(wt, "..", "other.git");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(gitDir, "commondir"), other.replace(/\\/g, "/") + "\n");
+    await expect(stet.submit("a", { title: "t" })).rejects.toThrow(/another repository/);
+  });
+
+  it("refuses a worktree with its own config.worktree", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    const gitDir = await verifyAgentWorktree(wt, stet.commonDir);
+    writeFileSync(join(gitDir, "config.worktree"), "[core]\n\tfsmonitor = x\n");
+    await expect(stet.submit("a", { title: "t" })).rejects.toThrow(/config\.worktree/);
+  });
+
+  it("never lets a configured fsmonitor run during Stet's own git calls", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    const marker = join(repo, "..", "fsmonitor-ran").replace(/\\/g, "/");
+    git(repo, "config", "core.fsmonitor", `echo x > "${marker}"; false`);
+    // Sanity: plain git does run it (otherwise this test proves nothing on this platform).
+    git(repo, "status", "--porcelain");
+    if (!existsSync(marker)) return;
+    const { rmSync } = await import("node:fs");
+    rmSync(marker);
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const { items } = await stet.submit("a", { title: "t" });
+    await stet.accept([items[0]!.id]);
+    await stet.sync("a");
+    await doctor(repo);
+    expect(existsSync(marker)).toBe(false);
+    git(repo, "config", "--unset", "core.fsmonitor");
+  });
+
+  it("limits the macOS/Linux sandbox to the worktree's private git dir", async () => {
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const agent = await stet.newAgent("a");
+    const gitDir = await verifyAgentWorktree(agent.worktree, stet.commonDir);
+    await writeWorkspaceFiles({ agent, mainPath: stet.mainPath, commonDir: stet.commonDir, gitDir, cli: FAKE_CLI, platform: "linux" });
+    const settings = JSON.parse(readFileSync(join(agent.worktree, ".claude/settings.json"), "utf8"));
+    expect(settings.sandbox.filesystem.allowWrite).toEqual([gitDir.replace(/\\/g, "/")]);
+    expect(gitDir.replace(/\\/g, "/")).toMatch(/\/worktrees\/[^/]+$/);
+  });
+});
+
+describe("store and paths", () => {
+  it("does not let ids name paths", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    await expect(stet.getItem("../config")).resolves.toBeNull();
+    await expect(stet.getItem("..\\state")).resolves.toBeNull();
+    await expect(stet.store.getAgent("../../config")).resolves.toBeNull();
+  });
+
+  it("refuses to accept a forged item that writes outside the project or into .git", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const [real] = (await stet.submit("a", { title: "t" })).items;
+    for (const file of ["../evil.tex", "GIT~1/config", ".git/config", ".GIT./hooks/x"]) {
+      // An agent that can write the store forges an innocent-looking new-file proposal.
+      await stet.store.putItem({ ...real!, id: "S99", kind: "add-file", file, oldText: "", newText: "[core]\n", range: { start: 0, end: 0 }, groups: [] });
+      await expect(stet.accept(["S99"])).rejects.toThrow(/Refusing to write/);
+    }
+    expect(existsSync(join(repo, "..", "evil.tex"))).toBe(false);
+    expect(read(repo, ".git/config")).not.toBe("[core]\n");
+  });
+
+  it("classifies repository paths", () => {
+    for (const p of ["main.tex", "sections/intro.tex", "a/.gitignore", ".github/x.yml", "fig/git~x.png"]) expect(isSafeRepoPath(p), p).toBe(true);
+    for (const p of ["", "../x", "a/../../x", "/etc/x", "C:/x", "c:x", ".git", ".git/config", "a/.GIT/x", ".git./x", ".git /x", "GIT~1/config", "git~2", "a/b:stream", "a//b", "./a"])
+      expect(isSafeRepoPath(p), p).toBe(false);
+  });
+});

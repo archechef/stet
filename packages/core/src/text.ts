@@ -75,6 +75,20 @@ export function similarity(a: string, b: string): number {
   return max === 0 ? 1 : 1 - levenshtein(a, b) / max;
 }
 
+/**
+ * Whether `p` is a safe repository-relative path to write in the user's project: relative,
+ * no `.`/`..` segments, and nothing that reaches the git dir on any platform (`.git`,
+ * Windows aliases such as `GIT~1` or `.git.`, alternate data streams).
+ */
+export function isSafeRepoPath(p: string): boolean {
+  if (!p || p.includes("\0") || /^[\\/]/.test(p) || /^[A-Za-z]:/.test(p)) return false;
+  return p.split(/[\\/]/).every((seg) => {
+    if (seg === "" || seg === "." || seg === "..") return false;
+    const win = seg.replace(/[. ]+$/, "").toLowerCase();
+    return win !== ".git" && !/^git~\d+$/.test(win) && !seg.includes(":");
+  });
+}
+
 export function isBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8000);
   for (let i = 0; i < n; i++) if (buf[i] === 0) return true;

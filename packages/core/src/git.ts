@@ -31,11 +31,17 @@ export interface RunResult {
 /** Identity for commits Stet makes on its own refs and agent branches. */
 export const STET_IDENTITY = ["-c", "user.name=Stet", "-c", "user.email=stet@localhost"];
 
+/**
+ * Options for every git call Stet makes. Stet runs git in agent workspaces from outside any
+ * sandbox, so nothing configured there may run commands: no filesystem monitor.
+ */
+const SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
+
 export function gitRaw(args: string[], opts: RunOptions): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       "git",
-      args,
+      [...SAFE_CONFIG, ...args],
       {
         cwd: opts.cwd,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0", STET_INTERNAL: "1", ...opts.env },

@@ -14,3 +14,4 @@ export { installHooks, uninstallHooks, hookStatus, HOOK_NAMES, type HookStatus }
 export { writeWorkspaceFiles, WORKSPACE_FILES, isWorkspaceFile, type CliCommand, type WorkspaceResult } from "./workspace.js";
 export { agentInstructions, MCP_INSTRUCTIONS } from "./instructions.js";
 export { Repo } from "./git.js";
+export { verifyAgentWorktree, WorktreeIntegrityError } from "./worktree.js";

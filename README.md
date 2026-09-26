@@ -6,6 +6,8 @@ Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project
 
 **Status:** M1 (core + command-line tool), M2 (MCP server for agents, guardrails) and M3 (VS Code extension) are implemented. Live-tested with the Claude desktop app; Claude Code CLI and Codex are covered by automated tests only so far (their live runs are still to do, see spec §16/§17). The VS Code extension passes an automated run in real VS Code; its panel and dialogs still need a hands-on test. The plans for all pending live tests are in [docs/live-tests.md](docs/live-tests.md).
 
+**Security:** agents can write only their own workspace folder; your project, its `.git` folder and Stet's data are read-only to them, and Stet checks everything they hand over before using it. On macOS, Linux and WSL2 the agent tools' sandbox enforces this. On native Windows, Claude Code has no sandbox, so a guard hook is the only barrier for shell commands: it reliably catches mistakes, but a deliberately evasive agent (e.g. one steered by instructions hidden in a source document) can get around it. For untrusted material, run the agent in WSL2. Details: spec §9.
+
 ## VS Code (no command line needed)
 
 Build the extension package and install it:

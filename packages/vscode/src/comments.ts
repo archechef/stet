@@ -76,7 +76,8 @@ export class Threads implements vscode.Disposable {
 
   private comments(item: Item): vscode.Comment[] {
     return item.thread.map(
-      (t) => new StetComment(new vscode.MarkdownString(t.text), { name: t.author === "user" ? "You" : item.agent }, new Date(t.at)),
+      // Plain text: agent replies must not render links or remote images.
+      (t) => new StetComment(new vscode.MarkdownString().appendText(t.text), { name: t.author === "user" ? "You" : item.agent }, new Date(t.at)),
     );
   }
 
