@@ -1,0 +1,185 @@
+/** On-disk store in `<git-common-dir>/stet/` (spec §4, §15). */
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { join } from "node:path";
+import { defaultConfig, mergeConfig, type StetConfig } from "./config.js";
+import type { Agent, Changeset, Group, Item, StetEvent, StoreState } from "./model.js";
+
+const LOCK_STALE_MS = 30_000;
+const LOCK_TIMEOUT_MS = 20_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(tmp, path);
+      return;
+    } catch (e: any) {
+      // Windows: the target may be briefly open by a reader.
+      if (attempt < 20 && (e.code === "EPERM" || e.code === "EBUSY" || e.code === "EACCES")) await sleep(25);
+      else {
+        await rm(tmp, { force: true });
+        throw e;
+      }
+    }
+  }
+}
+
+async function readJson<T>(path: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as T;
+  } catch (e: any) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+const lockContext = new AsyncLocalStorage<Store>();
+
+export class Store {
+
+  constructor(readonly root: string) {}
+
+  get lockPath() {
+    return join(this.root, "lock");
+  }
+  private dir(kind: "agents" | "changesets" | "groups" | "items") {
+    return join(this.root, kind);
+  }
+
+  exists() {
+    return exists(join(this.root, "state.json"));
+  }
+
+  async init(mainBranch: string): Promise<void> {
+    for (const d of ["agents", "changesets", "groups", "items"] as const) await mkdir(this.dir(d), { recursive: true });
+    if (!(await exists(join(this.root, "config.json")))) await writeJsonAtomic(join(this.root, "config.json"), defaultConfig(mainBranch));
+    if (!(await exists(join(this.root, "state.json")))) {
+      const state: StoreState = { schema: 1, nextItem: 1, nextChangeset: 1, nextGroup: 1, nextEvent: 1, base: null };
+      await writeJsonAtomic(join(this.root, "state.json"), state);
+    }
+    if (!(await exists(join(this.root, "events.jsonl")))) await writeFile(join(this.root, "events.jsonl"), "");
+  }
+
+  async config(): Promise<StetConfig> {
+    const raw = await readJson<Partial<StetConfig>>(join(this.root, "config.json"));
+    return mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {});
+  }
+
+  async state(): Promise<StoreState> {
+    const s = await readJson<StoreState>(join(this.root, "state.json"));
+    if (!s) throw new Error("Stet is not initialized in this repository (run `stet init`).");
+    return s;
+  }
+  saveState(s: StoreState) {
+    return writeJsonAtomic(join(this.root, "state.json"), s);
+  }
+
+  /** Run `fn` holding the store lock. Re-entrant within the same async call chain. */
+  async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    if (lockContext.getStore() === this) return fn();
+    const started = Date.now();
+    for (;;) {
+      try {
+        const fh = await open(this.lockPath, "wx");
+        await fh.writeFile(JSON.stringify({ pid: process.pid, at: Date.now() }));
+        await fh.close();
+        break;
+      } catch (e: any) {
+        if (e.code !== "EEXIST" && e.code !== "EPERM") throw e;
+        const info = await readJson<{ at: number }>(this.lockPath).catch(() => null);
+        if (info && Date.now() - info.at > LOCK_STALE_MS) await rm(this.lockPath, { force: true });
+        else if (Date.now() - started > LOCK_TIMEOUT_MS) throw new Error(`Timed out waiting for the Stet lock (${this.lockPath}).`);
+        else await sleep(30 + Math.random() * 70);
+      }
+    }
+    try {
+      return await lockContext.run(this, fn);
+    } finally {
+      await rm(this.lockPath, { force: true });
+    }
+  }
+
+  /** Allocate sequential ids. Call while holding the lock. */
+  async allocate(kind: "item" | "changeset" | "group", n = 1): Promise<string[]> {
+    const s = await this.state();
+    const key = kind === "item" ? "nextItem" : kind === "changeset" ? "nextChangeset" : "nextGroup";
+    const prefix = kind === "item" ? "S" : kind === "changeset" ? "C" : "G";
+    const ids = Array.from({ length: n }, (_, i) => `${prefix}${s[key] + i}`);
+    s[key] += n;
+    await this.saveState(s);
+    return ids;
+  }
+
+  private async getOne<T>(kind: "agents" | "changesets" | "groups" | "items", id: string): Promise<T | null> {
+    return readJson<T>(join(this.dir(kind), `${id}.json`));
+  }
+  private async list<T>(kind: "agents" | "changesets" | "groups" | "items"): Promise<T[]> {
+    let names: string[];
+    try {
+      names = await readdir(this.dir(kind));
+    } catch {
+      return [];
+    }
+    const out: T[] = [];
+    for (const n of names.filter((n) => n.endsWith(".json"))) {
+      const v = await readJson<T>(join(this.dir(kind), n));
+      if (v) out.push(v);
+    }
+    const num = (x: any) => Number(String(x.id).replace(/^\D+/, "")) || 0;
+    return out.sort((a, b) => num(a) - num(b) || String((a as any).id).localeCompare(String((b as any).id)));
+  }
+  private put(kind: "agents" | "changesets" | "groups" | "items", v: { id: string }) {
+    return writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
+  }
+
+  getAgent = (id: string) => this.getOne<Agent>("agents", id);
+  getItem = (id: string) => this.getOne<Item>("items", id);
+  getChangeset = (id: string) => this.getOne<Changeset>("changesets", id);
+  getGroup = (id: string) => this.getOne<Group>("groups", id);
+  agents = () => this.list<Agent>("agents");
+  items = () => this.list<Item>("items");
+  changesets = () => this.list<Changeset>("changesets");
+  groups = () => this.list<Group>("groups");
+  putAgent = (v: Agent) => this.put("agents", v);
+  putItem = (v: Item) => this.put("items", v);
+  putChangeset = (v: Changeset) => this.put("changesets", v);
+  putGroup = (v: Group) => this.put("groups", v);
+  deleteGroup = (id: string) => rm(join(this.dir("groups"), `${id}.json`), { force: true });
+
+  /** Append an event. Call while holding the lock. */
+  async appendEvent(e: Omit<StetEvent, "seq" | "at">): Promise<StetEvent> {
+    const s = await this.state();
+    const ev: StetEvent = { seq: s.nextEvent, at: new Date().toISOString(), ...e };
+    s.nextEvent++;
+    await this.saveState(s);
+    await appendFile(join(this.root, "events.jsonl"), JSON.stringify(ev) + "\n", "utf8");
+    return ev;
+  }
+
+  async events(since = 0): Promise<StetEvent[]> {
+    let raw = "";
+    try {
+      raw = await readFile(join(this.root, "events.jsonl"), "utf8");
+    } catch {
+      return [];
+    }
+    return raw
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as StetEvent)
+      .filter((e) => e.seq > since);
+  }
+}

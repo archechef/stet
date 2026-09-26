@@ -1,0 +1,12 @@
+{
+  "name": "stet-tex",
+  "version": "0.1.0",
+  "description": "Stet: human-in-the-loop review of AI-proposed changes to LaTeX projects",
+  "type": "module",
+  "bin": { "stet": "dist/index.js" },
+  "files": ["dist"],
+  "dependencies": {
+    "@stet/core": "0.1.0"
+  },
+  "engines": { "node": ">=20" }
+}

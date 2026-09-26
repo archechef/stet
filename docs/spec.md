@@ -2,7 +2,7 @@
 
 > *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-Status: **draft v0.2** (adds grouping, §6.4) · 2026-09-26
+Status: **v0.3** (M1 implemented; see §16 notes) · 2026-09-26
 
 Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
 
@@ -73,7 +73,7 @@ Item, group and changeset IDs are short sequential numbers (`S12`, `G7`, `C4`) u
 | `@stet/ui` | Web components: item list, diff view, comment threads, preview viewer. Used by the VS Code webview and by the web UI. |
 | `stet-vscode` | VS Code extension. Bundles the core and ui packages and adds native editor integration: decorations, CodeLens, the Comments API. |
 
-**Runtime requirements:** git ≥ 2.38 and Node ≥ 20 (see §12 for a Node-free option). A TeX distribution with `latexmk` is needed only for PDF previews.
+**Runtime requirements:** git ≥ 2.28 (for the `reference-transaction` hook) and Node ≥ 20 (see §12 for a Node-free option). A TeX distribution with `latexmk` is needed only for PDF previews.
 
 There is **no long-running daemon**. Every process (extension, MCP servers, CLI) works on the shared on-disk store, using a lock and filesystem events.
 
@@ -92,7 +92,6 @@ The store lives in the git *common* dir (`git rev-parse --git-common-dir`). That
   groups/G<n>.json
   items/S<n>.json
   events.jsonl           # append-only event log (feedback + UI live updates)
-  rejected.json          # fingerprints of rejected changes (anti-repeat)
   previews/              # PDF preview cache
   lock                   # advisory lock file
 ```
@@ -103,7 +102,7 @@ The store lives in the git *common* dir (`git rev-parse --git-common-dir`). That
 <parent>/<repoName>.stet/<agentId>/
 ```
 
-This is configurable. Stet also adopts worktrees that other tools created, such as the Claude desktop app's session worktrees, when their branch matches `agentBranchPattern` (default `stet/*`).
+This is configurable. Stet also adopts worktrees that other tools created, such as the Claude desktop app's session worktrees, when their branch starts with `agentBranchPrefix` (default `stet/`).
 
 **Writes:** all writes are atomic (write to a temp file, then rename) and happen while holding `lock`. Readers never need the lock. The event log is append-only; each line carries an increasing `seq`.
 
@@ -119,6 +118,8 @@ This is configurable. Stet also adopts worktrees that other tools created, such 
   "branch": "stet/claude-1",
   "worktree": "C:/…/paper.stet/claude-1",
   "baseCommit": "<sha of refs/stet/base at last replay>",
+  "lastTip": "<agent branch tip at last submit or replay>",
+  "replayedAt": "…",              // items resolved before this are gone from the agent branch
   "feedbackCursor": 118,          // last event seq acknowledged by the agent
   "createdAt": "2026-09-26T10:00:00Z",
   "state": "active"               // active | archived
@@ -229,8 +230,9 @@ Input: the tree diff `refs/stet/base..stet/<agent>` for the newly submitted comm
    - Whole tokens only; an item never splits a token.
    - **Braces balanced** in both the old and the new text. If not, grow to the enclosing group.
    - **Math is atomic:** an edit touching inline math takes in the whole math span; an edit touching display math takes in the whole display block or environment.
+   - **Key arguments are atomic:** an edit inside the argument of `\label`, the `\ref` and `\cite` families, `\input`/`\include`, `\includegraphics`, `\usepackage`, `\begin`/`\end` and similar takes in the whole command, e.g. `\label{sec:intro}` → `\label{sec:introduction}`.
    - Items that now overlap are merged.
-6. **Coarsen for rewrites:** if more than `rewriteRatio` (default **0.5**) of a paragraph's tokens changed, the paragraph becomes a single item.
+6. **Coarsen for rewrites:** if more than `rewriteRatio` (default **0.5**) of a paragraph's tokens changed, its edits become a single item. The ratio is (deleted + inserted tokens) / (old + new tokens), whitespace excluded.
 7. **Reflow filter:** edits that only change whitespace and never add or remove a paragraph break are dropped by default (`ignoreReflow: true`). Agent instructions also ask agents not to reflow text.
 
 The defaults are tuned on real papers in M1. All thresholds live in `config.json`.
@@ -238,7 +240,7 @@ The defaults are tuned on real papers in M1. All thresholds live in `config.json
 ### 6.3 Changeset membership and supersession
 - All items produced by one `submit` belong to that submission's changeset.
 - Suppose a new submission changes a base range that overlaps a `pending` or `needs_revision` item from the same agent. The old item becomes `superseded` and the new item gets `supersedes` pointing to it.
-- A new item whose fingerprint appears in `rejected.json` is recorded as `rejected` straight away, with the note `repeat of S<n>`. The agent gets feedback that it re-proposed a rejected change. The UI hides such items by default.
+- A new item whose fingerprint matches a rejected item is recorded as `rejected` straight away, with the note `repeat of S<n>`. The agent gets feedback that it re-proposed a rejected change. The UI hides such items by default.
 - Overlap between items from *different* agents is recorded in `conflictsWith` and shown in the UI. Accepting one makes the other `stale` (§7.5).
 
 ### 6.4 Grouping
@@ -305,7 +307,7 @@ An item matches when its new-side range overlaps a `where` range. For a pure del
 2. Write the guardrail files into the worktree (§9). They are kept out of git through `.git/info/exclude`.
 3. Register the agent. Print or open the worktree path. From there the user opens that folder in the Claude desktop app, Claude Code, Codex or VS Code.
 
-**Adoption:** the first time the MCP server runs in any worktree whose branch matches `agentBranchPattern`, Stet registers it automatically, deriving the id from the branch name. This covers worktrees made by the Claude desktop app when its branch prefix is set to `stet/`.
+**Adoption:** the first time the MCP server runs in any worktree whose branch starts with `agentBranchPrefix`, Stet registers it automatically, deriving the id from the branch name. This covers worktrees made by the Claude desktop app when its branch prefix is set to `stet/`.
 
 ### 7.2 Submit (agent)
 Precondition: the agent's worktree is at the latest replay, or can be fast-forwarded to it.
@@ -332,14 +334,14 @@ Uncommitted agent edits count as **drafts** and are never shown for review until
 4. **Commit** according to the `autoCommit` setting (default `"when-clean"`):
    - If every affected file matched `HEAD` before the accept batch, Stet commits right after the batch. The batch ends after 10 s without another accept, or on **Finish review**. The commit message is `stet: accept S12, S13 — Tighten the introduction (claude-1)` with trailer `Stet-Applied: S12,S13`.
    - Otherwise the change stays uncommitted and the user commits it along with their own edits. Stet notices later that the accepted text is in `HEAD` and sets `resolution.committed`.
-   - Other values: `"always"` (patch only the index for the accepted hunks) and `"never"`.
+   - The other value is `"never"`.
 5. Items overlapping the accepted range get `stale` (§7.5). Linked-group rules apply (§6.4.5).
 6. Add an `accepted` event. If the user edited the text, the event includes the final text, so the agent learns the preferred wording.
 
 **Review base:** `refs/stet/base` = `HEAD` + accepted items whose text is not yet in `HEAD`. Stet keeps it as a synthetic commit and rebuilds it after accepts and whenever `HEAD` moves, so agents always see what the user accepted. The user's own **uncommitted** edits are *not* included; agents only see them once committed. The UI shows a hint when uncommitted edits touch lines that have pending items.
 
 ### 7.4 Reject, request revision, comment (user)
-- **Reject** `(ids, reason?)`: status → `rejected`. For members of linked groups, see §6.4.5. The fingerprint goes into `rejected.json` and a `rejected` event with the reason is added. The change leaves the agent branch at the agent's next sync.
+- **Reject** `(ids, reason?)`: status → `rejected`. For members of linked groups, see §6.4.5. Its fingerprint blocks identical re-proposals (§6.3) and a `rejected` event with the reason is added. The change leaves the agent branch at the agent's next sync.
 - **Request revision** `(id, comment)`: status → `needs_revision`, and a `revision_requested` event is added.
 - **Comment** `(id, text)`: appended to the item's thread, plus a `comment` event. The agent replies with `stet_reply`.
 
@@ -473,7 +475,7 @@ reaches the real document until a human accepts it.
 ```json
 {
   "mainBranch": "master",
-  "agentBranchPattern": "stet/*",
+  "agentBranchPrefix": "stet/",
   "worktreeRoot": "../{repo}.stet",
   "autoCommit": "when-clean",
   "split": {
@@ -565,12 +567,18 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 
 | M | Scope | Done when |
 |---|---|---|
-| **M1** | Core + CLI: store, tokenizer and splitter, anchoring, submit, accept, reject, replay, review base, stale detection | A test corpus of 3–5 real `.tex` papers with scripted agent edits produces sensible items. Accept, reject and replay round-trip correctly while the user edits in parallel. Passes on Windows, macOS and Linux in CI. |
+| **M1** ✅ | Core + CLI: store, tokenizer and splitter, anchoring, submit, accept, reject, replay, review base, stale detection | A test corpus of 3–5 real `.tex` papers with scripted agent edits produces sensible items. Accept, reject and replay round-trip correctly while the user edits in parallel. Passes on Windows, macOS and Linux in CI. |
 | **M2** | MCP server, `init`, `agent new`, guardrails (permissions, hooks), agent instructions | End-to-end: Claude Code (desktop app **and** CLI) and Codex each complete a propose → reject-with-reason → revise → accept loop without human copy-paste. Guardrail tests: attempted writes to the user repo, merges and pushes are all blocked. |
 | **M3** | VS Code extension (panel, decorations, CodeLens, threads, setup commands) | The full workflow runs from VS Code plus the desktop app, with no command line. |
 | **M4** | Overleaf remote handling | A co-author's browser edit during review is pulled and re-anchored, or marks items stale. Accepted changes can be pushed. |
 | **M5** | PDF previews | Before/after snippet for an item in under ~10 s on a medium paper with a warm cache. |
 | **M6** | `stet serve` web UI, structural-change UX (file moves, large changesets), agent notification hooks | Feature parity with the VS Code panel. |
+
+### M1 notes (implemented 2026-09-26)
+- Done: everything in the M1 row plus grouping (§6.4) and `stet doctor`.
+- Deferred: commit-based groups (§6.4.2 item 2), the macro definition/use auto-detector, undo/restore of resolved items, the git guard hooks (§9, moved to M2 with the other guardrails).
+- Automatic detection looks at each item's text *including its context*, so a key cut by splitting is still recognized.
+- Rejected fingerprints are derived from rejected items instead of a separate `rejected.json`.
 
 ---
 
@@ -588,5 +596,4 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 4. **Grouping in practice:**
    - How reliably do Claude Code and Codex supply `linked` hints unprompted, given only the instructions?
    - Is automatic detection plus "check the submit result" enough, or should submit *warn* when the auto-detectors find a linked pattern the agent didn't declare?
-5. **`autoCommit: "always"`:** writing to the index while the user has partially staged changes needs care. It may be dropped if it proves fragile.
-6. **Line endings:** CRLF on Windows repos needs normalization when comparing, while the original endings are preserved when writing.
+5. **Line endings:** CRLF on Windows repos needs normalization when comparing, while the original endings are preserved when writing.

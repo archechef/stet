@@ -1,0 +1,23 @@
+{
+  "name": "@stet/core",
+  "version": "0.1.0",
+  "description": "Stet core: review AI-proposed changes to LaTeX projects",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "diff": "^9.0.0"
+  }
+}
