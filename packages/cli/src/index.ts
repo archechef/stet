@@ -1,8 +1,18 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
+  checkToolUse,
   doctor,
+  hookStatus,
+  installHooks,
+  Repo,
+  serveStdio,
+  StetMcpServer,
+  uninstallHooks,
+  type CliCommand,
   Stet,
   StetError,
   type AcceptResult,
@@ -24,7 +34,10 @@ Project (run in your project folder):
   stet agent new <name> [--kind claude-code|codex|other]
                                         create an agent workspace
   stet agent list
+  stet agent refresh <name>             rewrite the agent's instructions, MCP and guard files
   stet agent archive <name> [--remove]  retire an agent (withdraws its pending items)
+  stet setup claude|codex [--print]     register the Stet MCP server with Claude Code / Codex
+  stet hooks install|uninstall|status   git hooks that block merges/pushes of agent branches
 
 Review:
   stet review [--agent <a>] [--status <s>] [--all]
@@ -45,6 +58,10 @@ Agent side (run inside an agent workspace, or pass --agent <name>):
   stet list [--status <s>]
   stet reply <S12> -m <text>
   stet withdraw <S12>... [-m <reason>]
+
+Internal (called by agents' tools):
+  stet mcp                              MCP server over stdio
+  stet guard                            Claude Code PreToolUse hook
 
 Global: --json for machine-readable output, --help.`;
 
@@ -72,6 +89,7 @@ const { values: opt, positionals: pos } = parseArgs({
     groups: { type: "string" },
     notes: { type: "string" },
     peek: { type: "boolean" },
+    print: { type: "boolean" },
   },
 });
 
@@ -152,6 +170,58 @@ function need(v: string | undefined, what: string): string {
 
 const isGroupId = (s: string) => /^G\d+$/i.test(s);
 
+/** How other tools should invoke this CLI: absolute node + script paths. */
+const SELF: CliCommand = { command: process.execPath, args: [fileURLToPath(import.meta.url)] };
+const VERSION = "0.2.0";
+
+function readAll(stream: NodeJS.ReadableStream): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let s = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (d) => (s += d));
+    stream.on("end", () => resolve(s));
+    stream.on("error", reject);
+  });
+}
+
+/** Claude Code PreToolUse hook: exit 2 blocks the tool call, stderr goes to the agent. */
+async function guard(): Promise<void> {
+  let input: any;
+  try {
+    input = JSON.parse(await readAll(process.stdin));
+  } catch {
+    return; // not a hook invocation we understand: allow
+  }
+  const cwd: string = input.cwd ?? process.cwd();
+  try {
+    const { toplevel, mainPath, commonDir } = await Stet.locate(cwd);
+    const stet = await Stet.open(cwd);
+    const cfg = await stet.config();
+    const branch = await new Repo(toplevel).tryRun(["symbolic-ref", "--short", "HEAD"]);
+    if (!branch?.startsWith(cfg.agentBranchPrefix)) return; // not an agent workspace
+    const reason = checkToolUse(input, { worktree: toplevel, mainPath, commonDir });
+    if (reason) {
+      process.stderr.write(reason + "\n");
+      process.exitCode = 2;
+    }
+  } catch (e: any) {
+    // Never block on internal errors, but say so (non-blocking hook error).
+    process.stderr.write(`stet guard: ${e?.message ?? e}\n`);
+    process.exitCode = 1;
+  }
+}
+
+/** Quote an argument for cmd.exe when we have to go through a shell (npm .cmd shims). */
+const winQuote = (a: string) => (/[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
+
+function runTool(cmd: string, args: string[]): { ok: boolean; out: string } {
+  const win = process.platform === "win32";
+  const r = win
+    ? spawnSync([cmd, ...args].map(winQuote).join(" "), { shell: true, encoding: "utf8" })
+    : spawnSync(cmd, args, { encoding: "utf8" });
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? r.error.message : ""}`.trim() };
+}
+
 function describeEvent(e: StetEvent): string {
   const d = (e.data ?? {}) as any;
   const it = d.item ? `${d.item.id} (${d.item.file}:${d.item.line})` : (e.items ?? []).join(", ");
@@ -197,12 +267,62 @@ async function main() {
     return;
   }
 
-  if (cmd === "init") {
-    const stet = await Stet.init(cwd, opt.main ? { mainBranch: opt.main } : {});
-    const cfg = await stet.config();
+  if (cmd === "guard") return guard();
+
+  if (cmd === "mcp") {
+    const server = new StetMcpServer({
+      cwd,
+      version: VERSION,
+      ...(process.env.STET_WORKSPACE ? { workspace: process.env.STET_WORKSPACE } : {}),
+      ...(process.env.STET_AGENT ? { agentId: process.env.STET_AGENT } : {}),
+    });
+    return serveStdio(server, process.stdin, process.stdout);
+  }
+
+  if (cmd === "setup") {
+    const target = args[0];
+    const server = [SELF.command, ...SELF.args, "mcp"];
+    let tool: string;
+    let steps: string[][];
+    if (target === "claude") {
+      tool = "claude";
+      steps = [["mcp", "remove", "--scope", "user", "stet"], ["mcp", "add", "--scope", "user", "stet", "--", ...server]];
+    } else if (target === "codex") {
+      tool = "codex";
+      steps = [["mcp", "remove", "stet"], ["mcp", "add", "stet", "--", ...server]];
+    } else throw new StetError("Usage: stet setup claude|codex [--print]");
+    const add = steps[1]!;
+    const shown = [tool, ...add].map(winQuote).join(" ");
+    if (opt.print) return console.log(shown);
+    runTool(tool, steps[0]!); // fails harmlessly when it wasn't registered yet
+    const r = runTool(tool, add);
+    if (!r.ok) {
+      throw new StetError(
+        `Could not run \`${tool}\` (${r.out.split("\n")[0] || "not found"}).\n` +
+          `This registration is optional: every agent workspace already contains its MCP config (.mcp.json, .codex/config.toml).\n` +
+          `To register globally, run this where the ${tool} CLI is available:\n  ${shown}`,
+      );
+    }
     return out(
-      () => `Stet is set up for ${stet.mainPath} (main branch '${cfg.mainBranch}').\nNext: stet agent new <name>`,
-      { mainPath: stet.mainPath, mainBranch: cfg.mainBranch },
+      () =>
+        `Registered the Stet MCP server with ${target === "claude" ? "Claude Code (user scope; also used by the desktop app)" : "Codex"}.\n` +
+        `It works in every Stet agent workspace and explains itself elsewhere.`,
+      { ok: true, output: r.out },
+    );
+  }
+
+  if (cmd === "init") {
+    const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), cli: SELF });
+    const cfg = await stet.config();
+    const hooks = await hookStatus(stet.repo, stet.commonDir);
+    return out(
+      () =>
+        `Stet is set up for ${stet.mainPath} (main branch '${cfg.mainBranch}').\n` +
+        (hooks.missing.length
+          ? yellow(`! Git guard hooks not installed (${hooks.customHooksPath ? `core.hooksPath is ${hooks.dir}` : "disabled"}). See \`stet hooks install\`.`) + "\n"
+          : `Git guard hooks installed in ${hooks.dir}.\n`) +
+        `Next: stet agent new <name>, and once per machine: stet setup claude (and/or stet setup codex)`,
+      { mainPath: stet.mainPath, mainBranch: cfg.mainBranch, hooks },
     );
   }
 
@@ -214,14 +334,30 @@ async function main() {
       if (sub === "new") {
         const kind = (opt.kind ?? "other") as AgentKind;
         if (!["claude-code", "codex", "other"].includes(kind)) throw new StetError(`Unknown kind '${kind}'.`);
+        if (!(await stet.config()).cli) await Stet.init(cwd, { cli: SELF });
         const a = await stet.newAgent(need(name, "agent name"), { kind, ...(opt.path ? { path: opt.path } : {}) });
+        const launch =
+          kind === "codex"
+            ? `  cd "${a.worktree}" && codex\n  (or open the folder in the Codex app/IDE; its .codex/config.toml needs the folder to be trusted)`
+            : `  Claude desktop app: open the folder "${a.worktree}" in the Code tab\n  Claude Code CLI:    cd "${a.worktree}" && claude`;
         return out(
           () =>
             `Created agent ${bold(a.id)} on branch ${a.branch}.\n` +
             `Workspace: ${bold(a.worktree)}\n\n` +
-            `Open that folder in Claude Code / Codex and let the agent edit there.\n` +
-            `The agent submits with \`stet submit -t "<title>"\`; you review with \`stet review\`.`,
+            `Start the agent in that folder:\n${launch}\n\n` +
+            `It gets its instructions and the Stet tools automatically (run \`stet setup ${kind === "codex" ? "codex" : "claude"}\` once per machine).\n` +
+            `Review with \`stet review\`.`,
           a,
+        );
+      }
+      if (sub === "refresh") {
+        if (!(await stet.config()).cli) await Stet.init(cwd, { cli: SELF });
+        const r = await stet.refreshWorkspace(need(name, "agent name"));
+        return out(
+          () =>
+            `Refreshed ${name}: ${r?.written.join(", ")}` +
+            (r?.skipped.length ? `\n${yellow("skipped")} (tracked by the project): ${r.skipped.map((s) => s.file).join(", ")}` : ""),
+          r,
         );
       }
       if (sub === "list") {
@@ -233,6 +369,21 @@ async function main() {
         return out(() => `Archived ${name}.`, { archived: name });
       }
       throw new StetError("Usage: stet agent new|list|archive <name>");
+    }
+
+    case "hooks": {
+      const sub = args[0] ?? "status";
+      if (sub === "install") {
+        const st = await installHooks(stet.repo, stet.commonDir, await stet.config(), { force: !!opt.force });
+        if (st.customHooksPath && !opt.force) throw new StetError(`core.hooksPath is set to ${st.dir} (e.g. husky). Use --force to install there anyway.`);
+        return out(() => `Installed ${st.installed.join(", ")} in ${st.dir}.`, st);
+      }
+      if (sub === "uninstall") {
+        await uninstallHooks(stet.repo, stet.commonDir);
+        return out(() => "Removed Stet's git hooks (previous hooks restored).", { ok: true });
+      }
+      const st = await hookStatus(stet.repo, stet.commonDir);
+      return out(() => `Hooks in ${st.dir}: installed ${st.installed.join(", ") || "none"}${st.missing.length ? `; missing ${st.missing.join(", ")}` : ""}.`, st);
     }
 
     case "review": {

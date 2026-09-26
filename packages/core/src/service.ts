@@ -29,6 +29,8 @@ import {
 } from "./model.js";
 import { splitText, type Edit, type FileClass } from "./split.js";
 import { Store } from "./store.js";
+import { installHooks } from "./hooks.js";
+import { isWorkspaceFile, WORKSPACE_EXCLUDES, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
 import { detectEol, fromLf, isBinary, lineOf, lineRange, normalizeWs, sha256, toLf } from "./text.js";
 
 export class StetError extends Error {}
@@ -119,7 +121,7 @@ export class Stet {
     return new Stet(mainPath, repo, store);
   }
 
-  static async init(cwd: string, opts: { mainBranch?: string } = {}): Promise<Stet> {
+  static async init(cwd: string, opts: { mainBranch?: string; cli?: CliCommand } = {}): Promise<Stet> {
     const { repo, mainPath, commonDir } = await Stet.locate(cwd);
     const branch = opts.mainBranch ?? (await repo.tryRun(["symbolic-ref", "--short", "HEAD"]));
     if (!branch) throw new StetError("Can't determine the main branch (detached HEAD?). Pass --main <branch>.");
@@ -128,12 +130,22 @@ export class Stet {
     const store = new Store(join(commonDir, "stet"));
     await store.init(branch);
     const stet = new Stet(mainPath, repo, store);
-    await store.withLock(() => stet.ensureBase());
+    await store.withLock(async () => {
+      const cfg = await store.config();
+      if (opts.cli) await store.saveConfig({ ...cfg, cli: opts.cli });
+      if (cfg.guardHooks) await installHooks(repo, commonDir, cfg);
+      await stet.ensureBase();
+    });
     return stet;
   }
 
   config(): Promise<StetConfig> {
     return this.store.config();
+  }
+
+  /** The repository's shared git dir (where the store and hooks live). */
+  get commonDir(): string {
+    return dirname(this.store.root);
   }
 
   // -------------------------------------------------------------------------
@@ -326,8 +338,17 @@ export class Stet {
         state: "active",
       };
       await this.store.putAgent(agent);
+      await this.refreshWorkspace(agent);
       return agent;
     });
+  }
+
+  /** (Re)write the agent's instructions, MCP config and guardrail files. */
+  async refreshWorkspace(agentOrId: Agent | string): Promise<WorkspaceResult | null> {
+    const agent = typeof agentOrId === "string" ? await this.requireAgent(agentOrId) : agentOrId;
+    const cfg = await this.config();
+    if (!cfg.cli) return null;
+    return writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, cli: cfg.cli });
   }
 
   /** The agent whose worktree contains `cwd`; adopts matching worktrees made by other tools. */
@@ -361,6 +382,7 @@ export class Stet {
         state: "active",
       };
       await this.store.putAgent(agent);
+      await this.refreshWorkspace(agent);
       return agent;
     });
   }
@@ -379,6 +401,11 @@ export class Stet {
         await this.repo.tryRun(["branch", "-D", agent.branch]);
       }
     });
+  }
+
+  /** Uncommitted paths in an agent workspace, ignoring Stet's own files. */
+  private async dirtyFiles(wt: Repo): Promise<string[]> {
+    return (await wt.status()).map((l) => l.slice(3)).filter((p) => p && !isWorkspaceFile(p));
   }
 
   private async requireAgent(id: string): Promise<Agent> {
@@ -410,6 +437,8 @@ export class Stet {
     const changes = await this.repo.diffNames(base, tip);
     for (const ch of changes) {
       if (!touched.has(ch.path) && !(ch.oldPath && touched.has(ch.oldPath))) continue;
+      // Stet's own workspace files are never proposals (unless the project tracks them).
+      if (isWorkspaceFile(ch.path) && ch.status === "A") continue;
       const oldPath = ch.status === "R" ? ch.oldPath! : ch.path;
       const oldBuf = ch.status === "A" ? null : await this.repo.readBlob(base, oldPath);
       const newBuf = ch.status === "D" ? null : await this.repo.readBlob(tip, ch.path);
@@ -462,8 +491,8 @@ export class Stet {
       const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
       if (branch !== agent.branch) throw new StetError(`The agent workspace is on '${branch}', expected '${agent.branch}'.`);
 
-      if ((await wt.status()).length) {
-        await wt.run(["add", "-A"]);
+      if ((await this.dirtyFiles(wt)).length) {
+        await wt.run(["add", "-A", "--", ".", ...WORKSPACE_EXCLUDES]);
         await wt.run([...STET_IDENTITY, "commit", "-q", "--no-verify", "-m", `${opts.title}\n\n${opts.rationale ?? ""}\n\nStet-Agent: ${agentId}`]);
       }
       const tip = (await wt.revParse("HEAD"))!;
@@ -752,10 +781,10 @@ export class Stet {
     return this.store.withLock(async () => {
       const agent = await this.requireAgent(agentId);
       const wt = new Repo(agent.worktree);
-      const dirty = await wt.status();
+      const dirty = await this.dirtyFiles(wt);
       if (dirty.length) {
         throw new StetError(
-          `The agent workspace has uncommitted changes (${dirty.map((d) => d.slice(3)).join(", ")}). ` +
+          `The agent workspace has uncommitted changes (${dirty.join(", ")}). ` +
             `Submit them (stet submit) or discard them before syncing.`,
         );
       }
@@ -793,6 +822,7 @@ export class Stet {
       agent.lastTip = commit;
       agent.replayedAt = now();
       await this.store.putAgent(agent);
+      await this.refreshWorkspace(agent);
       await this.store.appendEvent({ type: "synced", agent: agentId, data: { base, stale: stale.map((s) => s.id) } });
       await this.updateGroups(stale);
       return { base, stale, kept: res.applied.length };

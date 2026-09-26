@@ -1,8 +1,11 @@
 /** `stet doctor`: environment and repository health checks. */
 import { execFile } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { compareVersions, gitVersion, Repo } from "./git.js";
+import { hookStatus } from "./hooks.js";
+import { isWorkspaceFile } from "./workspace.js";
 import { isLive } from "./model.js";
 import { BASE_REF, Stet } from "./service.js";
 
@@ -122,6 +125,45 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
     });
   }
 
+  // Guardrails and agent integration (M2) ----------------------------------------
+  const hooks = await hookStatus(stet.repo, stet.commonDir);
+  if (!cfg.guardHooks) add({ name: "git hooks", status: "info", message: "disabled in config (guardHooks: false)" });
+  else if (!hooks.missing.length) add({ name: "git hooks", status: "ok", message: `installed in ${hooks.dir}` });
+  else
+    add({
+      name: "git hooks",
+      status: "warn",
+      message: `missing: ${hooks.missing.join(", ")}${hooks.customHooksPath ? ` (core.hooksPath is ${hooks.dir})` : ""}`,
+      fix: hooks.customHooksPath ? "stet hooks install --force  (or add Stet's hooks to your hook manager)" : "stet hooks install",
+    });
+
+  if (!cfg.cli) add({ name: "stet command", status: "warn", message: "not recorded; agent workspaces get no MCP/guard config", fix: "stet init" });
+  else if (!(await exists(cfg.cli.args[0] ?? cfg.cli.command)))
+    add({ name: "stet command", status: "error", message: `${cfg.cli.args[0] ?? cfg.cli.command} no longer exists (Stet moved?)`, fix: "stet init, then stet agent refresh <name> for each agent" });
+  else add({ name: "stet command", status: "ok", message: [cfg.cli.command, ...cfg.cli.args].join(" ") });
+
+  const home = homedir();
+  const claudeJson = await readFile(join(home, ".claude.json"), "utf8").catch(() => "");
+  let claudeHasStet = false;
+  try {
+    claudeHasStet = !!JSON.parse(claudeJson || "{}")?.mcpServers?.stet;
+  } catch {
+    /* unreadable: treat as not registered */
+  }
+  add(
+    claudeHasStet
+      ? { name: "Claude Code MCP", status: "ok", message: "stet registered at user scope" }
+      : { name: "Claude Code MCP", status: "info", message: "stet not registered at user scope; each workspace's .mcp.json is used instead (Claude Code asks once to approve it)", fix: "optional: stet setup claude" },
+  );
+  const codexToml = await readFile(join(home, ".codex", "config.toml"), "utf8").catch(() => "");
+  add(
+    /^\[mcp_servers\.stet\]/m.test(codexToml)
+      ? { name: "Codex MCP", status: "ok", message: "stet registered in ~/.codex/config.toml" }
+      : { name: "Codex MCP", status: "info", message: "stet not registered globally (workspaces carry a project .codex/config.toml)", fix: "stet setup codex" },
+  );
+  if (process.platform === "win32")
+    add({ name: "sandbox", status: "info", message: "Claude Code's Bash sandbox is not available on native Windows; Stet relies on the workspace, guard hook and git hooks" });
+
   // Agents ---------------------------------------------------------------------
   const worktrees = await stet.repo.worktrees();
   const items = await stet.store.items();
@@ -138,12 +180,18 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
       add({ name: n, status: "error", message: `workspace is on '${wt.branch}', expected '${a.branch}'`, fix: `git -C "${a.worktree}" switch ${a.branch}` });
       continue;
     }
-    const dirty = (await new Repo(a.worktree).status()).length;
+    const dirty = (await new Repo(a.worktree).status()).filter((l) => !isWorkspaceFile(l.slice(3))).length;
     const live = items.filter((i) => i.agent === a.id && isLive(i.status)).length;
     const parts = [`${live} pending`];
     if (dirty) parts.push(`${dirty} unsubmitted file change(s)`);
     if (base && a.baseCommit !== base) parts.push("needs sync");
-    add({ name: n, status: "ok", message: parts.join(", ") });
+    const missingFiles: string[] = [];
+    for (const f of ["CLAUDE.local.md", ".mcp.json"]) if (!(await exists(join(a.worktree, f)))) missingFiles.push(f);
+    const settings = (await exists(join(a.worktree, ".claude/settings.json"))) || (await exists(join(a.worktree, ".claude/settings.local.json")));
+    if (!settings) missingFiles.push(".claude/settings.json");
+    if (cfg.cli && missingFiles.length)
+      add({ name: n, status: "warn", message: `${parts.join(", ")}; missing workspace files: ${missingFiles.join(", ")}`, fix: `stet agent refresh ${a.id}` });
+    else add({ name: n, status: "ok", message: parts.join(", ") });
   }
   const orphans = worktrees.filter((w) => w.branch?.startsWith(cfg.agentBranchPrefix) && !agents.some((a) => a.branch === w.branch));
   for (const o of orphans) add({ name: "worktree", status: "info", message: `${o.path} (${o.branch}) is not registered yet; it is adopted when used as an agent workspace` });

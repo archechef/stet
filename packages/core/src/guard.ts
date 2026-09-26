@@ -1,0 +1,127 @@
+/**
+ * `stet guard`: Claude Code PreToolUse hook (spec §9, layer 2).
+ * Best effort: blocks writes outside the agent workspace and git commands that
+ * would bypass review. It guards against accidents, not against an adversary.
+ */
+import { tmpdir } from "node:os";
+import { isAbsolute, relative, resolve } from "node:path";
+import { isWorkspaceFile } from "./workspace.js";
+
+export interface GuardContext {
+  /** Root of the agent workspace (worktree). */
+  worktree: string;
+  /** The user's project folder (main worktree). */
+  mainPath: string;
+  /** Shared git dir of the repository. */
+  commonDir: string;
+  /** Extra writable locations (temp dirs, scratchpads). */
+  writable?: string[];
+}
+
+export interface HookInput {
+  cwd?: string;
+  tool_name?: string;
+  tool_input?: Record<string, any>;
+  scratchpad_dir?: string;
+}
+
+const norm = (p: string) => {
+  let s = resolve(p).replace(/\\/g, "/");
+  if (process.platform === "win32") s = s.toLowerCase();
+  return s.replace(/\/+$/, "");
+};
+
+/** Convert Git Bash style `/c/Users/...` paths to native ones on Windows. */
+function nativePath(p: string): string {
+  if (process.platform === "win32") {
+    const m = /^\/([a-zA-Z])(\/.*)?$/.exec(p);
+    if (m) return `${m[1]}:${m[2] ?? "/"}`;
+  }
+  return p;
+}
+
+export function isInside(child: string, parent: string): boolean {
+  const c = norm(child);
+  const p = norm(parent);
+  return c === p || c.startsWith(p + "/");
+}
+
+/** Resolve `p` (possibly relative to `cwd`) to an absolute native path. */
+function abs(p: string, cwd: string): string {
+  const n = nativePath(p.replace(/^["']|["']$/g, ""));
+  return isAbsolute(n) ? resolve(n) : resolve(cwd, n);
+}
+
+const GIT_BLOCKED = /\bgit\b(?:\s+(?:-c\s+\S+|-C\s+\S+|--[\w-]+(?:=\S+)?))*\s+(push|merge|rebase|switch|worktree|update-ref|filter-branch|filter-repo|replace|symbolic-ref)\b/;
+const GIT_CHECKOUT = /\bgit\b(?:\s+(?:-c\s+\S+|-C\s+\S+|--[\w-]+(?:=\S+)?))*\s+checkout\b(?![^;&|]*\s--(\s|$))/;
+const GIT_BRANCH_WRITE = /\bgit\b(?:\s+\S+)*?\s+branch\b[^;&|]*\s(-[a-zA-Z]*[fdDmMcC][a-zA-Z]*|--force|--delete|--move|--copy)\b/;
+const GIT_DIR_OVERRIDE = /\bgit\b[^;&|]*\s(--git-dir|--work-tree)\b|\bGIT_(DIR|WORK_TREE|INDEX_FILE)=|core\.hooksPath|STET_INTERNAL/;
+const READ_ONLY_START = /^\s*(cat|less|more|head|tail|ls|dir|grep|rg|find|wc|type|file|stat|Get-Content|Get-ChildItem|Select-String|diff|cmp)\b/i;
+const WRITE_HINT = /(^|[^<>])>{1,2}(?!&)|\|\s*tee\b|\b(rm|mv|cp|touch|mkdir|rmdir|sed\s+-i|perl\s+-i|truncate|dd|ln|chmod|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b/i;
+
+/** Returns a reason to block, or null to allow. */
+export function checkToolUse(input: HookInput, ctx: GuardContext): string | null {
+  const cwd = input.cwd ?? ctx.worktree;
+  const tool = input.tool_name ?? "";
+  const ti = input.tool_input ?? {};
+  const writable = [ctx.worktree, tmpdir(), ...(ctx.writable ?? []), ...(input.scratchpad_dir ? [input.scratchpad_dir] : [])];
+
+  const checkWrite = (file: string): string | null => {
+    const p = abs(file, cwd);
+    if (isInside(p, ctx.mainPath) || !writable.some((w) => isInside(p, w))) {
+      return (
+        `Stet: ${file} is outside your proposal workspace (${ctx.worktree}). ` +
+        `Only edit files inside that folder; the reviewer applies accepted changes to the real project.`
+      );
+    }
+    if (isInside(p, ctx.worktree)) {
+      const rel = relative(ctx.worktree, p).replace(/\\/g, "/");
+      if (isWorkspaceFile(rel)) return `Stet: ${rel} is managed by Stet and must not be edited.`;
+    }
+    return null;
+  };
+
+  if (["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
+    const files = [ti.file_path, ti.notebook_path, ...(Array.isArray(ti.edits) ? ti.edits.map((e: any) => e?.file_path) : [])].filter(
+      (f): f is string => typeof f === "string" && f.length > 0,
+    );
+    for (const f of files) {
+      const r = checkWrite(f);
+      if (r) return r;
+    }
+    return null;
+  }
+
+  if (tool === "Bash" || tool === "PowerShell") {
+    const cmd = String(ti.command ?? "");
+    const gitMsg = (what: string) =>
+      `Stet: ${what} is not allowed in a proposal workspace. Submit your changes with stet_submit instead; ` +
+      `the reviewer merges them.`;
+    if (GIT_BLOCKED.test(cmd)) return gitMsg(`\`git ${GIT_BLOCKED.exec(cmd)![1]}\``);
+    if (GIT_CHECKOUT.test(cmd)) return gitMsg("switching branches with `git checkout`") + " To discard a file's changes use `git restore <file>`.";
+    if (GIT_BRANCH_WRITE.test(cmd)) return gitMsg("changing branches with `git branch`");
+    if (GIT_DIR_OVERRIDE.test(cmd)) return gitMsg("pointing git at another repository or hooks path");
+
+    // Paths mentioned in the command that lead into the user's project.
+    const tokens = cmd.match(/"[^"]*"|'[^']*'|[^\s;&|<>()]+/g) ?? [];
+    const pathLike = tokens.map((t) => t.replace(/^["']|["']$/g, "")).filter((t) => /[\\/]/.test(t) && !/^https?:/.test(t));
+    const touchesMain = pathLike.some((t) => {
+      try {
+        const p = abs(t, cwd);
+        return isInside(p, ctx.mainPath) && !isInside(p, ctx.commonDir);
+      } catch {
+        return false;
+      }
+    });
+    const gitC = /\bgit\s+-C\s+("[^"]*"|'[^']*'|\S+)/.exec(cmd);
+    if (gitC && !isInside(abs(gitC[1]!, cwd), ctx.worktree)) return gitMsg("running git in another folder");
+    if (touchesMain && (WRITE_HINT.test(cmd) || !READ_ONLY_START.test(cmd))) {
+      return (
+        `Stet: this command refers to the reviewer's project folder (${ctx.mainPath}). ` +
+        `Work only inside your proposal workspace (${ctx.worktree}).`
+      );
+    }
+    return null;
+  }
+  return null;
+}

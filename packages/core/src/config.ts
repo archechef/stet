@@ -16,6 +16,10 @@ export interface GroupingConfig {
 
 export interface StetConfig {
   mainBranch: string;
+  /** How to run the `stet` CLI; recorded by `stet init` for hooks and MCP configs. */
+  cli?: { command: string; args: string[] };
+  /** Install git hooks that block merges/pushes of agent branches (spec §9). */
+  guardHooks: boolean;
   agentBranchPrefix: string;
   worktreeRoot: string;
   autoCommit: "when-clean" | "never";
@@ -28,6 +32,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
   return {
     mainBranch,
     agentBranchPrefix: "stet/",
+    guardHooks: true,
     worktreeRoot: "../{repo}.stet",
     autoCommit: "when-clean",
     split: {

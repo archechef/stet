@@ -78,6 +78,10 @@ export class Store {
     return mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {});
   }
 
+  async saveConfig(cfg: StetConfig): Promise<void> {
+    await writeJsonAtomic(join(this.root, "config.json"), cfg);
+  }
+
   async state(): Promise<StoreState> {
     const s = await readJson<StoreState>(join(this.root, "state.json"));
     if (!s) throw new Error("Stet is not initialized in this repository (run `stet init`).");

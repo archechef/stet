@@ -4,7 +4,7 @@
 
 Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while you review them one by one. Agents work in their own git worktree and never touch your files; a change reaches your document only when you accept it. See [docs/spec.md](docs/spec.md) for the design.
 
-**Status:** milestone M1 — core library and command-line tool. The MCP server for agents (M2) and the VS Code extension (M3) come next.
+**Status:** M1 (core + command-line tool) and M2 (MCP server for agents, guardrails) are implemented. The VS Code extension (M3) comes next.
 
 ## Try it
 
@@ -21,15 +21,19 @@ Without `npm link`, run `node <path-to-repo>/packages/cli/dist/index.js` whereve
 In your LaTeX project (a git repository with at least one commit):
 
 ```bash
-stet init
-stet agent new claude-1     # prints the agent's workspace folder
+stet init                   # also installs git hooks that stop agent branches from being merged or pushed
+stet agent new claude-1     # prints the agent's workspace folder (use --kind codex for Codex)
 ```
 
-Open the printed folder in Claude Code or Codex and let the agent edit there. When it's done, it (or you, from that folder) runs:
+Open the printed folder in the Claude desktop app (Code tab), Claude Code or Codex. The workspace already contains:
 
-```bash
-stet submit -t "Polish the introduction" -m "Shorter sentences"
-```
+- the agent's instructions (`CLAUDE.local.md`, `AGENTS.override.md`),
+- the Stet MCP server config (`.mcp.json`, `.codex/config.toml`), giving the agent tools like `stet_submit` and `stet_get_feedback`,
+- guardrails (`.claude/settings.json`): a hook that blocks edits outside the workspace and git commands that would bypass review.
+
+Claude Code asks once to approve the workspace's MCP server. Optionally register it for all workspaces with `stet setup claude` / `stet setup codex`.
+
+Ask the agent to improve the paper; it submits its edits for review itself. (Without MCP, it can run `stet submit -t "Polish the introduction" -m "Shorter sentences"` in the workspace.)
 
 Back in your project folder:
 
@@ -41,7 +45,7 @@ stet reject S5 -m "keep the original formula"
 stet revise S6 -m "shorter, please"
 ```
 
-The agent picks up your decisions with `stet feedback` and moves onto your latest text with `stet sync`. Run `stet doctor` if anything looks off, and `stet --help` for all commands.
+The agent picks up your decisions with `stet_get_feedback` (or `stet feedback`) and moves onto your latest text with `stet_sync`. Run `stet doctor` if anything looks off, and `stet --help` for all commands.
 
 ## Development
 
@@ -50,5 +54,5 @@ npm run build     # tsc for packages/core and packages/cli
 npm test          # vitest: unit tests + end-to-end tests on temporary git repos
 ```
 
-- `packages/core` (`@stet/core`): store, git plumbing, LaTeX-aware splitting, anchoring, the review service, doctor.
+- `packages/core` (`@stet/core`): store, git plumbing, LaTeX-aware splitting, anchoring, the review service, MCP server, guard, git hooks, workspace files, doctor.
 - `packages/cli` (`stet-tex`): the `stet` command.

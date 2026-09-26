@@ -2,7 +2,7 @@
 
 > *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-Status: **v0.3** (M1 implemented; see §16 notes) · 2026-09-26
+Status: **v0.4** (M1 done, M2 implemented pending live agent tests; see §16 notes) · 2026-09-26
 
 Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
 
@@ -395,20 +395,25 @@ Threat model: an agent that tries to be helpful and edits the wrong file, merges
 | Layer | Mechanism | Covers |
 |---|---|---|
 | **1. Isolation** | The agent's working folder is its worktree, which lives outside the repo. It contains no path into the user's working copy. | Normal edits: >99% of the risk. |
-| **2. Agent permissions — Claude Code** | Stet writes `.claude/settings.local.json` in the worktree, containing: <ul><li>`deny` for `Edit`/`Write` on `<userRepo>/**`</li><li>`deny` for `Bash(git push:*)`, `Bash(git merge:*)`, `Bash(git checkout <main>:*)`, `Bash(git branch -f:*)`, `Bash(git worktree:*)`</li><li>a `PreToolUse` hook `stet guard` that rejects write-like tools and commands targeting paths outside the worktree (best effort)</li><li>sandbox enabled with writes restricted to the worktree, where the client supports it</li></ul> | Absolute-path writes and git misuse. Applies in the CLI and the desktop app. |
-| **2'. Agent permissions — Codex** | Recommend the `workspace-write` sandbox (writes limited to the worktree). `stet agent new --kind codex` prints the exact launch command and config. | Same. |
-| **3. Git hooks** (installed in the common hooks dir, so they apply to all worktrees) | <ul><li>`reference-transaction`: rejects any update to `refs/heads/<main>` made from an agent worktree, and any update to `refs/stet/*` not made by Stet (Stet sets `STET_INTERNAL=1`)</li><li>`pre-merge-commit`: rejects merging `stet/*` branches into main</li><li>`pre-push`: rejects pushing `stet/*` branches, and any commit with a `Stet-Agent` trailer that isn't reachable only via Stet-applied content</li></ul> | Merges and pushes that bypass review, including an accidental "merge branch" button click in some UI. |
+| **2. Agent permissions — Claude Code** | Stet writes `.claude/settings.json` into the worktree (Claude Code loads hooks and settings from the session folder; `settings.local.json` would be read from the *main* checkout on macOS/Linux). It contains: <ul><li>`deny` for `Edit` on the user's project (`Edit(//c/…/paper/**)`) and on Stet's own workspace files</li><li>`deny` for `Bash(git push *)`, `git merge`, `git rebase`, `git switch`, `git worktree`, `git update-ref`, `git branch -f/-D/-m/-M`</li><li>a `PreToolUse` hook `stet guard` (Edit, Write, MultiEdit, NotebookEdit, Bash, PowerShell) that blocks writes outside the workspace (temp and scratchpad dirs allowed), edits to Stet's files, git commands that bypass review, pointing git elsewhere, and shell commands that write into the user's project</li><li>on macOS/Linux/WSL2: the Bash sandbox (`sandbox.enabled`), writable = workspace + temp + the repo's git dir. Native Windows has no sandbox.</li></ul> If the project tracks `.claude/settings.json`, Stet uses `.claude/settings.local.json` instead. | Absolute-path writes and git misuse. Applies in the CLI and the desktop app. |
+| **2'. Agent permissions — Codex** | `.codex/config.toml` in the worktree sets `sandbox_mode = "workspace-write"` (project config needs the folder to be trusted). | Same. |
+| **3. Git hooks** (installed in the common hooks dir, so they apply to all worktrees) | <ul><li>`reference-transaction`: rejects any update to `refs/heads/<main>` made from an agent worktree; any update of the main branch that brings in commits only agent branches have (fast-forward or merge commit); and any update to `refs/stet/*` not made by Stet (Stet sets `STET_INTERNAL=1`)</li><li>`pre-push`: rejects pushing from an agent worktree and pushing `stet/*` branches</li></ul> | Merges and pushes that bypass review, including an accidental "merge branch" button click in some UI. |
 
-Hook installation chains existing hooks rather than replacing them. It can be turned off (`guardHooks: false`). The limitations are documented: a shell command writing through an absolute path is stopped only by layers 2 and 2'.
+Hook installation chains existing hooks (kept as `<name>.stet-orig`) rather than replacing them, and `stet hooks uninstall` restores them. With a custom `core.hooksPath` (e.g. husky) nothing is installed unless forced. It can be turned off (`guardHooks: false`).
+
+Known limitations:
+- A shell command writing through an absolute path is stopped only by layers 2 and 2' (and only best effort on native Windows, where there is no sandbox).
+- **Fast-forward merges:** git writes the working tree *before* any hook can object. The hook stops the branch from moving and prints how to undo the file changes (`git restore --staged --worktree :/`), but the files are already touched.
 
 ---
 
 ## 10. Agent protocol
 
 ### 10.1 MCP server
-- **Launch:** `stet mcp` (stdio). It is registered in Claude Code (`.mcp.json` in the worktree, or user scope) and Codex (`~/.codex/config.toml`).
-- **Identity:** the agent is identified from the worktree's branch in the server's working directory. It can be overridden with `STET_AGENT`. If started outside any agent worktree, all tools return an error explaining how to create one.
+- **Launch:** `stet mcp` (stdio), started with absolute paths (`node …/cli/dist/index.js mcp`) so it works without PATH setup. Every workspace carries its own registration: `.mcp.json` for Claude Code (approved once per workspace; `enabledMcpjsonServers` is preset) and `.codex/config.toml` for Codex. `stet setup claude|codex` optionally registers it globally (user scope) via the tools' own CLIs.
+- **Identity:** the agent is identified from the worktree's branch, using `STET_WORKSPACE` (set in the workspace MCP configs) or else the server's working directory. It can be overridden with `STET_AGENT`. If started outside any agent worktree, all tools return an error explaining how to create one.
 - **Instructions:** the server sends a short protocol summary through the MCP `instructions` field, and §10.3 is additionally written to the worktree.
+- **Implementation:** dependency-free newline-delimited JSON-RPC 2.0: `initialize` (protocol versions 2024-11-05 to 2025-11-25), `ping`, `tools/list`, `tools/call`.
 
 | Tool | Parameters | Returns |
 |---|---|---|
@@ -418,7 +423,8 @@ Hook installation chains existing hooks rather than replacing them. It can be tu
 | `stet_ungroup` | `groupId` | ok. The agent may remove its own groups and `auto` groups in its changesets. |
 | `stet_sync` | — | new base sha, items that became stale |
 | `stet_get_feedback` | `ack?: bool` (default true) | events since the cursor: `accepted` (with the final text if edited), `rejected` (reason), `revision_requested`, `comment`, `stale` (with current context), `repeat_rejected`, `group_broken` (member statuses) |
-| `stet_list` | `status?`, `changeset?`, `file?` | items with status and thread |
+| `stet_list` | `status?`, `file?` | items with status |
+| `stet_show` | `id` (item or group) | old/new text, note, groups, thread |
 | `stet_reply` | `itemId`, `text` | ok |
 | `stet_withdraw` | `itemIds`, `reason?` | ok |
 
@@ -432,7 +438,7 @@ All tools return concise text meant for the model, followed by a JSON block for 
 
 ### 10.3 Agent instructions (draft)
 
-The file written into each worktree: `CLAUDE.local.md` for Claude Code, `AGENTS.override.md` or equivalent for Codex (to verify in M2).
+Written into each worktree as `CLAUDE.local.md` (Claude Code) and `AGENTS.override.md` (Codex). Codex reads `AGENTS.override.md` *instead of* `AGENTS.md` in the same folder, so Stet prepends the project's own `AGENTS.md`. The files are refreshed after every sync and with `stet agent refresh`.
 
 ```markdown
 # You are working under Stet review
@@ -580,20 +586,27 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 - Automatic detection looks at each item's text *including its context*, so a key cut by splitting is still recognized.
 - Rejected fingerprints are derived from rejected items instead of a separate `rejected.json`.
 
+### M2 notes (implemented 2026-09-26)
+- Done: MCP server, workspace files (instructions, MCP configs, Claude Code guard settings, Codex config), `stet guard`, git hooks, `stet setup claude|codex`, `stet agent refresh`, `stet hooks`, doctor checks for all of it. Tested with automated tests (protocol, guard rules, hooks against real git, workspace files).
+- Still to do for the M2 acceptance criteria: the live end-to-end runs with Claude Code (desktop app and CLI) and Codex (§17 items 1–2).
+- Workspace files are untracked and excluded from submits; if the project tracks one of them, Stet leaves it alone.
+- `pre-merge-commit` was dropped: `reference-transaction` catches both merge styles.
+
 ---
 
 ## 17. Open points to verify
 
 1. **Claude desktop app:**
-   - Does it honour `.claude/settings.local.json` deny rules, hooks and the sandbox inside a worktree folder? (M2)
+   - Does it load the workspace's `.claude/settings.json` (deny rules, guard hook) and `.mcp.json` when a worktree folder is opened in the Code tab? (Docs say the Code tab prefers user-scope servers of the same name, implying it reads `.mcp.json` too.)
    - Can its "worktree per session" feature be pointed at the `stet/` prefix so Stet adopts those worktrees?
    - Does it offer to merge or create a PR from the session branch? The hooks must block that.
 2. **Codex:**
-   - Which untracked instruction file it reads (`AGENTS.override.md`?).
+   - ~~Which untracked instruction file it reads~~: `AGENTS.override.md`, which replaces `AGENTS.md` in that folder (handled).
+   - Does the project `.codex/config.toml` (MCP server, `workspace-write`) apply without extra trust steps?
    - Whether the `workspace-write` sandbox lets the agent commit in a worktree. The worktree's `.git` is a pointer into the main repo's `.git`. If committing is blocked, submit still works, because Stet commits from the MCP server process. Also verify that MCP servers run outside the sandbox.
    - Whether Codex surfaces MCP `instructions`.
 3. **Splitting thresholds:** tune `mergeGap`, `rewriteRatio` and the abbreviation list on the real corpus.
 4. **Grouping in practice:**
    - How reliably do Claude Code and Codex supply `linked` hints unprompted, given only the instructions?
    - Is automatic detection plus "check the submit result" enough, or should submit *warn* when the auto-detectors find a linked pattern the agent didn't declare?
-5. **Line endings:** CRLF on Windows repos needs normalization when comparing, while the original endings are preserved when writing.
+5. ~~Line endings~~: handled in M1 (LF internally, original endings preserved on write).
