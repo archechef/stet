@@ -1,4 +1,20 @@
 /** Agent instructions (spec §10.3). Shared by the MCP server and the workspace files. */
+import type { Agent } from "./model.js";
+
+/** What an agent (and its instruction files) are told once the reviewer archived its workspace. */
+export function archivedMessage(agent: Agent): string {
+  const a = agent.archived;
+  const when = a ? ` on ${a.at.slice(0, 10)}` : "";
+  const withdrawn = a?.withdrawn.length
+    ? ` Its ${a.withdrawn.length} pending proposal(s) (${a.withdrawn.join(", ")}) were withdrawn and will not be reviewed.`
+    : "";
+  const folder = a?.worktreeRemoved ? " The workspace folder was deleted." : "";
+  return (
+    `Stet: the reviewer archived this workspace (agent ${agent.id})${when}.${withdrawn}${folder} ` +
+    `Stop working on this task here; nothing done in this workspace reaches the document any more. ` +
+    `If there is more to do, tell the user and ask them to create a new agent workspace, then continue there.`
+  );
+}
 
 export const STET_MARKER = "<!-- stet:instructions -->";
 

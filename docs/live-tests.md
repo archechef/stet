@@ -5,7 +5,7 @@ Automated tests cover the core, the CLI, the MCP protocol, the guard rules, the 
 | Test | Milestone | Status |
 |---|---|---|
 | Claude desktop app, full loop + guardrails | M2 | ✅ passed 2026-09-26 (spec §16, M2 notes) |
-| [A. VS Code extension, hands-on](#a-vs-code-extension-hands-on-m3) | M3 | ⏳ to do |
+| [A. VS Code extension, hands-on](#a-vs-code-extension-hands-on-m3) | M3 | ✅ passed 2026-09-27 (fixes: spec §16, hands-on test notes) |
 | [B. Claude Code CLI](#b-claude-code-cli-m2) | M2 | ⏳ to do (needs a logged-in `claude` CLI) |
 | [C. Codex](#c-codex-m2) | M2 | ⏳ to do (needs Codex, e.g. a coworker's setup) |
 
@@ -33,7 +33,7 @@ Record the results, and any fixes, in spec §16. Then tick them off here.
 - [ ] It reports the main branch and offers **New agent workspace**.
 - [ ] **Check setup (doctor)** (Stet panel → `…` menu) shows no errors in the *Stet* output panel, including a ✓ line for "stet command".
 - [ ] `.git/stet/bin/stet.mjs` exists. VS Code hides `.git`, so check in the terminal (`` Ctrl+` ``): `dir .git\stet\bin`.
-- [ ] Switch the runtime: Settings (`Ctrl+,`) → search `stet.runtime` → `vscode`. The status bar briefly shows "agents … now use VS Code's runtime". `type .git\stet\config.json` shows `"cli"` with `Code.exe` and `ELECTRON_RUN_AS_NODE`.
+- [ ] *(Test-only; users never need this: the default `auto` picks Node.js if installed, otherwise VS Code's runtime.)* Switch the runtime: Settings (`Ctrl+,`) → search `stet.runtime` → `vscode`. The status bar briefly shows "agents … now use VS Code's runtime". `type .git\stet\config.json` shows `"cli"` with `Code.exe` and `ELECTRON_RUN_AS_NODE`.
   - Leave it on `vscode` until A7 (the guard-hook check there needs it), then set it back to `auto`.
   - Once an agent exists (A2), its `.mcp.json` shows the same command.
 
@@ -57,8 +57,8 @@ Prompt the agent:
 - [ ] Selecting items in the panel moves the editor to them without taking focus from the panel.
 
 ### A4. Keyboard review in the panel
-- [ ] `j`/`k` (and the arrow keys) move through the changes, and the editor follows. **Open point:** does `j`/`k` move the *selection* or only the *focus*? (spec §17 item 6)
-- [ ] `a` on a wording change accepts it. The file changes, a `stet: accept …` commit appears, and the item leaves the panel.
+- [x] ~~`j`/`k` move only the focus; the editor follows only after Enter~~ (found 2026-09-27). Fixed: `j`/`k` now run *Stet: Next/Previous change*, which select the change and show it. Re-check: `j`/`k` move through the changes and the editor follows at once; the arrow keys keep VS Code's usual behaviour (Enter shows the change).
+- [ ] `a` on a wording change accepts it. The file changes, the item leaves the panel, and **no** commit is made (since 2026-09-27 Stet commits on *Finish review*); the commit icon and count appear.
 - [ ] `a` on one linked member offers "Accept all 2 linked" or "Accept only". Choose *all*.
 - [ ] `r` on a change → give a reason → it is rejected. The agent (`stet_get_feedback`) sees the reason.
 - [ ] `v` → a revision text. The item shows "revision requested". Ask the agent to handle its feedback: the revised item replaces the old one.
@@ -71,9 +71,8 @@ Prompt the agent:
 - [ ] Type a new line above a pending change **without saving**. The decorations and CodeLens move with it.
 - [ ] Click **✓ Accept** in the CodeLens:
   - the file is saved first, and your line is kept;
-  - the change is applied but **not committed** (warning: uncommitted edits);
-  - the commit icon appears in the panel title and the status bar.
-- [ ] **Finish review** → the confirmation lists the files → *Commit* → one commit, and the icon disappears.
+  - the change is applied, and the commit count in the status bar goes up.
+- [ ] **Finish review** → the confirmation lists the files → *Commit* → the summary line is prefilled with the changeset titles; edit it → **one** commit for all accepted changes (`git log`: your summary, and a body listing the changes), and the icon disappears.
 - [ ] Hover links (✓ Accept, Diff, …) work.
 - [ ] Turning off `stet.codeLens` / `stet.inlineChanges` hides them.
 

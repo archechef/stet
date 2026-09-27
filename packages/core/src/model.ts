@@ -16,6 +16,8 @@ export interface Agent {
   feedbackCursor: number;
   createdAt: string;
   state: "active" | "archived";
+  /** Set when the reviewer archives the agent. */
+  archived?: { at: string; withdrawn: string[]; worktreeRemoved: boolean };
 }
 
 export type GroupKind = "atomic" | "linked" | "related";
@@ -102,7 +104,8 @@ export type EventType =
   | "group_broken"
   | "withdrawn"
   | "superseded"
-  | "synced";
+  | "synced"
+  | "archived";
 
 export interface StetEvent {
   seq: number;

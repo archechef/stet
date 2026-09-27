@@ -24,7 +24,7 @@ code --install-extension packages/vscode/stet-vscode.vsix
 1. Open your LaTeX project folder in VS Code, open the **Stet** view in the activity bar and click **Set up project** (creates a git repository first if there is none).
 2. **New agent workspace** → pick Claude or Codex → copy the folder path and open that folder in the Claude desktop app (Code tab), Claude Code or Codex.
 3. Ask the agent to improve the paper. Its proposals appear in the Stet panel and inline in your `.tex` files: accept (`a`), reject (`r`), edit (`e`), request a revision (`v`), comment (`c`), diff (`d`); `A`/`R` for the whole group. CodeLens actions above each change and hovers do the same.
-4. **Finish review** (commit icon) commits accepted changes that were not committed automatically because you had your own unsaved or uncommitted edits in the file.
+4. Accepting only writes your files. **Finish review** (commit icon) commits the whole review in one commit; you can edit the summary line.
 
 Full guide: [docs/vscode.md](docs/vscode.md). The extension brings its own copy of `stet` for the agents (in `.git/stet/bin/`), run with Node.js if installed, otherwise with VS Code's own runtime (setting `stet.runtime`).
 
@@ -53,7 +53,7 @@ Open the printed folder in the Claude desktop app (Code tab), Claude Code or Cod
 - the Stet MCP server config (`.mcp.json`, `.codex/config.toml`), giving the agent tools like `stet_submit` and `stet_get_feedback`,
 - guardrails (`.claude/settings.json`): a hook that blocks edits outside the workspace and git commands that would bypass review.
 
-Claude Code asks once to approve the workspace's MCP server. Optionally register it for all workspaces with `stet setup claude` / `stet setup codex`.
+The workspace's MCP server is pre-approved, so Claude Code only asks you to trust the folder. Optionally register it for all workspaces with `stet setup claude` / `stet setup codex`.
 
 Ask the agent to improve the paper; it submits its edits for review itself. (Without MCP, it can run `stet submit -t "Polish the introduction" -m "Shorter sentences"` in the workspace.)
 
@@ -65,7 +65,7 @@ stet show S3                # an item with its context
 stet accept S3 S4           # or a whole group: stet accept G1
 stet reject S5 -m "keep the original formula"
 stet revise S6 -m "shorter, please"
-stet commit                 # commit accepted changes left uncommitted (you had your own edits)
+stet commit -m "Polish intro" # finish the review: one commit for everything accepted
 ```
 
 The agent picks up your decisions with `stet_get_feedback` (or `stet feedback`) and moves onto your latest text with `stet_sync`. Run `stet doctor` if anything looks off, and `stet --help` for all commands.
