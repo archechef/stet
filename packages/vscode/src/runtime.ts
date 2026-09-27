@@ -4,8 +4,8 @@
  * path that survives extension updates, and run with Node.js or with VS Code's own runtime.
  */
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, readFile, rename } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, mkdir, readFile, rename, stat } from "node:fs/promises";
+import { delimiter, isAbsolute, join } from "node:path";
 import type { CliCommand } from "@stet/core";
 import { nodeMajor } from "./model.js";
 
@@ -17,15 +17,25 @@ function run(cmd: string, args: string[]): Promise<string | null> {
   });
 }
 
-/** Absolute path of a Node.js ≥ 20 on PATH, or null. */
+/**
+ * Absolute path of a Node.js ≥ 20 found on PATH, or null. Only absolute PATH entries are
+ * searched: never the current folder (Windows' `where` looks there first, so a `node.exe`
+ * inside an opened project could otherwise become the runtime of the agents' tools).
+ */
 export async function findNode(): Promise<string | null> {
   const win = process.platform === "win32";
-  const out = win ? await run("where.exe", ["node"]) : await run("/bin/sh", ["-c", "command -v node"]);
-  const path = out?.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
-  if (!path) return null;
-  const v = await run(path, ["--version"]);
-  const major = v ? nodeMajor(v) : null;
-  return major !== null && major >= 20 ? path : null;
+  const names = win ? ["node.exe"] : ["node"];
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir || !isAbsolute(dir)) continue;
+    for (const n of names) {
+      const path = join(dir, n);
+      if (!(await stat(path).then((s) => s.isFile(), () => false))) continue;
+      const v = await run(path, ["--version"]);
+      const major = v ? nodeMajor(v) : null;
+      if (major !== null && major >= 20) return path;
+    }
+  }
+  return null;
 }
 
 export const managedCliPath = (storeRoot: string) => join(storeRoot, "bin", "stet.mjs");

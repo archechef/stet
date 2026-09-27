@@ -4,19 +4,10 @@
  * elsewhere if `alias` is a link. Like git, Stet does not write beyond a link.
  */
 import { lstat, mkdir, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { isInside, samePath } from "./paths.js";
 
 export class UnsafePathError extends Error {}
-
-const fold = (p: string) => {
-  const s = resolve(p).replace(/\\/g, "/").replace(/\/+$/, "");
-  return process.platform === "win32" ? s.toLowerCase() : s;
-};
-const inside = (child: string, parent: string) => {
-  const c = fold(child);
-  const p = fold(parent);
-  return c === p || c.startsWith(p + "/");
-};
 
 const lstatOrNull = (p: string) => lstat(p).catch((e) => (e.code === "ENOENT" || e.code === "ENOTDIR" ? null : Promise.reject(e)));
 
@@ -47,7 +38,7 @@ export interface Target {
 export async function inspect(root: string, rel: string, opts: { forbidden?: string[]; replaceLinks?: boolean } = {}): Promise<Target> {
   const parts = rel.split(/[\\/]/);
   const path = join(root, ...parts);
-  if (!inside(path, root) || fold(path) === fold(root)) throw new UnsafePathError(`${rel} is not inside ${root}`);
+  if (!isInside(path, root) || samePath(path, root)) throw new UnsafePathError(`${rel} is not inside ${root}`);
   const missingDirs: string[] = [];
   let cur = root;
   for (const part of parts.slice(0, -1)) {
@@ -73,8 +64,8 @@ export async function inspect(root: string, rel: string, opts: { forbidden?: str
     // Existing ancestors are real folders; make sure their real location is where we think.
     const realParent = await realpath(dirname(path));
     const realRoot = await realpath(root);
-    if (!inside(realParent, realRoot)) throw new UnsafePathError(`${rel} resolves outside ${root}`);
-    for (const f of opts.forbidden ?? []) if (inside(join(realParent, "x"), await realpath(f).catch(() => f))) throw new UnsafePathError(`${rel} resolves into ${f}`);
+    if (!isInside(realParent, realRoot)) throw new UnsafePathError(`${rel} resolves outside ${root}`);
+    for (const f of opts.forbidden ?? []) if (isInside(join(realParent, "x"), await realpath(f).catch(() => f))) throw new UnsafePathError(`${rel} resolves into ${f}`);
   }
   return { path, missingDirs, exists };
 }
@@ -90,7 +81,7 @@ export async function prepare(root: string, t: Target): Promise<string[]> {
     created.push(d);
   }
   const realParent = await realpath(dirname(t.path));
-  if (!inside(realParent, await realpath(root))) throw new UnsafePathError(`${relative(root, t.path)} resolves outside ${root}`);
+  if (!isInside(realParent, await realpath(root))) throw new UnsafePathError(`${relative(root, t.path)} resolves outside ${root}`);
   return created;
 }
 

@@ -331,10 +331,11 @@ Uncommitted agent edits count as **drafts** and are never shown for review until
    - In VS Code this is a `WorkspaceEdit`, so undo works.
    - The file is saved if it had no unsaved changes before, and left unsaved otherwise.
 3. Set the status to `accepted` and store `resolution.appliedText`.
-4. **Commit** according to the `autoCommit` setting (default `"when-clean"`):
-   - If every affected file matched `HEAD` before the accept batch, Stet commits right after the batch. The batch ends after 10 s without another accept, or on **Finish review**. The commit message is `stet: accept S12, S13 — Tighten the introduction (claude-1)` with trailer `Stet-Applied: S12,S13`.
-   - Otherwise the change stays uncommitted and the user commits it along with their own edits. Stet notices later that the accepted text is in `HEAD` and sets `resolution.committed`.
-   - The other value is `"never"`.
+4. **Commit** according to the `autoCommit` setting:
+   - `"on-finish"` (default since 2026-09-27; per-accept commits made the history noisy): accepting only writes the working copy. **Finish review** (`stet commit`) commits all accepted-but-uncommitted items in one commit. The summary line is the changeset title(s), editable by the user; the body lists the accepted items per changeset, with the trailer `Stet-Applied: S12,S13,…`. The affected files are committed as they are, including the user's own edits in them.
+   - `"when-clean"`: commit right after each accept whose files matched `HEAD` beforehand; otherwise the change waits for Finish review.
+   - Either way, the user may also commit accepted changes themselves; Stet notices that the accepted text is in `HEAD` and sets `resolution.committed`.
+   - Only settings that differ from the defaults are written to `config.json`, so improved defaults reach existing repositories.
 5. Items overlapping the accepted range get `stale` (§7.5). Linked-group rules apply (§6.4.5).
 6. Add an `accepted` event. If the user edited the text, the event includes the final text, so the agent learns the preferred wording.
 
@@ -406,9 +407,9 @@ Threat model:
 Hook installation chains existing hooks (kept as `<name>.stet-orig`) rather than replacing them, and `stet hooks uninstall` restores them. With a custom `core.hooksPath` (e.g. husky) nothing is installed unless forced. It can be turned off (`guardHooks: false`).
 
 **Stet-side checks** (they hold even when layer 2 is bypassed):
-- **Worktree integrity:** before running git in an agent worktree (submit, sync, workspace refresh, doctor), Stet verifies that its `.git` file points to `<common git dir>/worktrees/<name>`, that `commondir` points back to the project's repository, and that there is no `config.worktree`. Otherwise an agent could redirect Stet's git calls to a git dir of its own whose config runs commands (filters, hooks) outside the sandbox.
+- **No git through the agent's metadata:** an agent can change its worktree's `.git` link and private git dir at any moment, also between a check and the git call after it. So Stet never runs git through them: it works on an agent's files (submit, sync, doctor) with `GIT_DIR` = the project's shared git dir (config the agent cannot write), the agent folder as `GIT_WORK_TREE`, and an index file of its own (`AgentFiles`); the agent branch is read and moved in the project's repository, and the resulting index is copied into the worktree afterwards so `git status` there stays tidy. Tracked workspace files are looked up in the agent branch, not the worktree's index. Stet still verifies the `.git` link, `commondir` and the absence of `config.worktree`, to report a tampered workspace clearly.
 - **No `core.fsmonitor`** for any git command Stet runs (`-c core.fsmonitor=false`).
-- **No hooks, no submodules in agent worktrees:** git calls there run with `core.hooksPath` set to a path that cannot contain hooks (a relative hooks path such as `.hooks` would otherwise resolve to the agent's files; `--no-verify` does not stop `post-commit` or `prepare-commit-msg`), with submodules ignored (their config is agent-writable), and with every configured filter driver switched off (`filter.<name>.clean/smudge/process` empty): the agent writes `.gitattributes` there, so it could attach any configured filter to its files, and a relative filter command would run the agent's own script. Files in agent branches are therefore stored unfiltered.
+- **No hooks, no submodules in agent worktrees:** git calls there run with `core.hooksPath` set to a path that cannot contain hooks (a relative hooks path such as `.hooks` would otherwise resolve to the agent's files; `--no-verify` does not stop `post-commit` or `prepare-commit-msg`), with submodules ignored (their config is agent-writable), with commit/tag signing off (a relative signing program would be the agent's file; Stet's internal commits are never signed), and with every configured filter driver switched off (`filter.<name>.clean/smudge/process` empty): the agent writes `.gitattributes` there, so it could attach any configured filter to its files, and a relative filter command would run the agent's own script. Files in agent branches are therefore stored unfiltered.
 - **No writes through links:** Stet never writes through a symlink or junction, like git. In the agent worktree (workspace files) it replaces planted links with real files and folders; in the project (accept) it refuses, and it checks the real location of every destination (inside the project, not in `.git`). Working-copy reads do not follow links either.
 - **Paths:** submitted and accepted paths must be relative, without `.`/`..` segments, and must not reach the git dir on any platform (`.git`, `GIT~1`, `.git.`, `:` streams). Accept re-checks this, since the store is plain files.
 - **Ids** from agents are validated before they are used as file names in the store.
@@ -497,7 +498,7 @@ reaches the real document until a human accepts it.
   "mainBranch": "master",
   "agentBranchPrefix": "stet/",
   "worktreeRoot": "../{repo}.stet",
-  "autoCommit": "when-clean",
+  "autoCommit": "on-finish",
   "split": {
     "mergeGap": 2,
     "rewriteRatio": 0.5,
@@ -577,7 +578,7 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 
 ## 15. Concurrency
 
-- **Writers:** extension, MCP servers (one per agent session), CLI. All mutations take `.git/stet/lock` and hold it only for the duration of a single operation. The lock file names its owner (host, PID, random token); the owner refreshes its time every 5 s while holding it. It is taken over only when its owner process is gone (same host) or its heartbeat stopped for 30 s, by renaming exactly that file away (so two waiters cannot both take it), and it is removed only by the owner whose token it holds.
+- **Writers:** extension, MCP servers (one per agent session), CLI. All mutations take `.git/stet/lock` and hold it only for the duration of a single operation. The lock file names its owner (host, PID, random token); the owner refreshes its time every 5 s while holding it. It is taken over only when its owner process is gone (same host), or its heartbeat stopped for 30 s (owner on another host) or 10 minutes (owner still running here, i.e. hung), by renaming exactly that file away (so two waiters cannot both take it). It is removed only by the owner whose token it holds, and every store write and every accept checks the token first (fencing): an owner whose lock was taken over stops instead of writing next to the new owner.
 - **Accepts are all-or-nothing:** every destination is checked before anything is written, the original contents are journaled in `.git/stet/txn.json`, and a failed write restores all files. An accept cut off by a crash is undone (if it was still writing) or completed (if all files were written) by the next Stet operation. The journal also records content hashes before and after Stet's write; undo restores a file only while it still holds exactly what Stet wrote, so edits the user made after the interruption are never overwritten.
 - **Git access:** git operations on the main repo are serialized through the same lock. Agents' own git activity happens in their worktrees. Stet uses git plumbing (`commit-tree`, `update-ref`) for `refs/stet/base`, so it never touches the user's index or working tree except when applying accepts.
 - **Parallel agents:** they share nothing except the review base. Overlaps between them are detected at the item level (§6.3).
@@ -590,7 +591,7 @@ Agents could later get a `stet_build` tool to compile their own worktree before 
 |---|---|---|
 | **M1** ✅ | Core + CLI: store, tokenizer and splitter, anchoring, submit, accept, reject, replay, review base, stale detection | A test corpus of 3–5 real `.tex` papers with scripted agent edits produces sensible items. Accept, reject and replay round-trip correctly while the user edits in parallel. Passes on Windows, macOS and Linux in CI. |
 | **M2** | MCP server, `init`, `agent new`, guardrails (permissions, hooks), agent instructions | End-to-end: Claude Code (desktop app **and** CLI) and Codex each complete a propose → reject-with-reason → revise → accept loop without human copy-paste. Guardrail tests: attempted writes to the user repo, merges and pushes are all blocked. |
-| **M3** | VS Code extension (panel, decorations, CodeLens, threads, setup commands) | The full workflow runs from VS Code plus the desktop app, with no command line. |
+| **M3** ✅ | VS Code extension (panel, decorations, CodeLens, threads, setup commands) | The full workflow runs from VS Code plus the desktop app, with no command line. |
 | **M4** | Overleaf remote handling | A co-author's browser edit during review is pulled and re-anchored, or marks items stale. Accepted changes can be pushed. |
 | **M5** | PDF previews | Before/after snippet for an item in under ~10 s on a medium paper with a warm cache. |
 | **M6** | `stet serve` web UI, structural-change UX (file moves, large changesets), agent notification hooks | Feature parity with the VS Code panel. |
@@ -636,6 +637,28 @@ A second review (a local Codex report, not kept in the repository) reproduced se
 - **F7** a JSON `null` message stalled the MCP server → envelope validation, per-request error isolation, runtime validation of tool arguments.
 - Follow-ups: recovery of an accept interrupted before writing restored old content over a later user edit → undo only files that still hold Stet's write; a configured clean filter ran during `stet_submit` with agent-chosen `.gitattributes` → filter drivers are off in agent worktrees.
 
+### Hands-on test and optimization pass (2026-09-27)
+- **Hands-on test A (VS Code extension): passed**, with these changes: `j`/`k` run *Stet: Next/Previous change* (they only moved the focus); `stet.runtime` applies immediately; accepted changes are committed on **Finish review** in one commit with an editable summary line (`autoCommit: "on-finish"`, the new default; per-accept commits made the history noisy); `config.json` stores only settings that differ from the defaults.
+- **Archiving an agent** now tells everyone what happened. The agent record keeps `archived: {at, withdrawn, worktreeRemoved}` and an `archived` event is logged. The agent's next tool call (MCP) and the guard hook answer with an explanation (archived on …, proposals S… withdrawn, folder deleted, ask for a new workspace), also when the folder is gone: workspace configs carry `STET_PROJECT` and `STET_AGENT` for that. A kept folder gets the same notice in place of its instructions. The reviewer sees a summary (VS Code message, CLI output).
+- **Optimization pass**, measured on a 3,000-line paper with 300 proposals (Windows):
+
+  | Operation | Before | After |
+  |---|---|---|
+  | accept one change | 1.9 s | 0.16 s |
+  | accept 50 changes at once | 2.3 s | 0.6 s |
+  | relocate all changes after an edit (editor, per keystroke) | 650 ms | 5 ms |
+  | sync | 2.3 s | 1.0–1.6 s |
+
+  Changes: line-diff mappers are cached per text pair and searched by bisection (relocating many items against the same two texts costs one diff); accept locates all overlapping items in one pass and reads each file once; the store caches records for the duration of a locked operation (copies handed out, writes go through); the review base is rebuilt lazily when an agent needs it instead of after every accept; the extension shows the review state before computing which agents are behind.
+- Code: path comparison helpers consolidated in `paths.ts` (seven copies before).
+
+### Pre-release review (2026-09-27)
+A review pass for security, efficiency and duplication before publishing the extension:
+- **Security:** the guard hook command quotes every part with single quotes (a folder name containing `$(…)` or backticks was expanded by the shell inside double quotes); the git hooks quote the agent branch prefix and run a chained pre-existing hook the way git does (only if executable, with its own interpreter); config values that reach git or hook scripts are validated (`mainBranch`, `agentBranchPrefix`, `autoCommit`), and agent workspaces must lie outside the project; the extension finds Node.js on absolute PATH entries only (Windows' `where` also searched the current folder) and `stet setup` runs `claude`/`codex` with `NoDefaultCurrentDirectoryInExePath`; the extension declares `untrustedWorkspaces: false` (it stays off in VS Code's Restricted Mode) and opens only project-relative item paths; `stet_show` shows only the agent's own items and groups, and `stet_list` validates its status filter; a damaged record file is skipped (and reported by `stet doctor`) instead of breaking every listing. Checked and not an issue: running `git` by name does not pick up a `git.exe` from the current folder (Node 22/24 and VS Code's runtime tested).
+- **Efficiency:** commit building batches `ls-tree` and `update-index` over all files; store listings read records in parallel batches (listing 300 items: 91 → 46 ms); the event log is parsed incrementally; submit's candidate matching no longer scans quadratically.
+- **Codex review (in parallel):** commit signing could run an agent-replaceable signing program → signing off for Stet's commits; check/use race on the worktree's git link → `AgentFiles` (above); *Accept all linked* from the editor could resolve `G1` in the wrong project → CodeLens and hover links pass `{path, id}` and resolve within that project; renamed binary files could not be accepted → handled (source checked, destination free, source removed); a live but stalled lock owner could be displaced → kept for 10 minutes, plus fencing; refresh computed each agent's status separately → `agentStatuses()` from one read. Regression tests in `review-findings.test.ts` and the VS Code integration run.
+- **Duplication:** one `oneLine`, one `pathExists`, one `shQuote`, one feedback formatter (`describeFeedback` with a style for the CLI), the extension uses the core's git runner, *Accept all* / *Reject all* share their target resolution, `StetError` lives in `errors.ts` (so the worktree check needs no wrapping).
+
 ## 17. Open points to verify
 
 1. **Claude desktop app:**
@@ -652,4 +675,4 @@ A second review (a local Codex report, not kept in the repository) reproduced se
    - How reliably do Claude Code and Codex supply `linked` hints unprompted, given only the instructions?
    - Is automatic detection plus "check the submit result" enough, or should submit *warn* when the auto-detectors find a linked pattern the agent didn't declare?
 5. ~~Line endings~~: handled in M1 (LF internally, original endings preserved on write).
-6. **VS Code extension:** whether `j`/`k` (bound to `list.focusDown`/`Up`) move the selection as well as the focus in the Stet tree, so the editor follows while reviewing by keyboard.
+6. ~~VS Code extension: whether `j`/`k` move the selection~~: they only moved the focus (hands-on test 2026-09-27). Now bound to *Stet: Next/Previous change*, which select and show the change; covered by the integration test.

@@ -25,35 +25,54 @@ export function captureContext(text: string, start: number, end: number): { befo
  * Map an offset from `ref` to `target` through a line diff.
  * Returns null when the offset lies inside a changed region.
  */
-function makeMapper(ref: string, target: string): (offset: number, isEnd: boolean) => number | null {
-  const segs: { refStart: number; refEnd: number; tgtStart: number; equal: boolean }[] = [];
+type Mapper = (offset: number, isEnd: boolean) => number | null;
+
+/**
+ * Recently built mappers. Locating many items of one file against the same two texts (an editor
+ * buffer, an accept, a sync) then costs one line diff instead of one per item.
+ */
+const mapperCache: { ref: string; target: string; map: Mapper }[] = [];
+const MAPPER_CACHE_SIZE = 4;
+
+function makeMapper(ref: string, target: string): Mapper {
+  const hit = mapperCache.find((c) => c.ref === ref && c.target === target);
+  if (hit) return hit.map;
+  const map = buildMapper(ref, target);
+  mapperCache.unshift({ ref, target, map });
+  mapperCache.length = Math.min(mapperCache.length, MAPPER_CACHE_SIZE);
+  return map;
+}
+
+function buildMapper(ref: string, target: string): Mapper {
+  // Unchanged stretches, in order; everything between them changed.
+  const equal: { refStart: number; refEnd: number; tgtStart: number }[] = [];
   let r = 0;
   let t = 0;
+  let lastEqual = true;
   for (const ch of diffLines(ref, target)) {
     const len = ch.value.length;
-    if (ch.added) {
-      segs.push({ refStart: r, refEnd: r, tgtStart: t, equal: false });
-      t += len;
-    } else if (ch.removed) {
-      segs.push({ refStart: r, refEnd: r + len, tgtStart: t, equal: false });
-      r += len;
-    } else {
-      segs.push({ refStart: r, refEnd: r + len, tgtStart: t, equal: true });
+    if (ch.added) t += len;
+    else if (ch.removed) r += len;
+    else {
+      equal.push({ refStart: r, refEnd: r + len, tgtStart: t });
       r += len;
       t += len;
     }
+    lastEqual = !ch.added && !ch.removed;
   }
   return (offset, isEnd) => {
-    for (const s of segs) {
-      if (!s.equal) continue;
-      const inside = isEnd ? offset > s.refStart && offset <= s.refEnd : offset >= s.refStart && offset < s.refEnd;
-      if (inside) return s.tgtStart + (offset - s.refStart);
+    // Binary search for the stretch containing the offset (ends are inclusive for range ends).
+    let lo = 0;
+    let hi = equal.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const s = equal[mid]!;
+      if (isEnd ? offset <= s.refStart : offset < s.refStart) hi = mid - 1;
+      else if (isEnd ? offset > s.refEnd : offset >= s.refEnd) lo = mid + 1;
+      else return s.tgtStart + (offset - s.refStart);
     }
     // Offset at the very end of the text.
-    if (offset === ref.length && isEnd !== undefined) {
-      const last = segs[segs.length - 1];
-      if (!last || last.equal) return target.length;
-    }
+    if (offset === ref.length && isEnd !== undefined && lastEqual) return target.length;
     return null;
   };
 }

@@ -29,11 +29,43 @@ describe("frontend support", () => {
     const r = await stet.commitAcceptedItems();
     expect(r.commit).not.toBeNull();
     expect(r.items.map((i) => i.id)).toEqual([items[0]!.id]);
-    expect(git(repo, "log", "-1", "--format=%s")).toContain(`stet: accept ${items[0]!.id}`);
+    expect(git(repo, "log", "-1", "--format=%s")).toBe("Wording");
+    expect(git(repo, "log", "-1", "--format=%b")).toContain(`Stet-Applied: ${items[0]!.id}`);
+    expect(git(repo, "log", "-1", "--format=%an")).toBe("Test User");
     expect(git(repo, "status", "--porcelain")).toBe("");
     expect(read(repo, "main.tex")).toContain("It even scales to");
     expect(await stet.uncommittedAccepted()).toEqual([]);
     expect((await stet.commitAcceptedItems()).commit).toBeNull();
+  });
+
+  it("commits a whole review in one commit, with the user's summary line", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const c1 = (await stet.submit("a", { title: "Wording" })).items;
+    edit(wt, "main.tex", "the problem of reviewing", "the task of reviewing");
+    const c2 = (await stet.submit("a", { title: "Terms" })).items;
+    await stet.accept([c1[0]!.id]);
+    await stet.accept([c2[0]!.id]);
+    expect(git(repo, "log", "--format=%s")).toBe("init");
+
+    const { subject } = await stet.commitMessage(await stet.uncommittedAccepted());
+    expect(subject).toBe("Wording; Terms");
+    const r = await stet.commitAcceptedItems({ subject: "Polish the introduction" });
+    expect(r.items.length).toBe(2);
+    expect(git(repo, "log", "--format=%s")).toBe("Polish the introduction\ninit");
+    const body = git(repo, "log", "-1", "--format=%b");
+    expect(body).toContain(`- Wording (a, ${c1[0]!.changeset}): ${c1[0]!.id}`);
+    expect(body).toContain(`Stet-Applied: ${c1[0]!.id},${c2[0]!.id}`);
+  });
+
+  it("saves only settings that differ from the defaults", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const saved = () => JSON.parse(readFileSync(join(stet.store.root, "config.json"), "utf8"));
+    expect(saved()).toEqual({ mainBranch: "master" });
+    expect((await stet.config()).autoCommit).toBe("on-finish");
+    await stet.store.saveConfig({ ...(await stet.config()), autoCommit: "when-clean" });
+    expect(saved()).toEqual({ mainBranch: "master", autoCommit: "when-clean" });
   });
 
   it("does not count items the user already committed", async () => {
@@ -57,7 +89,9 @@ describe("frontend support", () => {
     const mcp = JSON.parse(readFileSync(join(wt, ".mcp.json"), "utf8"));
     expect(mcp.mcpServers.stet).toMatchObject({ command: cli.command, args: [...cli.args, "mcp"], env: { ELECTRON_RUN_AS_NODE: "1" } });
     const settings = JSON.parse(readFileSync(join(wt, ".claude/settings.json"), "utf8"));
-    expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe(`ELECTRON_RUN_AS_NODE="1" "C:/VS Code/Code.exe" "C:/p/.git/stet/bin/stet.mjs" guard`);
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toMatch(
+      /^ELECTRON_RUN_AS_NODE='1' STET_PROJECT='.+' STET_AGENT='a' 'C:\/VS Code\/Code\.exe' 'C:\/p\/\.git\/stet\/bin\/stet\.mjs' guard$/,
+    );
     expect(readFileSync(join(wt, ".codex/config.toml"), "utf8")).toContain(`env = { ELECTRON_RUN_AS_NODE = "1", STET_WORKSPACE = `);
   });
 });

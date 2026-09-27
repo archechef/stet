@@ -5,7 +5,10 @@
  */
 import { tmpdir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
+import { isInside } from "./paths.js";
 import { WORKSPACE_FILES } from "./workspace.js";
+
+export { isInside };
 
 export interface GuardContext {
   /** Root of the agent workspace (worktree). */
@@ -25,12 +28,6 @@ export interface HookInput {
   scratchpad_dir?: string;
 }
 
-const norm = (p: string) => {
-  let s = resolve(p).replace(/\\/g, "/");
-  if (process.platform === "win32") s = s.toLowerCase();
-  return s.replace(/\/+$/, "");
-};
-
 /** Convert Git Bash style `/c/Users/...` paths to native ones on Windows. */
 function nativePath(p: string): string {
   if (process.platform === "win32") {
@@ -38,12 +35,6 @@ function nativePath(p: string): string {
     if (m) return `${m[1]}:${m[2] ?? "/"}`;
   }
   return p;
-}
-
-export function isInside(child: string, parent: string): boolean {
-  const c = norm(child);
-  const p = norm(parent);
-  return c === p || c.startsWith(p + "/");
 }
 
 /** Resolve `p` (possibly relative to `cwd`) to an absolute native path. */

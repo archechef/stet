@@ -2,13 +2,8 @@
 import { watch, type FSWatcher } from "node:fs";
 import { relative, resolve } from "node:path";
 import * as vscode from "vscode";
-import { Stet } from "@stet/core";
+import { foldPath, isSafeRepoPath, Stet } from "@stet/core";
 import type { Snapshot } from "./model.js";
-
-const norm = (p: string) => {
-  const s = resolve(p).replace(/\\/g, "/");
-  return process.platform === "win32" ? s.toLowerCase() : s;
-};
 
 export class Project implements vscode.Disposable {
   snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], syncNeeded: new Set(), uncommitted: [] };
@@ -36,13 +31,15 @@ export class Project implements vscode.Disposable {
   /** Path of `uri` relative to the project (forward slashes), or null if outside. */
   relPath(uri: vscode.Uri): string | null {
     if (uri.scheme !== "file") return null;
-    const f = norm(uri.fsPath);
-    const m = norm(this.mainPath);
+    const f = foldPath(uri.fsPath);
+    const m = foldPath(this.mainPath);
     if (!f.startsWith(m + "/")) return null;
     return relative(this.mainPath, uri.fsPath).replace(/\\/g, "/");
   }
 
+  /** The project file an item refers to. Item paths come from the store: never leave the project. */
   fileUri(rel: string): vscode.Uri {
+    if (!isSafeRepoPath(rel)) throw new Error(`Stet: '${rel}' is not a path inside the project.`);
     return vscode.Uri.file(resolve(this.mainPath, rel));
   }
 
@@ -81,23 +78,27 @@ export class Project implements vscode.Disposable {
   }
 
   private async load(): Promise<void> {
-    const [agents, changesets, groups, items, uncommitted] = await Promise.all([
+    const [agents, changesets, groups, items] = await Promise.all([
       this.stet.listAgents(),
       this.stet.listChangesets(),
       this.stet.listGroups(),
       this.stet.listItems(),
-      this.stet.uncommittedAccepted(),
     ]);
-    const syncNeeded = new Set<string>();
-    for (const a of agents.filter((a) => a.state === "active")) {
-      try {
-        if ((await this.stet.agentStatus(a.id)).syncNeeded) syncNeeded.add(a.id);
-      } catch {
-        /* e.g. worktree deleted by hand; doctor explains */
-      }
-    }
-    this.snapshot = { agents, changesets, groups, items, syncNeeded, uncommitted };
+    const uncommitted = items.filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
+    // Show the review state right away; whether agents are behind comes second (it may rebuild the review base).
+    this.snapshot = { agents, changesets, groups, items, syncNeeded: this.snapshot.syncNeeded, uncommitted };
     this.changed.fire();
+    const syncNeeded = new Set<string>();
+    try {
+      for (const s of await this.stet.agentStatuses()) if (s.syncNeeded) syncNeeded.add(s.agent.id);
+    } catch {
+      /* e.g. the main branch is missing; doctor explains */
+    }
+    const before = this.snapshot.syncNeeded;
+    if (syncNeeded.size !== before.size || [...syncNeeded].some((a) => !before.has(a))) {
+      this.snapshot = { ...this.snapshot, syncNeeded };
+      this.changed.fire();
+    }
   }
 
   dispose(): void {

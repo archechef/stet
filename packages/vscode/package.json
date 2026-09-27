@@ -21,6 +21,13 @@
     "codex"
   ],
   "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Stet runs git in your project and writes accepted changes to your files, so it only works in folders you trust."
+    },
+    "virtualWorkspaces": false
+  },
   "activationEvents": [
     "workspaceContains:**/*.tex",
     "onStartupFinished"
@@ -191,6 +198,18 @@
         "title": "Show diff",
         "category": "Stet",
         "icon": "$(diff)"
+      },
+      {
+        "command": "stet.next",
+        "title": "Next change",
+        "category": "Stet",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "stet.previous",
+        "title": "Previous change",
+        "category": "Stet",
+        "icon": "$(arrow-up)"
       },
       {
         "command": "stet.replyThread",
@@ -406,12 +425,12 @@
       },
       {
         "key": "j",
-        "command": "list.focusDown",
+        "command": "stet.next",
         "when": "focusedView == stet.review && !inputFocus"
       },
       {
         "key": "k",
-        "command": "list.focusUp",
+        "command": "stet.previous",
         "when": "focusedView == stet.review && !inputFocus"
       }
     ],

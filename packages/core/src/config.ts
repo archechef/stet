@@ -1,4 +1,5 @@
 /** Repository configuration (spec §11). */
+import { StetError } from "./errors.js";
 
 export interface SplitConfig {
   mergeGap: number;
@@ -22,7 +23,12 @@ export interface StetConfig {
   guardHooks: boolean;
   agentBranchPrefix: string;
   worktreeRoot: string;
-  autoCommit: "when-clean" | "never";
+  /**
+   * When accepted changes are committed: "on-finish" (default) in one commit when the user
+   * finishes the review; "when-clean" after every accept whose files had no other uncommitted
+   * edits. "never" is the old name of "on-finish".
+   */
+  autoCommit: "on-finish" | "when-clean" | "never";
   split: SplitConfig;
   grouping: GroupingConfig;
   files: { tex: string[]; bib: string[] };
@@ -34,7 +40,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
     agentBranchPrefix: "stet/",
     guardHooks: true,
     worktreeRoot: "../{repo}.stet",
-    autoCommit: "when-clean",
+    autoCommit: "on-finish",
     split: {
       mergeGap: 2,
       rewriteRatio: 0.5,
@@ -64,6 +70,40 @@ export function mergeConfig(base: StetConfig, over: unknown): StetConfig {
     return out;
   };
   return merge(base, over);
+}
+
+/**
+ * The part of `cfg` that differs from the defaults (plus `mainBranch`). This is what gets saved,
+ * so improved defaults reach existing repositories.
+ */
+export function configDelta(cfg: StetConfig): Partial<StetConfig> & { mainBranch: string } {
+  const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+  const delta = (a: unknown, b: unknown): unknown => {
+    if (JSON.stringify(a) === JSON.stringify(b)) return undefined;
+    if (!plain(a) || !plain(b)) return a;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(a)) {
+      const d = delta(a[k], b[k]);
+      if (d !== undefined) out[k] = d;
+    }
+    return out;
+  };
+  return { ...(delta(cfg, defaultConfig(cfg.mainBranch)) as object), mainBranch: cfg.mainBranch };
+}
+
+/** Branch-like names from the config end up in git commands and hook scripts: allow only plain names. */
+const REF_NAME = /^(?!.*\.\.)(?!\/)[A-Za-z0-9._\/-]+$/;
+
+/** Reject settings that would be unsafe or break Stet (bad branch names, workspaces inside the project). */
+export function validateConfig(cfg: StetConfig): StetConfig {
+  const bad = (what: string) => {
+    throw new StetError(`Invalid Stet setting in .git/stet/config.json: ${what}.`);
+  };
+  if (!REF_NAME.test(cfg.mainBranch)) bad(`mainBranch '${cfg.mainBranch}'`);
+  if (!REF_NAME.test(cfg.agentBranchPrefix) || !cfg.agentBranchPrefix.endsWith("/")) bad(`agentBranchPrefix '${cfg.agentBranchPrefix}' (use a plain name ending in '/', e.g. 'stet/')`);
+  if (typeof cfg.worktreeRoot !== "string" || !cfg.worktreeRoot) bad("worktreeRoot");
+  if (!["on-finish", "when-clean", "never"].includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}'`);
+  return cfg;
 }
 
 /** Match a repo path's basename against simple `*.ext` patterns. */

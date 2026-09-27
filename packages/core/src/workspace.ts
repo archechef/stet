@@ -1,7 +1,7 @@
 /** Files Stet writes into agent workspaces: instructions, MCP config, guardrails (spec §9, §10). */
 import { readInside, writeInside } from "./safefs.js";
-import { join } from "node:path";
-import { Repo, untrustedWorktreeConfig } from "./git.js";
+import { shQuote } from "./text.js";
+import { Repo } from "./git.js";
 import { agentInstructions, STET_MARKER } from "./instructions.js";
 import type { Agent } from "./model.js";
 
@@ -31,7 +31,6 @@ export function isWorkspaceFile(path: string): boolean {
 export const WORKSPACE_EXCLUDES = WORKSPACE_FILES.map((f) => `:(exclude)${f}`);
 
 const fwd = (p: string) => p.replace(/\\/g, "/");
-const quote = (s: string) => `"${fwd(s)}"`;
 
 /** Claude Code absolute path rule: `//c/Users/...` on Windows, `//home/...` elsewhere. */
 export function claudeAbsPath(p: string): string {
@@ -58,8 +57,11 @@ export interface WorkspaceContext {
 function claudeSettings(ctx: WorkspaceContext): object {
   const { cli, mainPath, gitDir } = ctx;
   // Hook commands run in a POSIX shell (Git Bash on Windows), so `VAR=value cmd` works everywhere.
-  const envPrefix = Object.entries(cli.env ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)} `).join("");
-  const hookCmd = envPrefix + [cli.command, ...cli.args].map(quote).join(" ") + " guard";
+  // STET_PROJECT/STET_AGENT let the guard explain an archived workspace even after its folder is gone.
+  const env = { ...cli.env, STET_PROJECT: fwd(mainPath), STET_AGENT: ctx.agent.id };
+  // Single quotes: a folder name containing `$(…)` or backticks must not be run by the shell.
+  const envPrefix = Object.entries(env).map(([k, v]) => `${k}=${shQuote(v)} `).join("");
+  const hookCmd = envPrefix + [cli.command, ...cli.args].map((a) => shQuote(fwd(a))).join(" ") + " guard";
   const main = claudeAbsPath(mainPath);
   const settings: Record<string, unknown> = {
     permissions: {
@@ -107,7 +109,7 @@ function mcpServer(ctx: WorkspaceContext) {
   return {
     command: fwd(ctx.cli.command),
     args: [...ctx.cli.args.map(fwd), "mcp"],
-    env: { ...ctx.cli.env, STET_WORKSPACE: fwd(ctx.agent.worktree) } as Record<string, string>,
+    env: { ...ctx.cli.env, STET_WORKSPACE: fwd(ctx.agent.worktree), STET_PROJECT: fwd(ctx.mainPath), STET_AGENT: ctx.agent.id } as Record<string, string>,
   };
 }
 
@@ -128,8 +130,9 @@ function codexConfig(ctx: WorkspaceContext): string {
 
 /** Write (or refresh) the workspace files. Files tracked by the project are never touched. */
 export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<WorkspaceResult> {
-  const wt = new Repo(ctx.agent.worktree, untrustedWorktreeConfig(join(ctx.commonDir, "stet", "config.json")));
-  const tracked = new Set((await wt.run(["ls-files", "--", ...WORKSPACE_FILES])).split("\n").filter(Boolean));
+  // Tracked = in the agent branch, read from the project's repository (not the worktree's own index).
+  const listed = await new Repo(ctx.mainPath).tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${ctx.agent.branch}`, "--", ...WORKSPACE_FILES]);
+  const tracked = new Set((listed ?? "").split("\0").filter(Boolean));
   const result: WorkspaceResult = { written: [], skipped: [] };
   const put = async (file: string, content: string) => {
     if (tracked.has(file)) {

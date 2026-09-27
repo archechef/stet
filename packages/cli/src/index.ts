@@ -3,8 +3,12 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { existsSync } from "node:fs";
 import {
+  archivedMessage,
   checkToolUse,
+  describeFeedback,
+  oneLine,
   doctor,
   hookStatus,
   installHooks,
@@ -43,11 +47,11 @@ Review:
   stet review [--agent <a>] [--status <s>] [--all]
                                         list items (default: pending)
   stet show <S12|G3|C4>                 show an item, group or changeset
-  stet accept <S12|G3>... [--force] [--text <t> | --text-file <f>] [--no-commit]
+  stet accept <S12|G3>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
   stet reject <S12|G3>... [-m <reason>] [--all | --revise-rest | --only]
   stet revise <S12> -m <what to change>
   stet comment <S12> -m <text>
-  stet commit                           commit accepted items that are not committed yet
+  stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
   stet group <S1> <S2>... --kind atomic|linked|related -t <title> [-m <rationale>]
   stet ungroup <G3>
 
@@ -83,6 +87,7 @@ const { values: opt, positionals: pos } = parseArgs({
     text: { type: "string" },
     "text-file": { type: "string" },
     "no-commit": { type: "boolean" },
+    commit: { type: "boolean" },
     message: { type: "string", short: "m" },
     title: { type: "string", short: "t" },
     "revise-rest": { type: "boolean" },
@@ -108,11 +113,6 @@ function out(human: () => string | void, data: unknown) {
     if (s) console.log(s);
   }
 }
-
-const oneLine = (s: string, max = 70) => {
-  const t = s.replace(/\s+/g, " ").trim();
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
-};
 
 const statusColor = (s: ItemStatus) =>
   s === "accepted" ? green(s) : s === "rejected" || s === "stale" ? red(s) : s === "needs_revision" ? yellow(s) : s === "pending" ? cyan(s) : dim(s);
@@ -145,18 +145,8 @@ function itemDiff(it: Item): string {
 async function readJsonArg<T>(arg: string | undefined): Promise<T | undefined> {
   if (!arg) return undefined;
   if (arg.trim().startsWith("[") || arg.trim().startsWith("{")) return JSON.parse(arg) as T;
-  const raw = arg === "-" ? await readStdin() : await readFile(arg, "utf8");
+  const raw = arg === "-" ? await readAll(process.stdin) : await readFile(arg, "utf8");
   return JSON.parse(raw) as T;
-}
-
-function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let s = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (d) => (s += d));
-    process.stdin.on("end", () => resolve(s));
-    process.stdin.on("error", reject);
-  });
 }
 
 async function agentId(stet: Stet): Promise<string> {
@@ -199,6 +189,22 @@ async function guard(): Promise<void> {
     return; // not a hook invocation we understand: allow
   }
   const cwd: string = input.cwd ?? process.cwd();
+  const block = (reason: string) => {
+    process.stderr.write(reason + "\n");
+    process.exitCode = 2;
+  };
+  // An archived workspace: say so clearly (also when its folder is gone), and stop further work.
+  const project = process.env.STET_PROJECT;
+  const agentId = process.env.STET_AGENT;
+  if (project && agentId) {
+    try {
+      const agent = await (await Stet.open(project)).store.getAgent(agentId);
+      if (agent?.state === "archived") return block(archivedMessage(agent));
+    } catch {
+      /* fall through to the normal checks */
+    }
+    if (!existsSync(cwd)) return block(`Stet: this workspace folder (${cwd}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
+  }
   try {
     const { toplevel, mainPath, commonDir } = await Stet.locate(cwd);
     const stet = await Stet.open(cwd);
@@ -206,10 +212,7 @@ async function guard(): Promise<void> {
     const branch = await new Repo(toplevel).tryRun(["symbolic-ref", "--short", "HEAD"]);
     if (!branch?.startsWith(cfg.agentBranchPrefix)) return; // not an agent workspace
     const reason = checkToolUse(input, { worktree: toplevel, mainPath, commonDir });
-    if (reason) {
-      process.stderr.write(reason + "\n");
-      process.exitCode = 2;
-    }
+    if (reason) block(reason);
   } catch (e: any) {
     // Never block on internal errors, but say so (non-blocking hook error).
     process.stderr.write(`stet guard: ${e?.message ?? e}\n`);
@@ -222,34 +225,19 @@ const winQuote = (a: string) => (/[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '""'
 
 function runTool(cmd: string, args: string[]): { ok: boolean; out: string } {
   const win = process.platform === "win32";
+  // cmd.exe would look for `claude`/`codex` in the current folder first; this variable stops that.
   const r = win
-    ? spawnSync([cmd, ...args].map(winQuote).join(" "), { shell: true, encoding: "utf8" })
+    ? spawnSync([cmd, ...args].map(winQuote).join(" "), { shell: true, encoding: "utf8", env: { ...process.env, NoDefaultCurrentDirectoryInExePath: "1" } })
     : spawnSync(cmd, args, { encoding: "utf8" });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? r.error.message : ""}`.trim() };
 }
 
-function describeEvent(e: StetEvent): string {
-  const d = (e.data ?? {}) as any;
-  const it = d.item ? `${d.item.id} (${d.item.file}:${d.item.line})` : (e.items ?? []).join(", ");
-  switch (e.type) {
-    case "accepted":
-      return `${green("accepted")} ${it}${d.finalText !== undefined ? ` — edited by the reviewer to: "${oneLine(d.finalText, 200)}"` : ""}`;
-    case "rejected":
-      return `${red("rejected")} ${it}${d.reason ? ` — reason: ${d.reason}` : ""}. Do not propose this change again.`;
-    case "revision_requested":
-      return `${yellow("revision requested")} ${it}: ${d.comment}`;
-    case "comment":
-      return `${cyan("comment")} on ${it}: ${d.text}  (answer with: stet reply ${d.item?.id ?? ""} -m "...")`;
-    case "stale":
-      return `${yellow("stale")} ${it}: ${d.reason}. Re-propose against the current text if still relevant.`;
-    case "repeat_rejected":
-      return `${red("repeat")} ${it} repeats an already rejected change (${d.previous}); it was rejected automatically.`;
-    case "group_broken":
-      return `${red("group broken")} ${e.group} "${d.title}": ${(d.members ?? []).map((m: any) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
-    default:
-      return `${e.type} ${it}`;
-  }
-}
+/** Feedback as the agents see it, with colored labels and the CLI's reply command. */
+const describeEvent = (e: StetEvent) =>
+  describeFeedback(e, {
+    label: (t, tone) => ({ good: green, bad: red, warn: yellow, info: cyan })[tone](t.toLowerCase()),
+    reply: (id) => `stet reply ${id} -m "..."`,
+  });
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -281,6 +269,7 @@ async function main() {
       version: VERSION,
       ...(process.env.STET_WORKSPACE ? { workspace: process.env.STET_WORKSPACE } : {}),
       ...(process.env.STET_AGENT ? { agentId: process.env.STET_AGENT } : {}),
+      ...(process.env.STET_PROJECT ? { project: process.env.STET_PROJECT } : {}),
     });
     return serveStdio(server, process.stdin, process.stdout);
   }
@@ -372,8 +361,15 @@ async function main() {
         return out(() => (agents.length ? agents.map((a: Agent) => `${bold(a.id)} ${dim(a.state)} ${a.kind}  ${a.worktree}`).join("\n") : "No agents."), agents);
       }
       if (sub === "archive") {
-        await stet.archiveAgent(need(name, "agent name"), { removeWorktree: !!opt.remove });
-        return out(() => `Archived ${name}.`, { archived: name });
+        const r = await stet.archiveAgent(need(name, "agent name"), { removeWorktree: !!opt.remove });
+        return out(
+          () =>
+            `Archived ${name}.` +
+            (r.withdrawn.length ? ` Withdrew ${r.withdrawn.length} pending change(s): ${r.withdrawn.join(", ")}.` : " It had no pending changes.") +
+            (r.worktreeRemoved ? " Deleted its folder and branch." : ` Its folder is kept: ${r.agent.worktree}`) +
+            "\nIf the agent's session is still open, it is told the workspace was archived on its next action.",
+          { archived: name, withdrawn: r.withdrawn, worktreeRemoved: r.worktreeRemoved },
+        );
       }
       throw new StetError("Usage: stet agent new|list|archive <name>");
     }
@@ -453,7 +449,7 @@ async function main() {
 
     case "accept": {
       if (!args.length) throw new StetError("Usage: stet accept <S12|G3>...");
-      const commit = opt["no-commit"] ? false : undefined;
+      const commit = opt["no-commit"] ? false : opt.commit ? true : undefined;
       const edited: Record<string, string> = {};
       const text = opt["text-file"] ? await readFile(opt["text-file"], "utf8") : opt.text;
       if (text !== undefined) {
@@ -512,7 +508,7 @@ async function main() {
     }
 
     case "commit": {
-      const r = await stet.commitAcceptedItems();
+      const r = await stet.commitAcceptedItems(opt.message ? { subject: opt.message } : {});
       return out(
         () => (r.commit ? `Committed ${r.items.map((i) => i.id).join(", ")} as ${r.commit.slice(0, 7)}.` : "Nothing to commit: all accepted items are committed."),
         r,

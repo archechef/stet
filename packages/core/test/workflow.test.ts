@@ -23,11 +23,11 @@ describe("basic review loop", () => {
     // The real file is untouched until accepted.
     expect(read(repo, "main.tex")).toBe(PAPER);
 
+    // By default accepting only writes the file; Finish review commits.
     const acc = await stet.accept([s1!.id]);
-    expect(acc.committed).not.toBeNull();
+    expect(acc.committed).toBeNull();
     expect(read(repo, "main.tex")).toContain("the task of reviewing");
-    expect(git(repo, "log", "-1", "--format=%s")).toContain(`stet: accept ${s1!.id}`);
-    expect(git(repo, "log", "-1", "--format=%an")).toBe("Test User");
+    expect(git(repo, "log", "--format=%s")).toBe("init");
 
     await stet.reject([s2!.id], { reason: "the formula is right" });
     expect(read(repo, "main.tex")).toContain("$a+b=c$");
@@ -51,13 +51,13 @@ describe("basic review loop", () => {
     edit(wt, "main.tex", "effective in practice", "effective in real use");
     const { items } = await stet.submit("a", { title: "t" });
     edit(repo, "main.tex", "It scales to", "It even scales to");
-    const res = await stet.accept([items[0]!.id]);
+    const res = await stet.accept([items[0]!.id], { commit: true }); // as with autoCommit "when-clean"
     expect(res.committed).toBeNull();
     expect(res.warnings.join()).toMatch(/uncommitted edits/);
     const text = read(repo, "main.tex");
     expect(text).toContain("effective in real use");
     expect(text).toContain("It even scales to");
-    expect(git(repo, "log", "--format=%s")).not.toContain("stet: accept");
+    expect(git(repo, "log", "--format=%s")).toBe("init");
 
     // The agent sees the accepted change after sync even though it is not committed yet.
     await stet.sync("a");
@@ -327,7 +327,7 @@ describe("files", () => {
     const r = await stet.submit("a", { title: "files" });
     const kinds = r.items.map((i) => `${i.kind}:${i.file}`).sort();
     expect(kinds).toEqual(["add-file:sections/new.tex", "delete-file:old.tex", "modify:refs.bib"]);
-    await stet.accept(r.items.map((i) => i.id));
+    await stet.accept(r.items.map((i) => i.id), { commit: true });
     expect(read(repo, "sections/new.tex")).toBe("A new section.\n");
     expect(() => read(repo, "old.tex")).toThrow();
     expect(read(repo, "refs.bib")).toContain("1983");

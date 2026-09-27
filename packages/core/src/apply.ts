@@ -34,12 +34,18 @@ export interface ApplyOptions {
 export async function locate(items: Item[], view: FileView, opts: ApplyOptions) {
   const located: { item: Item; span: Span }[] = [];
   const failed: { item: Item; reason: string }[] = [];
+  // Read each file once, however many of its items are located.
+  const files = new Map<string, Promise<TextFile | null>>();
+  const read = (p: string) => {
+    if (!files.has(p)) files.set(p, view.read(p));
+    return files.get(p)!;
+  };
   for (const item of items) {
     if (item.kind !== "modify") {
       located.push({ item, span: { start: 0, end: 0 } });
       continue;
     }
-    const f = await view.read(item.file);
+    const f = await read(item.file);
     if (!f) {
       failed.push({ item, reason: `${item.file} no longer exists` });
       continue;
@@ -72,9 +78,13 @@ export async function applyItems(items: Item[], view: FileView, opts: ApplyOptio
   for (const { item } of located.filter((l) => l.item.kind !== "modify")) {
     const fail = (reason: string) => failed.push({ item, reason });
     if (item.kind === "binary") {
-      const cur = changes.has(item.file) ? undefined : await view.blobId(item.file);
-      if (cur !== (item.oldBlob ?? null)) fail(`${item.file} changed since the proposal was made`);
+      // A renamed binary: the source must be unchanged and the destination free; the source goes away.
+      const src = item.oldFile ?? item.file;
+      const cur = changes.has(src) ? undefined : await view.blobId(src);
+      if (cur !== (item.oldBlob ?? null)) fail(`${src} changed since the proposal was made`);
+      else if (item.oldFile && (await exists(item.file))) fail(`${item.file} already exists`);
       else {
+        if (item.oldFile) changes.set(item.oldFile, null);
         changes.set(item.file, item.newBlob ? { blob: item.newBlob } : null);
         applied.push({ item, span: { start: 0, end: 0 }, text: "" });
       }

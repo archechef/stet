@@ -7,19 +7,16 @@
  */
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { StetError } from "./errors.js";
+import { foldPath } from "./paths.js";
 
-export class WorktreeIntegrityError extends Error {}
-
-const norm = (p: string) => {
-  const s = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  return process.platform === "win32" ? s.toLowerCase() : s;
-};
+export class WorktreeIntegrityError extends StetError {}
 
 async function real(p: string): Promise<string> {
   try {
-    return norm(await realpath(p));
+    return foldPath(await realpath(p));
   } catch {
-    return norm(resolve(p));
+    return foldPath(resolve(p));
   }
 }
 
@@ -43,7 +40,7 @@ export async function verifyAgentWorktree(worktree: string, commonDir: string): 
   const gitDir = resolve(worktree, m![1]!);
   const common = await real(commonDir);
   const gd = await real(gitDir);
-  if (norm(dirname(gd)) !== `${common}/worktrees`) fail(".git points outside the project's repository");
+  if (foldPath(dirname(gd)) !== `${common}/worktrees`) fail(".git points outside the project's repository");
   const gst = await lstat(gitDir).catch(() => null);
   if (!gst?.isDirectory()) fail("its git directory is missing");
   const cd = (await readFile(join(gitDir, "commondir"), "utf8").catch(() => "")).trim();

@@ -1,9 +1,8 @@
 /** Stet for VS Code (spec §12.2): review panel, in-editor review, threads and setup without a command line. */
-import { execFile } from "node:child_process";
-import { stat } from "node:fs/promises";
+
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, Stet, type Agent, type AgentKind, type Group, type Item } from "@stet/core";
+import { doctor, foldPath, pathExists, Repo, Stet, type Agent, type AgentKind, type Group, type Item } from "@stet/core";
 import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -11,6 +10,7 @@ import {
   groupDescription,
   groupLabel,
   isLive,
+  isRef,
   itemLabel,
   oneLine,
   STATUS_TEXT,
@@ -24,16 +24,8 @@ import { cliCommand, installCli, isManaged, type RuntimeMode } from "./runtime.j
 
 type El = { project: Project; node?: Node };
 
-const exists = (p: string) => stat(p).then(() => true, () => false);
-const normPath = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
-
-function git(cwd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile("git", args, { cwd, windowsHide: true }, (err, stdout, stderr) =>
-      err ? reject(new Error((stderr || err.message).toString().trim())) : resolve(stdout.toString().trim()),
-    );
-  });
-}
+/** Put a folder path on the clipboard, in the form the platform's apps expect (backslashes on Windows). */
+const copyPath = (p: string) => vscode.env.clipboard.writeText(process.platform === "win32" ? p.replace(/\//g, "\\") : p);
 
 class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposable {
   private projects = new Map<string, Project>();
@@ -82,9 +74,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       try {
         const loc = await Stet.locate(f.uri.fsPath);
         // Agent workspaces are for the agent; review happens in the project window.
-        if (normPath(loc.toplevel) !== normPath(loc.mainPath)) continue;
+        if (foldPath(loc.toplevel) !== foldPath(loc.mainPath)) continue;
         const stet = await Stet.open(f.uri.fsPath);
-        found.set(normPath(stet.mainPath), stet);
+        found.set(foldPath(stet.mainPath), stet);
       } catch {
         /* not a git repo, or Stet not set up */
       }
@@ -110,7 +102,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** Point agents' tools at the CLI bundled with this extension, unless another `stet` is configured and present. */
   private async ensureRuntime(p: Project): Promise<void> {
     const cfg = await p.stet.config();
-    const present = cfg.cli && (await exists(cfg.cli.command)) && (await Promise.all(cfg.cli.args.slice(0, 1).map(exists))).every(Boolean);
+    const present = cfg.cli && (await pathExists(cfg.cli.command)) && (await Promise.all(cfg.cli.args.slice(0, 1).map(pathExists))).every(Boolean);
     if (cfg.cli && present && !isManaged(cfg.cli, p.storeRoot)) return;
     const script = await installCli(this.ctx.asAbsolutePath("dist/stet.mjs"), p.storeRoot);
     const mode = vscode.workspace.getConfiguration("stet").get<RuntimeMode>("runtime", "auto");
@@ -179,6 +171,63 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   }
 
   async getTreeItem(el: El): Promise<vscode.TreeItem> {
+    const t = await this.buildTreeItem(el);
+    t.id = elId(el);
+    return t;
+  }
+
+  /** Parent of a tree element (needed to reveal and select elements programmatically). */
+  getParent(el: El): El | undefined {
+    const p = el.project;
+    const n = el.node;
+    if (!n) return undefined;
+    const snap = p.snapshot;
+    switch (n.type) {
+      case "agent":
+        return this.allProjects().length > 1 ? { project: p } : undefined;
+      case "changeset": {
+        const agent = snap.agents.find((a) => a.id === n.changeset.agent);
+        return agent && { project: p, node: { type: "agent", agent } };
+      }
+      case "group": {
+        const changeset = snap.changesets.find((c) => c.id === n.group.changeset);
+        return changeset && { project: p, node: { type: "changeset", changeset } };
+      }
+      case "item": {
+        const group = /^G/.test(n.parent) ? snap.groups.find((g) => g.id === n.parent) : undefined;
+        if (group) return { project: p, node: { type: "group", group } };
+        const changeset = snap.changesets.find((c) => c.id === (n.parent || n.item.changeset));
+        return changeset && { project: p, node: { type: "changeset", changeset } };
+      }
+    }
+  }
+
+  /** Items in panel order. */
+  private itemsInOrder(): El[] {
+    const out: El[] = [];
+    const walk = (el?: El) => {
+      for (const c of this.getChildren(el)) {
+        if (c.node?.type === "item") out.push(c);
+        else walk(c);
+      }
+    };
+    walk();
+    return out;
+  }
+
+  /** Select the next (or previous) change in the panel and show it in the editor (`j` / `k`). */
+  async step(dir: 1 | -1): Promise<void> {
+    const list = this.itemsInOrder();
+    if (!list.length) return;
+    const cur = this.tree.selection[0];
+    let i = cur ? list.findIndex((e) => elId(e) === elId(cur)) : -1;
+    i = i < 0 ? (dir > 0 ? 0 : list.length - 1) : Math.min(list.length - 1, Math.max(0, i + dir));
+    const next = list[i]!;
+    await this.tree.reveal(next, { select: true, focus: true });
+    await this.showItem(next, true);
+  }
+
+  private async buildTreeItem(el: El): Promise<vscode.TreeItem> {
     const E = vscode.TreeItemCollapsibleState.Expanded;
     if (!el.node) {
       const t = new vscode.TreeItem(el.project.name, E);
@@ -243,7 +292,6 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         t.tooltip = md;
         t.contextValue = isLive(it) ? `item.live.${it.kind}` : `item.done.${it.kind}`;
         t.command = { command: "stet.showItem", title: "Go to change", arguments: [el, true] };
-        t.id = `${el.project.mainPath}|${n.parent}|${it.id}`;
         return t;
       }
     }
@@ -279,6 +327,16 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   }
 
   private async target(arg: unknown): Promise<El | undefined> {
+    if (isRef(arg)) {
+      // Resolve strictly within the given project.
+      const p = this.projects.get(foldPath(arg.path));
+      if (!p) return undefined;
+      const model = this.model(p);
+      const group = /^G\d+$/i.test(arg.id) ? model.group(arg.id) : undefined;
+      if (group) return { project: p, node: { type: "group", group } };
+      const item = model.item(arg.id);
+      return item && { project: p, node: { type: "item", item, parent: "" } };
+    }
     if (typeof arg === "string") {
       if (/^G\d+$/i.test(arg)) {
         for (const p of this.allProjects()) {
@@ -372,30 +430,44 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     });
   }
 
-  async acceptAll(arg: unknown): Promise<void> {
+  /**
+   * The pending changes a group, a changeset, or a change's group stands for (Accept all /
+   * Reject all). Tells the user and returns undefined when there is nothing to act on.
+   */
+  private async scope(arg: unknown): Promise<{ project: Project; ids: string[]; what: string; changeset: boolean } | undefined> {
     const t = await this.target(arg);
-    if (!t?.node) return;
+    if (!t?.node) return undefined;
     const p = t.project;
     const model = this.model(p);
-    let ids: string[];
-    let what: string;
-    if (t.node.type === "group") {
-      ids = model.members(t.node.group).filter(isLive).map((i) => i.id);
-      what = `${t.node.group.id} “${t.node.group.title}”`;
-    } else if (t.node.type === "changeset") {
-      const cs = t.node.changeset;
-      ids = p.snapshot.items.filter((i) => i.changeset === cs.id && isLive(i)).map((i) => i.id);
-      ids = [...ids, ...model.linkedRest(ids).map((i) => i.id)];
-      what = `${cs.id} “${cs.title}”`;
-      const ok = await vscode.window.showWarningMessage(`Accept all ${ids.length} changes of ${what}?`, { modal: true }, "Accept all");
+    let n = t.node;
+    if (n.type === "item") {
+      const it = n.item;
+      const g = model.linkedGroup(it) ?? it.groups.map((x) => model.group(x)).find((x): x is Group => !!x && x.kind !== "atomic");
+      if (!g) return void vscode.window.showInformationMessage(`${it.id} is not part of a group.`);
+      n = { type: "group", group: g };
+    }
+    if (n.type === "group") {
+      const ids = model.members(n.group).filter(isLive).map((i) => i.id);
+      return ids.length ? { project: p, ids, what: `${n.group.id} “${n.group.title}”`, changeset: false } : void vscode.window.showInformationMessage(`Nothing pending in ${n.group.id}.`);
+    }
+    if (n.type === "changeset") {
+      const cs = n.changeset;
+      const ids = p.snapshot.items.filter((i) => i.changeset === cs.id && isLive(i)).map((i) => i.id);
+      return ids.length ? { project: p, ids, what: `${cs.id} “${cs.title}”`, changeset: true } : void vscode.window.showInformationMessage(`Nothing pending in ${cs.id}.`);
+    }
+    return undefined;
+  }
+
+  async acceptAll(arg: unknown): Promise<void> {
+    const s = await this.scope(arg);
+    if (!s) return;
+    let ids = s.ids;
+    if (s.changeset) {
+      ids = [...ids, ...this.model(s.project).linkedRest(ids).map((i) => i.id)];
+      const ok = await vscode.window.showWarningMessage(`Accept all ${ids.length} changes of ${s.what}?`, { modal: true }, "Accept all");
       if (ok !== "Accept all") return;
-    } else if (t.node.type === "item") {
-      const g = model.linkedGroup(t.node.item) ?? t.node.item.groups.map((x) => model.group(x)).find((x): x is Group => !!x && x.kind !== "atomic");
-      if (!g) return void vscode.window.showInformationMessage(`${t.node.item.id} is not part of a group.`);
-      return this.acceptAll({ project: p, node: { type: "group", group: g } } satisfies El);
-    } else return;
-    if (!ids.length) return void vscode.window.showInformationMessage(`Nothing pending in ${what}.`);
-    await this.doAccept(p, ids);
+    }
+    await this.doAccept(s.project, ids);
   }
 
   private async reason(prompt: string): Promise<string | undefined> {
@@ -427,29 +499,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   }
 
   async rejectAll(arg: unknown): Promise<void> {
-    const t = await this.target(arg);
-    if (!t?.node) return;
-    const p = t.project;
-    const model = this.model(p);
-    let ids: string[];
-    let what: string;
-    if (t.node.type === "group") {
-      ids = model.members(t.node.group).filter(isLive).map((i) => i.id);
-      what = t.node.group.id;
-    } else if (t.node.type === "changeset") {
-      const cs = t.node.changeset;
-      ids = p.snapshot.items.filter((i) => i.changeset === cs.id && isLive(i)).map((i) => i.id);
-      what = cs.id;
-    } else if (t.node.type === "item") {
-      const g = model.linkedGroup(t.node.item) ?? t.node.item.groups.map((x) => model.group(x)).find((x): x is Group => !!x && x.kind !== "atomic");
-      if (!g) return void vscode.window.showInformationMessage(`${t.node.item.id} is not part of a group.`);
-      return this.rejectAll({ project: p, node: { type: "group", group: g } } satisfies El);
-    } else return;
-    if (!ids.length) return;
-    const reason = await this.reason(`Reject all ${ids.length} changes of ${what}`);
+    const s = await this.scope(arg);
+    if (!s) return;
+    const reason = await this.reason(`Reject all ${s.ids.length} changes of ${s.what}`);
     if (reason === undefined) return;
+    const p = s.project;
     await this.run(p, async () => {
-      const r = await p.stet.reject(ids, { ...(reason ? { reason } : {}), mode: "all" });
+      const r = await p.stet.reject(s.ids, { ...(reason ? { reason } : {}), mode: "all" });
       vscode.window.setStatusBarMessage(`$(close) Rejected ${r.map((i) => i.id).join(", ")}`, 4000);
     });
   }
@@ -522,10 +578,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const { project: p, item } = t;
     if (item.kind !== "modify") return this.showDiff({ project: p, node: { type: "item", item, parent: "" } } satisfies El);
     const uri = p.fileUri(item.file);
-    if (!(await exists(uri.fsPath))) return void vscode.window.showWarningMessage(`${item.file} does not exist in your project.`);
+    if (!(await pathExists(uri.fsPath))) return void vscode.window.showWarningMessage(`${item.file} does not exist in your project.`);
     const doc = await vscode.workspace.openTextDocument(uri);
     const hit = (await this.locator.locate(doc)).find((l) => l.item.id === item.id);
-    const range = hit?.range ?? new vscode.Range((await this.lineOf(p, item)) - 1, 0, (await this.lineOf(p, item)) - 1, 0);
+    const line = hit ? 0 : (await this.lineOf(p, item)) - 1;
+    const range = hit?.range ?? new vscode.Range(line, 0, line, 0);
     const ed = await vscode.window.showTextDocument(doc, { preserveFocus, preview: true });
     ed.selection = new vscode.Selection(range.start, range.end);
     ed.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
@@ -544,7 +601,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** Content of `stet-diff:` documents. */
   async diffSide(uri: vscode.Uri): Promise<string> {
     const q = new URLSearchParams(uri.query);
-    const p = this.projects.get(normPath(decodeURIComponent(q.get("p") ?? "")));
+    const p = this.projects.get(foldPath(decodeURIComponent(q.get("p") ?? "")));
     const item = p && this.model(p).item(q.get("id") ?? "");
     if (!p || !item) return "";
     const after = q.get("side") === "after";
@@ -579,31 +636,32 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (!folder) return;
     const dir = folder.uri.fsPath;
     try {
-      if ((await git(dir, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")) !== "true") {
+      const repo = new Repo(dir);
+      if ((await repo.tryRun(["rev-parse", "--is-inside-work-tree"])) !== "true") {
         const ok = await vscode.window.showWarningMessage(
           `${folder.name} is not a git repository.`,
           { modal: true, detail: "Stet uses git to keep the agents' proposals apart from your files. Create a repository here and commit the current files as a starting point?" },
           "Create repository",
         );
         if (ok !== "Create repository") return;
-        await git(dir, ["init"]);
+        await repo.run(["init"]);
       }
-      if (!(await git(dir, ["rev-parse", "--verify", "-q", "HEAD"]).catch(() => ""))) {
+      if (!(await repo.revParse("HEAD"))) {
         const ok = await vscode.window.showWarningMessage(
           "The repository has no commits yet.",
           { modal: true, detail: "Stet reviews changes against your last commit. Commit the current files now?" },
           "Commit files",
         );
         if (ok !== "Commit files") return;
-        await git(dir, ["add", "-A"]);
-        await git(dir, ["commit", "-m", "Initial commit"]);
+        await repo.run(["add", "-A"]);
+        await repo.run(["commit", "-m", "Initial commit"]);
       }
       const loc = await Stet.locate(dir);
       const storeRoot = join(loc.commonDir, "stet");
       let keepCli = false;
       try {
         const cfg = await (await Stet.open(dir)).config();
-        keepCli = !!cfg.cli && !isManaged(cfg.cli, storeRoot) && (await exists(cfg.cli.command));
+        keepCli = !!cfg.cli && !isManaged(cfg.cli, storeRoot) && (await pathExists(cfg.cli.command));
       } catch {
         /* first setup */
       }
@@ -663,7 +721,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (!pick) return;
     const uri = vscode.Uri.file(agent.worktree);
     if (pick.id === "copy") {
-      await vscode.env.clipboard.writeText(agent.worktree.replace(/\//g, process.platform === "win32" ? "\\" : "/"));
+      await copyPath(agent.worktree);
       vscode.window.setStatusBarMessage(`$(copy) Copied ${agent.worktree}`, 4000);
     } else if (pick.id === "reveal") await vscode.commands.executeCommand("revealFileInOS", uri);
     else await vscode.commands.executeCommand("vscode.openFolder", uri, { forceNewWindow: true });
@@ -690,7 +748,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
 
   async copyAgentPath(arg: unknown): Promise<void> {
     const a = await this.pickAgent(arg);
-    if (a) await vscode.env.clipboard.writeText(a.agent.worktree.replace(/\//g, process.platform === "win32" ? "\\" : "/"));
+    if (a) await copyPath(a.agent.worktree);
   }
 
   async archiveAgent(arg: unknown): Promise<void> {
@@ -711,7 +769,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       keep,
     );
     if (!ok) return;
-    await this.run(a.project, () => a.project.stet.archiveAgent(a.agent.id, { removeWorktree: ok === del }));
+    const r = await this.run(a.project, () => a.project.stet.archiveAgent(a.agent.id, { removeWorktree: ok === del }));
+    if (r) {
+      void vscode.window.showInformationMessage(
+        `Archived ${a.agent.id}.` +
+          (r.withdrawn.length ? ` Withdrew ${r.withdrawn.length} pending change${r.withdrawn.length === 1 ? "" : "s"} (${r.withdrawn.join(", ")}).` : " It had no pending changes.") +
+          (r.worktreeRemoved ? " Its folder and branch are deleted." : ` Its folder is kept: ${a.agent.worktree}.`) +
+          " If its session is still open, the agent is told on its next action; you can close that session.",
+      );
+    }
   }
 
   async finishReview(): Promise<void> {
@@ -729,9 +795,17 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       "Commit",
     );
     if (ok !== "Commit") return;
+    const { subject } = await p.stet.commitMessage(items);
+    const edited = await vscode.window.showInputBox({
+      title: "Commit message",
+      value: subject,
+      prompt: "Summary line. Stet adds the list of accepted changes below it.",
+      validateInput: (v) => (v.trim() ? undefined : "Enter a summary line."),
+    });
+    if (edited === undefined) return;
     await this.run(p, async () => {
       await this.saveFiles(p, files);
-      const r = await p.stet.commitAcceptedItems();
+      const r = await p.stet.commitAcceptedItems({ subject: edited });
       vscode.window.setStatusBarMessage(r.commit ? `$(git-commit) Committed ${r.items.map((i) => i.id).join(", ")}` : "Nothing to commit", 5000);
     });
   }
@@ -765,6 +839,23 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     for (const d of this.disposables) d.dispose();
     this.changed.dispose();
     this.treeChanged.dispose();
+  }
+}
+
+/** Stable id of a tree element (VS Code uses it to keep selection and to reveal elements). */
+function elId(el: El): string {
+  const n = el.node;
+  const p = el.project.mainPath;
+  if (!n) return p;
+  switch (n.type) {
+    case "agent":
+      return `${p}|agent|${n.agent.id}`;
+    case "changeset":
+      return `${p}|cs|${n.changeset.id}`;
+    case "group":
+      return `${p}|group|${n.group.id}`;
+    case "item":
+      return `${p}|${n.parent}|${n.item.id}`;
   }
 }
 
@@ -812,6 +903,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.ungroup", (a) => ext.ungroup(a));
   reg("stet.showItem", (a, keepFocus) => ext.showItem(a, keepFocus === true));
   reg("stet.showDiff", (a) => ext.showDiff(a));
+  reg("stet.next", () => ext.step(1));
+  reg("stet.previous", () => ext.step(-1));
   reg("stet.replyThread", (r: vscode.CommentReply) => ext.replyThread(r, threads));
   await ext.discover();
 }

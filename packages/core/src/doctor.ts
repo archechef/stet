@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { compareVersions, gitVersion, Repo } from "./git.js";
 import { hookStatus } from "./hooks.js";
 import { verifyAgentWorktree } from "./worktree.js";
-import { isWorkspaceFile } from "./workspace.js";
 import { isLive } from "./model.js";
 import { BASE_REF, Stet } from "./service.js";
+import { pathExists } from "./paths.js";
 
 export interface DoctorCheck {
   name: string;
@@ -25,15 +25,6 @@ function which(cmd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(cmd, args, { windowsHide: true, timeout: 10_000 }, (err, stdout) => resolve(err ? null : String(stdout).trim()));
   });
-}
-
-async function exists(p: string) {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function doctor(cwd: string): Promise<DoctorCheck[]> {
@@ -116,7 +107,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   const base = await stet.repo.revParse(BASE_REF);
   add(base ? { name: "review base", status: "ok", message: base.slice(0, 10) } : { name: "review base", status: "warn", message: `${BASE_REF} missing`, fix: "It is recreated automatically by the next Stet command (e.g. `stet review`)." });
 
-  if (await exists(stet.store.lockPath)) {
+  if (await pathExists(stet.store.lockPath)) {
     const age = Date.now() - (await stat(stet.store.lockPath)).mtimeMs;
     add({
       name: "lock",
@@ -139,7 +130,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
     });
 
   if (!cfg.cli) add({ name: "stet command", status: "warn", message: "not recorded; agent workspaces get no MCP/guard config", fix: "stet init" });
-  else if (!(await exists(cfg.cli.args[0] ?? cfg.cli.command)))
+  else if (!(await pathExists(cfg.cli.args[0] ?? cfg.cli.command)))
     add({ name: "stet command", status: "error", message: `${cfg.cli.args[0] ?? cfg.cli.command} no longer exists (Stet moved?)`, fix: "stet init, then stet agent refresh <name> for each agent" });
   else add({ name: "stet command", status: "ok", message: [cfg.cli.command, ...cfg.cli.args].join(" ") });
 
@@ -154,7 +145,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   add(
     claudeHasStet
       ? { name: "Claude Code MCP", status: "ok", message: "stet registered at user scope" }
-      : { name: "Claude Code MCP", status: "info", message: "stet not registered at user scope; each workspace's .mcp.json is used instead (Claude Code asks once to approve it)", fix: "optional: stet setup claude" },
+      : { name: "Claude Code MCP", status: "info", message: "stet not registered at user scope; each workspace's .mcp.json is used instead (pre-approved, no prompt)", fix: "optional: stet setup claude" },
   );
   const codexToml = await readFile(join(home, ".codex", "config.toml"), "utf8").catch(() => "");
   add(
@@ -173,7 +164,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   for (const a of agents) {
     const wt = worktrees.find((w) => w.path.replace(/\\/g, "/").toLowerCase() === a.worktree.toLowerCase());
     const n = `agent ${a.id}`;
-    if (!wt || !(await exists(a.worktree))) {
+    if (!wt || !(await pathExists(a.worktree))) {
       add({ name: n, status: "error", message: `workspace missing (${a.worktree})`, fix: `stet agent archive ${a.id}  (then create a new one)` });
       continue;
     }
@@ -187,14 +178,14 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
       add({ name: n, status: "error", message: e.message, fix: `stet agent archive ${a.id} --remove  (then create a new one)` });
       continue;
     }
-    const dirty = (await (await stet.agentWorktreeRepo(a.worktree)).status()).filter((l) => !isWorkspaceFile(l.slice(3))).length;
+    const dirty = (await stet.unsubmittedFiles(a)).length;
     const live = items.filter((i) => i.agent === a.id && isLive(i.status)).length;
     const parts = [`${live} pending`];
     if (dirty) parts.push(`${dirty} unsubmitted file change(s)`);
     if (base && a.baseCommit !== base) parts.push("needs sync");
     const missingFiles: string[] = [];
-    for (const f of ["CLAUDE.local.md", ".mcp.json"]) if (!(await exists(join(a.worktree, f)))) missingFiles.push(f);
-    const settings = (await exists(join(a.worktree, ".claude/settings.json"))) || (await exists(join(a.worktree, ".claude/settings.local.json")));
+    for (const f of ["CLAUDE.local.md", ".mcp.json"]) if (!(await pathExists(join(a.worktree, f)))) missingFiles.push(f);
+    const settings = (await pathExists(join(a.worktree, ".claude/settings.json"))) || (await pathExists(join(a.worktree, ".claude/settings.local.json")));
     if (!settings) missingFiles.push(".claude/settings.json");
     if (cfg.cli && missingFiles.length)
       add({ name: n, status: "warn", message: `${parts.join(", ")}; missing workspace files: ${missingFiles.join(", ")}`, fix: `stet agent refresh ${a.id}` });
@@ -207,6 +198,9 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   const groups = await stet.store.groups();
   const ids = new Set(items.map((i) => i.id));
   const dangling = groups.filter((g) => g.items.some((i) => !ids.has(i)));
+  await Promise.all([stet.store.agents(), stet.store.changesets()]); // so damaged files of every kind are noticed
+  if (stet.store.unreadable.size)
+    add({ name: "store", status: "error", message: `damaged record files (skipped): ${[...stet.store.unreadable].join(", ")}`, fix: "restore them from a backup or delete them" });
   if (dangling.length) add({ name: "store", status: "warn", message: `groups referencing missing items: ${dangling.map((g) => g.id).join(", ")}` });
   else add({ name: "store", status: "ok", message: `${items.length} items, ${groups.length} groups` });
 

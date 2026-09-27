@@ -89,6 +89,15 @@ export function isSafeRepoPath(p: string): boolean {
   });
 }
 
+/** Text on one line (whitespace collapsed), cut to `max` characters with an ellipsis. */
+export function oneLine(s: string, max = 120): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
+/** Quote for a POSIX shell: nothing inside is expanded (no `$`, backticks or globs). */
+export const shQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
 export function isBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8000);
   for (let i = 0; i < n; i++) if (buf[i] === 0) return true;

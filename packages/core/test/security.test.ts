@@ -1,4 +1,5 @@
 /** Findings of the 2026-09-26 security audit: each test reproduces an attack and checks it fails. */
+import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -79,6 +80,59 @@ describe("agent workspace integrity", () => {
     const settings = JSON.parse(readFileSync(join(agent.worktree, ".claude/settings.json"), "utf8"));
     expect(settings.sandbox.filesystem.allowWrite).toEqual([gitDir.replace(/\\/g, "/")]);
     expect(gitDir.replace(/\\/g, "/")).toMatch(/\/worktrees\/[^/]+$/);
+  });
+});
+
+describe("second review pass", () => {
+  it("quotes the guard hook command so the shell expands nothing in folder names", async () => {
+    // A tool path with shell syntax in it: run as the hook would be, it must stay literal.
+    const cli = { command: "printf", args: ["%s|%s|", "/tmp/$(echo EXPANDED)`echo X`"] };
+    const { stet } = await setup({ "main.tex": PAPER }, { cli });
+    const agent = await stet.newAgent("a");
+    const cmd: string = JSON.parse(readFileSync(join(agent.worktree, ".claude/settings.json"), "utf8")).hooks.PreToolUse[0].hooks[0].command;
+    let out: string;
+    try {
+      out = execFileSync("sh", ["-c", cmd.replace(/ guard$/, "")], { encoding: "utf8" });
+    } catch {
+      return; // no POSIX shell on this machine
+    }
+    // printf's format is the first argument; the path arrives literally, nothing was run.
+    expect(out).toBe("/tmp/$(echo EXPANDED)`echo X`||");
+  });
+
+  it("rejects unsafe or broken settings", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const cfgPath = join(stet.store.root, "config.json");
+    const base = JSON.parse(readFileSync(cfgPath, "utf8"));
+    for (const bad of [{ agentBranchPrefix: "stet/*) rm -rf ~ ;; (x" }, { agentBranchPrefix: "stet" }, { mainBranch: "master; echo" }, { autoCommit: "sometimes" }]) {
+      writeFileSync(cfgPath, JSON.stringify({ ...base, ...bad }));
+      await expect(stet.config()).rejects.toThrow(/Invalid Stet setting/);
+    }
+    writeFileSync(cfgPath, JSON.stringify({ ...base, worktreeRoot: "./agents" }));
+    await expect(stet.newAgent("a")).rejects.toThrow(/outside your project/);
+  });
+
+  it("skips a damaged record file and reports it", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    await stet.submit("a", { title: "t" });
+    writeFileSync(join(stet.store.root, "items", "S99.json"), "{ not json");
+    expect((await stet.listItems()).length).toBe(1);
+    const checks = await doctor(repo);
+    expect(checks.some((c) => c.name === "store" && c.status === "error" && /S99\.json/.test(c.message))).toBe(true);
+  });
+
+  it("runs a chained hook by itself, and only if it is executable", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const hooks = join(stet.commonDir, "hooks");
+    const marker = join(repo, "..", "orig-ran").replace(/\\/g, "/");
+    // A non-shell hook (its own interpreter via the shebang) that was there before Stet.
+    writeFileSync(join(hooks, "pre-push.stet-orig"), `#!/usr/bin/env node\nrequire("fs").writeFileSync(${JSON.stringify(marker)}, "ran");\n`);
+    const script = readFileSync(join(hooks, "pre-push"), "utf8");
+    expect(script).toContain('if [ -x "$orig" ]; then');
+    expect(script).toContain('| "$orig" "$@"');
+    expect(script).not.toContain('sh "$orig"');
   });
 });
 

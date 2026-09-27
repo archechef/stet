@@ -121,7 +121,7 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 
 | Action | Key in the panel | What happens |
 |---|---|---|
-| **Accept** | `a` | Applies the change to your file and commits it (`stet: accept S8 — <changeset title>`). |
+| **Accept** | `a` | Applies the change to your file. It is committed together with the rest of the review when you click **Finish review**. |
 | **Reject…** | `r` | Asks for an optional reason. The agent gets the reason and won't propose the same change again. |
 | **Edit and accept…** | `e` | Lets you change the wording first, then accepts it. The agent sees your version and adapts to your style. Short changes are edited in an input box; multi-line ones in a separate tab, where you then choose *Accept edited*. |
 | **Request revision…** | `v` | Tells the agent what to change. The change stays open until the agent resubmits it. |
@@ -130,7 +130,7 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 | **Accept all** | `Shift+A` | Accepts the whole group. On a changeset, it accepts the whole changeset, after asking. |
 | **Reject all…** | `Shift+R` | Rejects the whole group or changeset with one reason. |
 | **Dissolve group** | (context menu) | Removes a group, for example a wrong automatic one. The changes themselves stay. |
-| Move | `j` / `k`, arrow keys | Moves through the panel. |
+| **Next / previous change** | `j` / `k` | Selects the next or previous change and shows it in the editor, keeping the focus in the panel. The arrow keys move through the panel too; press Enter to show the change. |
 
 **Linked changes:**
 - Accepting or rejecting one member of a linked group asks what to do with the rest:
@@ -138,7 +138,11 @@ You can keep typing in the file while changes are pending. Stet finds each chang
   - *Reject all*, *Reject this one and ask the agent to revise the rest*, or *Reject only this one*.
 - Accepting a linked group is all-or-nothing: if any member can't be applied, nothing is applied.
 
-**When a change is not committed automatically:** if the file has your own uncommitted edits (including unsaved ones, which Stet saves first), the change is applied but not committed. Stet won't mix your work into its commit on its own. Once you're done, click **Finish review**: it commits all such files as they are now, including your edits in them.
+**Committing: Finish review.** Accepting only writes your files; nothing is committed per change. When you're done reviewing, click **Finish review** (the commit icon in the panel title, also shown in the status bar with the number of accepted changes). It asks for the commit's summary line, prefilled with the titles of the accepted changesets, and makes **one commit** for the whole review. The commit body lists the accepted changes per changeset, with a `Stet-Applied:` trailer.
+
+- The files are committed as they are at that moment, including your own edits in them.
+- Accepted but not yet committed changes already count as your latest text: agents sync onto them.
+- Prefer a commit per accepted change? Set `"autoCommit": "when-clean"` in `.git/stet/config.json`. Stet then commits after each accept, unless the file had your own uncommitted edits.
 
 **Stale changes:** a change becomes *stale* when:
 - its text was rewritten in the meantime, by you or by accepting another agent's overlapping change, so it no longer applies; or
@@ -187,6 +191,8 @@ Run **Stet: Check setup (doctor)** first. It checks git, the hooks, the agent wo
 ## 8. Security
 
 Agents can write only their own workspace folder. Your project, its `.git` folder and Stet's data are read-only to them, and Stet checks what they submit (paths, git links, ids) before using it. On macOS, Linux and WSL2 the agent tools' sandbox enforces this. On native Windows, Claude Code has no sandbox: a guard hook blocks edits and commands aimed at your project, which reliably catches mistakes, but a deliberately evasive agent (for example one following instructions hidden in a source document) can get around it. For untrusted material, run the agent in WSL2. Details: [spec.md](spec.md) §9.
+
+**Restricted Mode:** Stet runs git in your project and writes accepted changes to your files, so it only works in folders you trust. If VS Code opens a folder in Restricted Mode, choose *Trust* to use Stet there.
 
 ---
 

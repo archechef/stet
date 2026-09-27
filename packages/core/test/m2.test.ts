@@ -21,7 +21,7 @@ describe("workspace files", () => {
     expect(mcp.mcpServers.stet.args).toEqual(["/opt/stet/cli.js", "mcp"]);
     expect(mcp.mcpServers.stet.env.STET_WORKSPACE).toBe(a.worktree);
     const settings = JSON.parse(read(a.worktree, ".claude/settings.json"));
-    expect(settings.hooks.PreToolUse[0].hooks[0].command).toMatch(/cli\.js" guard$/);
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toMatch(/cli\.js' guard$/);
     expect(settings.permissions.deny).toContain("Bash(git push *)");
     expect(settings.permissions.deny.some((d: string) => d.startsWith("Edit(//"))).toBe(true);
     expect(read(a.worktree, ".codex/config.toml")).toMatch(/\[mcp_servers\.stet\]/);

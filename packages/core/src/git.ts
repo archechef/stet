@@ -30,8 +30,12 @@ export interface RunResult {
   code: number;
 }
 
-/** Identity for commits Stet makes on its own refs and agent branches. */
-export const STET_IDENTITY = ["-c", "user.name=Stet", "-c", "user.email=stet@localhost"];
+/**
+ * Identity for commits Stet makes on its own refs and agent branches. They are internal, so they
+ * are never signed: signing runs a program from the config (a relative one would resolve inside an
+ * agent's folder) and may prompt for a passphrase.
+ */
+export const STET_IDENTITY = ["-c", "user.name=Stet", "-c", "user.email=stet@localhost", "-c", "commit.gpgSign=false"];
 
 /**
  * Options for every git call Stet makes. Stet runs git in agent workspaces from outside any
@@ -46,7 +50,7 @@ const SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
  * whose config the agent could write, are not entered.
  */
 export function untrustedWorktreeConfig(storeFile: string): string[] {
-  return [`core.hooksPath=${storeFile.replace(/\\/g, "/")}/no-hooks`, "diff.ignoreSubmodules=all", "submodule.recurse=false", "status.submoduleSummary=false"];
+  return [`core.hooksPath=${storeFile.replace(/\\/g, "/")}/no-hooks`, "diff.ignoreSubmodules=all", "submodule.recurse=false", "status.submoduleSummary=false", "commit.gpgSign=false", "tag.gpgSign=false"];
 }
 
 /**
@@ -186,15 +190,23 @@ export class Repo {
     const env = { GIT_INDEX_FILE: join(dir, "index") };
     try {
       await this.run(["read-tree", opts.baseRev], { env });
-      for (const [path, content] of opts.changes) {
-        if (content === null) {
-          await this.run(["update-index", "--force-remove", "--", path], { env });
-          continue;
-        }
-        const sha = await this.run(["hash-object", "-w", "--stdin"], { input: content });
-        const mode = (await this.tryRun(["ls-tree", opts.baseRev, "--", path]))?.split(" ")[0] || "100644";
-        await this.run(["update-index", "--add", "--cacheinfo", `${mode},${sha},${path}`], { env });
+      const paths = [...opts.changes.keys()];
+      // Modes of the files that exist (one call for all paths), so e.g. executable bits survive.
+      const modes = new Map<string, string>();
+      const listed = paths.length ? await this.tryRun(["ls-tree", "-z", opts.baseRev, "--", ...paths]) : null;
+      for (const entry of (listed ?? "").split("\0")) {
+        const tab = entry.indexOf("\t");
+        if (tab > 0) modes.set(entry.slice(tab + 1), entry.split(" ")[0]!);
       }
+      const removed = paths.filter((p) => opts.changes.get(p) === null);
+      if (removed.length) await this.run(["update-index", "--force-remove", "--", ...removed], { env });
+      const entries: string[] = [];
+      for (const [path, content] of opts.changes) {
+        if (content === null) continue;
+        const sha = await this.run(["hash-object", "-w", "--stdin"], { input: content });
+        entries.push(`${modes.get(path) ?? "100644"} ${sha}\t${path}`);
+      }
+      if (entries.length) await this.run(["update-index", "-z", "--index-info"], { env, input: entries.join("\0") + "\0" });
       const tree = await this.run(["write-tree"], { env });
       const parentArgs = opts.parents.flatMap((p) => ["-p", p]);
       return await this.run([...STET_IDENTITY, "commit-tree", tree, ...parentArgs, "-m", opts.message]);

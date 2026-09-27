@@ -1,28 +1,34 @@
 /** Git hooks that stop agent branches from bypassing review (spec §9, layer 3). */
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { StetConfig } from "./config.js";
 import { Repo } from "./git.js";
+import { shQuote } from "./text.js";
+import { pathExists } from "./paths.js";
 
 export const HOOK_MARKER = "# stet-guard-hook";
 export const HOOK_NAMES = ["reference-transaction", "pre-push"] as const;
 
-const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** Shell prelude: pass stdin and arguments on to a pre-existing hook afterwards. */
+/**
+ * Shell epilogue: pass stdin and arguments on to the hook that was there before Stet.
+ * Run it the way git would: only if executable, and by itself (its own shebang: sh, python, node…).
+ */
 function chain(name: string): string {
   return `orig="$(dirname "$0")/${name}.stet-orig"
-if [ -x "$orig" ] || [ -f "$orig" ]; then
-  printf '%s' "$input" | sh "$orig" "$@" || exit $?
+if [ -x "$orig" ]; then
+  printf '%s' "$input" | "$orig" "$@" || exit $?
 fi
 exit 0`;
 }
 
 function script(name: (typeof HOOK_NAMES)[number], cfg: StetConfig): string {
   const main = shQuote(`refs/heads/${cfg.mainBranch}`);
-  const prefix = cfg.agentBranchPrefix;
+  // Quoted parts of a case pattern match literally; only the trailing * is a wildcard.
+  const prefix = shQuote(cfg.agentBranchPrefix);
+  const agentHeads = shQuote(`refs/heads/${cfg.agentBranchPrefix}`);
   // for-each-ref matches a pattern "up to a slash", so refs/heads/stet covers refs/heads/stet/*.
-  const agentRefs = shQuote(`refs/heads/${prefix.replace(/\/+$/, "")}`);
+  const agentRefs = shQuote(`refs/heads/${cfg.agentBranchPrefix.replace(/\/+$/, "")}`);
   const head = `#!/bin/sh
 ${HOOK_MARKER} (installed by Stet; remove with \`stet hooks uninstall\`)
 input="$(cat)"
@@ -69,7 +75,7 @@ if [ "$STET_INTERNAL" != "1" ]; then
   fi
   printf '%s\\n' "$input" | while read -r lref lsha rref rsha; do
     case "$lref $rref" in
-      *refs/heads/${prefix}*) echo "stet: agent branches ($lref) must not be pushed." >&2; exit 1 ;;
+      *${agentHeads}*) echo "stet: agent branches ($lref) must not be pushed." >&2; exit 1 ;;
     esac
   done || exit 1
 fi
@@ -136,6 +142,6 @@ export async function uninstallHooks(repo: Repo, commonDir: string): Promise<voi
     if (!(await readIf(p))?.includes(HOOK_MARKER)) continue;
     await rm(p, { force: true });
     const orig = `${p}.stet-orig`;
-    if (await stat(orig).then(() => true, () => false)) await rename(orig, p);
+    if (await pathExists(orig)) await rename(orig, p);
   }
 }

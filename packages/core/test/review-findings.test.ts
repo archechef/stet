@@ -1,5 +1,5 @@
 /** Findings F1–F7 of the Codex security review (2026-09-26): each test reproduces the report's scenario. */
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { serveStdio, StetMcpServer } from "../src/mcp.js";
 import { LOCK_TIMING, Store } from "../src/store.js";
+import type { Item } from "../src/model.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
 
 const FAKE_CLI = { command: "/usr/bin/node", args: ["/opt/stet/cli.js"] };
@@ -219,6 +220,88 @@ describe("follow-up reports", () => {
   });
 });
 
+describe("Codex review", () => {
+  it("never runs a commit-signing program (a relative one would be the agent's file)", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const marker = join(outsideDir(), "signer-ran").replace(/\\/g, "/");
+    git(repo, "config", "commit.gpgSign", "true");
+    git(repo, "config", "gpg.program", "./sign.sh");
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "sign.sh", `#!/bin/sh\necho ran > "${marker}"\nexit 1\n`);
+    chmodSync(join(wt, "sign.sh"), 0o755);
+    // Sanity: git in the worktree would run it.
+    try {
+      git(wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "probe");
+    } catch {
+      /* the signer fails on purpose */
+    }
+    expect(existsSync(marker)).toBe(true);
+    rmSync(marker);
+
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const r = await stet.submit("a", { title: "t" });
+    const change = r.items.find((i) => i.file === "main.tex")!; // sign.sh itself is proposed too
+    await stet.accept([change.id]);
+    await stet.sync("a");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("does not use the worktree's git link after checking it (a swap in between changes nothing)", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const agent = await stet.newAgent("a");
+    const marker = join(outsideDir(), "evil-config-used").replace(/\\/g, "/");
+    edit(agent.worktree, "main.tex", "effective in practice", "effective in real use");
+    const files = await stet.agentFiles(agent); // the check happens here
+    // Now the agent points its worktree at a git dir of its own, with a config that runs commands.
+    const evil = join(agent.worktree, "evil");
+    git(agent.worktree, "init", "-q", "--bare", evil);
+    git(evil, "config", "core.fsmonitor", `echo x > "${marker}"; false`);
+    git(evil, "config", "core.hooksPath", "/nonexistent");
+    const fd = openSync(join(agent.worktree, ".git"), "r+");
+    ftruncateSync(fd);
+    writeSync(fd, `gitdir: ${evil.replace(/\\/g, "/")}\n`);
+    closeSync(fd);
+
+    const tip = await files.commitAll("t");
+    expect(existsSync(marker)).toBe(false);
+    // The commit landed on the agent branch in the project's repository.
+    expect(git(stet.mainPath, "rev-parse", `refs/heads/${agent.branch}`)).toBe(tip);
+    expect(git(stet.mainPath, "show", `${tip}:main.tex`)).toContain("effective in real use");
+  });
+
+  it("accepts a renamed binary file", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER, "a.bin": "" });
+    writeFileSync(join(repo, "a.bin"), Buffer.from([0, 1, 2, 0]));
+    git(repo, "commit", "-qam", "binary");
+    const { worktree: wt } = await stet.newAgent("a");
+    git(wt, "mv", "a.bin", "b.bin");
+    const [item] = (await stet.submit("a", { title: "rename" })).items;
+    expect(item).toMatchObject({ kind: "binary", file: "b.bin", oldFile: "a.bin" });
+    await stet.accept([item!.id], { commit: false });
+    expect(existsSync(join(repo, "a.bin"))).toBe(false);
+    expect([...readFileSync(join(repo, "b.bin"))]).toEqual([0, 1, 2, 0]);
+    await stet.agentStatus("a");
+    expect((await stet.uncommittedAccepted()).map((i) => i.id)).toEqual([item!.id]);
+    expect((await stet.commitAcceptedItems()).commit).not.toBeNull();
+    expect(git(repo, "status", "--porcelain")).toBe("");
+  });
+});
+
+describe("Codex review: status of all agents at once", () => {
+  it("matches the per-agent status", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const a = await stet.newAgent("a");
+    await stet.newAgent("b");
+    edit(a.worktree, "main.tex", "effective in practice", "effective in real use");
+    const [item] = (await stet.submit("a", { title: "t" })).items;
+    await stet.reject([item!.id], { reason: "no" });
+    const all = await stet.agentStatuses();
+    expect(all.map((s) => s.agent.id)).toEqual(["a", "b"]);
+    for (const s of all) expect(s).toEqual(await stet.agentStatus(s.agent.id));
+    expect(all[0]!.unreadFeedback).toBe(1);
+  });
+});
+
 describe("F5: store lock", () => {
   const saved = { ...LOCK_TIMING };
   afterEach(() => Object.assign(LOCK_TIMING, saved));
@@ -255,6 +338,33 @@ describe("F5: store lock", () => {
     });
     expect(entered).toBe(true);
     expect(JSON.parse(readFileSync(join(root, "lock"), "utf8")).token).toBe("other");
+  });
+
+  it("keeps the lock of a live owner on this machine even when its heartbeat stalls", async () => {
+    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 250, liveOwner: 60_000, timeout: 600 });
+    const root = outsideDir();
+    const { hostname } = await import("node:os");
+    writeFileSync(join(root, "lock"), JSON.stringify({ pid: process.pid, host: hostname(), token: "busy" }));
+    const old = new Date(Date.now() - 10_000); // silent far longer than `stale`
+    utimesSync(join(root, "lock"), old, old);
+    await expect(new Store(root).withLock(async () => undefined)).rejects.toThrow(/Timed out/);
+    expect(JSON.parse(readFileSync(join(root, "lock"), "utf8")).token).toBe("busy");
+  });
+
+  it("stops a displaced owner from writing (fencing)", async () => {
+    const root = outsideDir();
+    const store = new Store(root);
+    await store.init("master");
+    const item = { id: "S1", status: "pending", groups: [] } as unknown as Item;
+    await expect(
+      store.withLock(async () => {
+        await store.putItem(item);
+        // Another process took the lock over meanwhile.
+        writeFileSync(join(root, "lock"), JSON.stringify({ pid: 1, host: "x", token: "someone-else" }));
+        await store.putItem({ ...item, status: "accepted" });
+      }),
+    ).rejects.toThrow(/lost its lock/);
+    expect(JSON.parse(readFileSync(join(root, "items", "S1.json"), "utf8")).status).toBe("pending");
   });
 
   it("takes over a lock whose heartbeat stopped", async () => {

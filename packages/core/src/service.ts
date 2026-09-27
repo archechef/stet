@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { applyItems, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
 import { anchor, captureContext, type Span } from "./anchor.js";
 import { matchesAny, type StetConfig } from "./config.js";
-import { filterOverrides, gitRaw, Repo, STET_IDENTITY, untrustedWorktreeConfig } from "./git.js";
+import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import {
   autoGroups,
   joinTitles,
@@ -31,13 +31,17 @@ import {
 } from "./model.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store, writeJsonAtomic } from "./store.js";
-import { inspect, prepare, readInside, replaceFile, UnsafePathError, type Target } from "./safefs.js";
+import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
+import { archivedMessage, STET_MARKER } from "./instructions.js";
 import { installHooks } from "./hooks.js";
-import { isWorkspaceFile, WORKSPACE_EXCLUDES, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
-import { verifyAgentWorktree, WorktreeIntegrityError } from "./worktree.js";
+import { isWorkspaceFile, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
+import { isInside, pathExists, samePath } from "./paths.js";
+import { StetError } from "./errors.js";
+import { AgentFiles } from "./agentfiles.js";
+import { verifyAgentWorktree } from "./worktree.js";
 import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normalizeWs, sha256, toLf } from "./text.js";
 
-export class StetError extends Error {}
+export { StetError };
 
 export const BASE_REF = "refs/stet/base";
 const now = () => new Date().toISOString();
@@ -267,6 +271,7 @@ export class Stet {
     const data = new Map<string, Buffer | string | null>();
     for (const [p, c] of changes) data.set(p, c === null ? null : "blob" in c ? await this.blobBytes(c.blob) : fromLf(c.text, c.eol));
 
+    await this.store.fence(); // never write the user's files without holding the lock
     const journal: AcceptJournal = { items: resolutions, filesDone: false, files: [] };
     for (const [p, t] of targets) {
       const orig = t.exists ? await readFile(t.path) : null;
@@ -375,8 +380,12 @@ export class Stet {
     const blob = await view.blobId(it.file);
     const text = async (p: string) => (await view.read(p))?.text ?? null;
     switch (it.kind) {
-      case "binary":
-        return blob === (it.newBlob ?? null) ? "done" : blob === (it.oldBlob ?? null) ? "open" : "other";
+      case "binary": {
+        if (!it.oldFile) return blob === (it.newBlob ?? null) ? "done" : blob === (it.oldBlob ?? null) ? "open" : "other";
+        const src = await view.blobId(it.oldFile);
+        if (src === null && blob === (it.newBlob ?? null)) return "done";
+        return src === (it.oldBlob ?? null) && blob === null ? "open" : "other";
+      }
       case "delete-file":
         return blob === null ? "done" : "open";
       case "add-file":
@@ -467,6 +476,8 @@ export class Stet {
       const base = await this.ensureBase();
       const root = resolve(this.mainPath, cfg.worktreeRoot.replace("{repo}", basename(this.mainPath)));
       const path = opts.path ? resolve(opts.path) : join(root, id);
+      // Inside the project, the workspace would be both "the project" and "the workspace" to the guard.
+      if (isInside(path, this.mainPath)) throw new StetError(`The agent workspace (${path}) must be outside your project folder; check worktreeRoot in .git/stet/config.json.`);
       await mkdir(dirname(path), { recursive: true });
       await this.repo.run(["worktree", "add", "-b", branch, path, base]);
       const agent: Agent = {
@@ -508,9 +519,10 @@ export class Stet {
           `Create one with \`stet agent new <name>\` in the project and work inside the folder it prints.`,
       );
     }
-    await this.checkWorktree(top);
     const id = branch.slice(cfg.agentBranchPrefix.length);
     const existing = await this.store.getAgent(id);
+    if (existing?.state === "archived") throw new StetError(archivedMessage(existing));
+    await this.checkWorktree(top);
     if (existing) return existing;
     return this.store.withLock(async () => {
       const base = await this.ensureBase();
@@ -533,40 +545,55 @@ export class Stet {
     });
   }
 
-  async archiveAgent(id: string, opts: { removeWorktree?: boolean } = {}): Promise<void> {
-    await this.store.withLock(async () => {
+  /**
+   * Retire an agent: withdraw its pending items and, optionally, delete its folder and branch.
+   * The agent learns why on its next tool call (see `archivedMessage`); a kept folder gets the
+   * same notice in place of its instructions.
+   */
+  async archiveAgent(id: string, opts: { removeWorktree?: boolean } = {}): Promise<{ agent: Agent; withdrawn: string[]; worktreeRemoved: boolean }> {
+    return this.store.withLock(async () => {
       const agent = await this.requireAgent(id);
+      const withdrawn: string[] = [];
       for (const it of (await this.store.items()).filter((i) => i.agent === id && isLive(i.status))) {
         this.setStatus(it, "withdrawn", "user", "agent archived");
         await this.store.putItem(it);
+        withdrawn.push(it.id);
       }
-      agent.state = "archived";
-      await this.store.putAgent(agent);
+      let worktreeRemoved = false;
       if (opts.removeWorktree) {
         await this.repo.tryRun(["worktree", "remove", "--force", agent.worktree]);
         await this.repo.tryRun(["branch", "-D", agent.branch]);
+        worktreeRemoved = !(await pathExists(agent.worktree));
       }
+      agent.state = "archived";
+      agent.archived = { at: now(), withdrawn, worktreeRemoved };
+      await this.store.putAgent(agent);
+      await this.store.appendEvent({ type: "archived", agent: id, items: withdrawn, data: { worktreeRemoved } });
+      if (!worktreeRemoved) {
+        const notice = `${STET_MARKER}\n# This workspace is archived\n\n${archivedMessage(agent)}\n`;
+        for (const f of ["CLAUDE.local.md", "AGENTS.override.md"]) await writeInside(agent.worktree, f, notice).catch(() => undefined);
+      }
+      await this.updateGroups((await this.store.items()).filter((i) => withdrawn.includes(i.id)));
+      return { agent, withdrawn, worktreeRemoved };
     });
   }
 
-  /** Uncommitted paths in an agent workspace, ignoring Stet's own files. */
-  private async dirtyFiles(wt: Repo): Promise<string[]> {
-    return (await wt.status()).map((l) => l.slice(3)).filter((p) => p && !isWorkspaceFile(p));
-  }
-
-  /** The agent's worktree, after checking it still belongs to this repository (spec §9). */
-  private async agentRepo(agent: Agent): Promise<Repo> {
-    return this.agentWorktreeRepo(agent.worktree);
+  /** The agent whose workspace is (or was) at `path`, found in the store even if the folder is gone. */
+  async agentByWorktree(path: string): Promise<Agent | null> {
+    return (await this.store.agents()).find((a) => samePath(a.worktree, path)) ?? null;
   }
 
   /**
-   * Git access to an agent worktree for commands that read or write its files (status, add,
-   * commit, reset): verified first, then run without hooks, submodules or filter drivers.
+   * Git access to an agent's files that does not rely on the worktree's own git metadata
+   * (spec §9; see `AgentFiles`).
    */
-  async agentWorktreeRepo(path: string): Promise<Repo> {
-    await this.checkWorktree(path);
-    const base = new Repo(path, this.untrustedConfig);
-    return new Repo(path, [...this.untrustedConfig, ...(await filterOverrides(base))]);
+  agentFiles(agent: Agent): Promise<AgentFiles> {
+    return AgentFiles.open(this.repo, this.commonDir, agent);
+  }
+
+  /** Paths an agent changed in its workspace but did not submit yet (Stet's own files excluded). */
+  async unsubmittedFiles(agent: Agent): Promise<string[]> {
+    return (await this.agentFiles(agent)).uncommitted();
   }
 
   /** Git settings for calls inside agent worktrees (no hooks, no submodules). */
@@ -574,13 +601,8 @@ export class Stet {
     return untrustedWorktreeConfig(join(this.store.root, "config.json"));
   }
 
-  private async checkWorktree(path: string): Promise<string> {
-    try {
-      return await verifyAgentWorktree(path, this.commonDir);
-    } catch (e) {
-      if (e instanceof WorktreeIntegrityError) throw new StetError(e.message);
-      throw e;
-    }
+  private checkWorktree(path: string): Promise<string> {
+    return verifyAgentWorktree(path, this.commonDir);
   }
 
   private async requireAgent(id: string): Promise<Agent> {
@@ -592,16 +614,36 @@ export class Stet {
   async agentStatus(agentId: string): Promise<AgentStatus> {
     return this.store.withLock(async () => {
       const agent = await this.requireAgent(agentId);
-      const base = await this.ensureBase();
-      const counts: Partial<Record<ItemStatus, number>> = {};
-      for (const it of (await this.store.items()).filter((i) => i.agent === agentId)) counts[it.status] = (counts[it.status] ?? 0) + 1;
-      const unread = (await this.store.events(agent.feedbackCursor)).filter((e) => e.agent === agentId && FEEDBACK_TYPES.includes(e.type)).length;
-      const cfg = await this.config();
-      // Same content under a different commit (e.g. the user committed accepted changes) needs no sync.
-      const tree = (rev: string) => this.repo.tryRun(["rev-parse", `${rev}^{tree}`]);
-      const syncNeeded = agent.baseCommit !== base && (await tree(agent.baseCommit)) !== (await tree(base));
-      return { agent, mainBranch: cfg.mainBranch, base, syncNeeded, counts, unreadFeedback: unread };
+      return (await this.statusesOf([agent]))[0]!;
     });
+  }
+
+  /** Status of every active agent, computed from one read of the store (for UIs refreshing all agents). */
+  async agentStatuses(): Promise<AgentStatus[]> {
+    return this.store.withLock(async () => this.statusesOf((await this.store.agents()).filter((a) => a.state === "active")));
+  }
+
+  private async statusesOf(agents: Agent[]): Promise<AgentStatus[]> {
+    if (!agents.length) return [];
+    const base = await this.ensureBase();
+    const cfg = await this.config();
+    const items = await this.store.items();
+    const events = await this.store.events(Math.min(...agents.map((a) => a.feedbackCursor)));
+    // Same content under a different commit (e.g. the user committed accepted changes) needs no sync.
+    const trees = new Map<string, Promise<string | null>>();
+    const tree = (rev: string) => {
+      if (!trees.has(rev)) trees.set(rev, this.repo.tryRun(["rev-parse", `${rev}^{tree}`]));
+      return trees.get(rev)!;
+    };
+    const out: AgentStatus[] = [];
+    for (const agent of agents) {
+      const counts: Partial<Record<ItemStatus, number>> = {};
+      for (const it of items) if (it.agent === agent.id) counts[it.status] = (counts[it.status] ?? 0) + 1;
+      const unread = events.filter((e) => e.seq > agent.feedbackCursor && e.agent === agent.id && FEEDBACK_TYPES.includes(e.type)).length;
+      const syncNeeded = agent.baseCommit !== base && (await tree(agent.baseCommit)) !== (await tree(base));
+      out.push({ agent, mainBranch: cfg.mainBranch, base, syncNeeded, counts, unreadFeedback: unread });
+    }
+    return out;
   }
 
   // -------------------------------------------------------------------------
@@ -663,17 +705,10 @@ export class Stet {
     return this.store.withLock(async () => {
       const cfg = await this.config();
       const agent = await this.requireAgent(agentId);
-      if (agent.state !== "active") throw new StetError(`Agent '${agentId}' is archived.`);
+      if (agent.state !== "active") throw new StetError(archivedMessage(agent));
       const base = await this.ensureBase();
-      const wt = await this.agentRepo(agent);
-      const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
-      if (branch !== agent.branch) throw new StetError(`The agent workspace is on '${branch}', expected '${agent.branch}'.`);
-
-      if ((await this.dirtyFiles(wt)).length) {
-        await wt.run(["add", "-A", "--", ".", ...WORKSPACE_EXCLUDES]);
-        await wt.run([...STET_IDENTITY, "commit", "-q", "--no-verify", "-m", `${opts.title}\n\n${opts.rationale ?? ""}\n\nStet-Agent: ${agentId}`]);
-      }
-      const tip = (await wt.revParse("HEAD"))!;
+      const files = await this.agentFiles(agent);
+      const tip = await files.commitAll(`${opts.title}\n\n${opts.rationale ?? ""}\n\nStet-Agent: ${agentId}`);
       const result: SubmitResult = {
         changeset: null, items: [], groups: [], ungrouped: [], superseded: [], withdrawn: [], repeats: [], warnings: [], sync: null,
       };
@@ -738,9 +773,13 @@ export class Stet {
       c.start === e.range.start && c.end === e.range.end && c.newText === e.newText && (c.newBlob ?? null) === (e.newBlob ?? null);
 
     const matched = new Map<Candidate, Item>();
+    const used = new Set<Item>();
     for (const c of cands) {
-      const e = existing.find((e) => sameAs(c, e) && ![...matched.values()].includes(e));
-      if (e) matched.set(c, e);
+      const e = existing.find((e) => !used.has(e) && sameAs(c, e));
+      if (e) {
+        matched.set(c, e);
+        used.add(e);
+      }
     }
     const fresh = cands.filter((c) => !matched.has(c));
 
@@ -830,6 +869,7 @@ export class Stet {
     const baseTextOf = async (c: Candidate) => (await this.textAt(base, c.oldFile ?? c.file))?.text ?? "";
     const created: Item[] = [];
     const candOf = new Map<Item, Candidate>();
+    const itemOf = new Map<Candidate, Item>();
     for (let k = 0; k < fresh.length; k++) {
       const c = fresh[k]!;
       const bt = await baseTextOf(c);
@@ -863,6 +903,7 @@ export class Stet {
       }
       created.push(item);
       candOf.set(item, c);
+      itemOf.set(c, item);
     }
     const inherited: { from: Item; to: Item }[] = [];
     for (const [e, c] of replacedBy) {
@@ -890,7 +931,7 @@ export class Stet {
       const pool = [...created.map((i) => candOf.get(i)!), ...[...matched.keys()]];
       const hits = await hintMatches(Array.isArray(n.where) ? n.where : [n.where], pool);
       for (const h of hits) {
-        const it = created.find((i) => candOf.get(i) === h) ?? matched.get(h);
+        const it = itemOf.get(h) ?? matched.get(h);
         if (!it) continue;
         it.note = it.note ? `${it.note}\n${n.note}` : n.note;
         if (!created.includes(it)) await this.store.putItem(it);
@@ -900,7 +941,7 @@ export class Stet {
     // Groups: explicit hints + auto detection.
     const live = created.filter((i) => isLive(i.status));
     const drafts: GroupDraft[] = [];
-    const idOfCand = (c: Candidate) => created.find((i) => candOf.get(i) === c)?.id ?? matched.get(c)?.id;
+    const idOfCand = (c: Candidate) => itemOf.get(c)?.id ?? matched.get(c)?.id;
     for (const h of effectiveHints) {
       const pool = [...live.map((i) => candOf.get(i)!), ...[...matched.entries()].filter(([, e]) => isLive(e.status)).map(([c]) => c)];
       const members = (await hintMatches(h.where, pool)).map(idOfCand).filter((x): x is string => !!x);
@@ -982,17 +1023,16 @@ export class Stet {
   async sync(agentId: string): Promise<SyncResult> {
     return this.store.withLock(async () => {
       const agent = await this.requireAgent(agentId);
-      const wt = await this.agentRepo(agent);
-      const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
-      if (branch !== agent.branch) throw new StetError(`The agent workspace is on '${branch}', expected '${agent.branch}'.`);
-      const dirty = await this.dirtyFiles(wt);
+      if (agent.state !== "active") throw new StetError(archivedMessage(agent));
+      const files = await this.agentFiles(agent);
+      const dirty = await files.uncommitted();
       if (dirty.length) {
         throw new StetError(
           `The agent workspace has uncommitted changes (${dirty.join(", ")}). ` +
             `Submit them (stet submit) or discard them before syncing.`,
         );
       }
-      const tip = await wt.revParse("HEAD");
+      const tip = await files.tip();
       if (tip !== agent.lastTip) throw new StetError("The agent workspace has unsubmitted commits. Submit them before syncing.");
       const base = await this.ensureBase();
       const live = (await this.store.items()).filter((i) => i.agent === agentId && isLive(i.status));
@@ -1021,7 +1061,7 @@ export class Stet {
             message: `stet: pending proposals of ${agentId}\n\nStet-Agent: ${agentId}`,
           })
         : base;
-      await wt.run(["reset", "-q", "--hard", commit]);
+      await files.checkout(commit);
       agent.baseCommit = base;
       agent.lastTip = commit;
       agent.replayedAt = now();
@@ -1121,7 +1161,7 @@ export class Stet {
    * Commit accepted-but-uncommitted items ("Finish review"). Commits their whole files,
    * so the user's own edits in those files are included.
    */
-  async commitAcceptedItems(): Promise<{ commit: string | null; items: Item[] }> {
+  async commitAcceptedItems(opts: { subject?: string } = {}): Promise<{ commit: string | null; items: Item[] }> {
     return this.store.withLock(async () => {
       const cfg = await this.config();
       const onBranch = await this.repo.tryRun(["symbolic-ref", "--short", "HEAD"]);
@@ -1131,7 +1171,7 @@ export class Stet {
       const items = (await this.uncommittedAccepted()).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
       if (!items.length) return { commit: null, items };
       const paths = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
-      const commit = await this.commitAccepted(items, paths);
+      const commit = await this.commitAccepted(items, paths, opts.subject);
       await this.ensureBase();
       return { commit, items: commit ? items : [] };
     });
@@ -1219,9 +1259,9 @@ export class Stet {
       const stale: Item[] = [];
       const acceptedIds = new Set(items.map((i) => i.id));
       const others = (await this.store.items()).filter((i) => isLive(i.status) && !acceptedIds.has(i.id) && files.has(i.file));
+      const spans = new Map((await locate(others, view, { refText: this.refText })).located.map((l) => [l.item.id, l.span]));
       for (const o of others) {
-        const { located } = await locate([o], view, { refText: this.refText });
-        const span = located[0]?.span;
+        const span = spans.get(o.id);
         const hit = res.applied.find(
           (a) => a.item.file === o.file && (o.kind !== "modify" || a.item.kind !== "modify" || (span && overlaps(span, a.span))),
         );
@@ -1255,18 +1295,41 @@ export class Stet {
         else committed = await this.commitAccepted(res.applied.map((a) => a.item), [...res.changes.keys()]);
       }
       await this.updateGroups([...items, ...stale]);
-      await this.ensureBase();
+      // The review base is rebuilt lazily, when an agent next needs it (status, sync, submit):
+      // rebuilding it here made every accept several git calls slower.
       const accepted = res.applied.map((a) => a.item).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
       return { accepted, stale, committed, warnings };
     });
   }
 
-  private async commitAccepted(items: Item[], paths: string[]): Promise<string | null> {
-    const ids = items.map((i) => i.id).join(", ");
-    const cs = await this.store.getChangeset(items[0]!.changeset);
-    const title = cs ? ` — ${cs.title} (${cs.agent})` : "";
+  /**
+   * Commit message for accepted items: a summary line (the changeset titles, or the user's own
+   * `subject`), then the accepted changes per changeset and a `Stet-Applied` trailer.
+   */
+  async commitMessage(items: Item[], subject?: string): Promise<{ subject: string; body: string }> {
+    const byCs = new Map<string, Item[]>();
+    for (const it of items) byCs.set(it.changeset, [...(byCs.get(it.changeset) ?? []), it]);
+    const lines: string[] = [];
+    const titles: string[] = [];
+    for (const [csId, its] of byCs) {
+      const cs = await this.store.getChangeset(csId);
+      if (cs && !titles.includes(cs.title)) titles.push(cs.title);
+      lines.push(`- ${cs ? `${cs.title} (${cs.agent}, ${csId})` : csId}: ${its.map((i) => i.id).join(", ")}`);
+    }
+    const agents = [...new Set(items.map((i) => i.agent))].join(", ");
+    let auto = titles.length === 1 ? titles[0]! : `Accept ${items.length} changes from ${agents}`;
+    if (titles.length > 1 && titles.join("; ").length <= 60) auto = titles.join("; ");
+    const ids = items.map((i) => i.id).join(",");
+    return {
+      subject: subject?.trim() || auto,
+      body: `Accepted in Stet review (${agents}):\n${lines.join("\n")}\n\nStet-Applied: ${ids}`,
+    };
+  }
+
+  private async commitAccepted(items: Item[], paths: string[], subject?: string): Promise<string | null> {
+    const msg = await this.commitMessage(items, subject);
     await this.repo.run(["add", "-A", "--", ...paths]);
-    const r = await this.repo.tryRun(["commit", "-q", "--only", "-m", `stet: accept ${ids}${title}\n\nStet-Applied: ${ids.replace(/ /g, "")}`, "--", ...paths]);
+    const r = await this.repo.tryRun(["commit", "-q", "--only", "-m", `${msg.subject}\n\n${msg.body}`, "--", ...paths]);
     if (r === null) return null;
     const head = (await this.repo.revParse("HEAD"))!;
     for (const it of items) {

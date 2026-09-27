@@ -4,11 +4,17 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
-import { defaultConfig, mergeConfig, type StetConfig } from "./config.js";
+import { configDelta, defaultConfig, mergeConfig, validateConfig, type StetConfig } from "./config.js";
 import type { Agent, Changeset, Group, Item, StetEvent, StoreState } from "./model.js";
+import { StetError } from "./errors.js";
+import { pathExists } from "./paths.js";
 
-/** A held lock is refreshed every `heartbeat` ms; one not refreshed for `stale` ms is abandoned. Adjustable for tests. */
-export const LOCK_TIMING = { heartbeat: 5_000, stale: 30_000, timeout: 60_000 };
+/**
+ * A held lock is refreshed every `heartbeat` ms. It counts as abandoned when its owner process is
+ * gone (same machine), or when it was not refreshed for `stale` ms (owner on another machine) or
+ * `liveOwner` ms (owner still running here, but hung). Adjustable for tests.
+ */
+export const LOCK_TIMING = { heartbeat: 5_000, stale: 30_000, liveOwner: 10 * 60_000, timeout: 60_000 };
 
 /** Whether a process with this pid exists on this machine. */
 function processAlive(pid: number): boolean {
@@ -21,15 +27,6 @@ function processAlive(pid: number): boolean {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function exists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
@@ -60,41 +57,46 @@ async function readJson<T>(path: string): Promise<T | null> {
 
 const lockContext = new AsyncLocalStorage<Store>();
 
+type Kind = "agents" | "changesets" | "groups" | "items";
+
 /** Item, group, changeset and agent ids: a name, never a path. */
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export class Store {
-
   constructor(readonly root: string) {}
+
+  /** Record files that could not be parsed (skipped by listings; reported by `stet doctor`). */
+  readonly unreadable = new Set<string>();
 
   get lockPath() {
     return join(this.root, "lock");
   }
-  private dir(kind: "agents" | "changesets" | "groups" | "items") {
+  private dir(kind: Kind) {
     return join(this.root, kind);
   }
 
   exists() {
-    return exists(join(this.root, "state.json"));
+    return pathExists(join(this.root, "state.json"));
   }
 
   async init(mainBranch: string): Promise<void> {
     for (const d of ["agents", "changesets", "groups", "items"] as const) await mkdir(this.dir(d), { recursive: true });
-    if (!(await exists(join(this.root, "config.json")))) await writeJsonAtomic(join(this.root, "config.json"), defaultConfig(mainBranch));
-    if (!(await exists(join(this.root, "state.json")))) {
+    if (!(await pathExists(join(this.root, "config.json")))) await writeJsonAtomic(join(this.root, "config.json"), configDelta(defaultConfig(mainBranch)));
+    if (!(await pathExists(join(this.root, "state.json")))) {
       const state: StoreState = { schema: 1, nextItem: 1, nextChangeset: 1, nextGroup: 1, nextEvent: 1, base: null };
       await writeJsonAtomic(join(this.root, "state.json"), state);
     }
-    if (!(await exists(join(this.root, "events.jsonl")))) await writeFile(join(this.root, "events.jsonl"), "");
+    if (!(await pathExists(join(this.root, "events.jsonl")))) await writeFile(join(this.root, "events.jsonl"), "");
   }
 
   async config(): Promise<StetConfig> {
     const raw = await readJson<Partial<StetConfig>>(join(this.root, "config.json"));
-    return mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {});
+    return validateConfig(mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {}));
   }
 
   async saveConfig(cfg: StetConfig): Promise<void> {
-    await writeJsonAtomic(join(this.root, "config.json"), cfg);
+    await this.fence();
+    await writeJsonAtomic(join(this.root, "config.json"), configDelta(cfg));
   }
 
   async state(): Promise<StoreState> {
@@ -102,7 +104,8 @@ export class Store {
     if (!s) throw new Error("Stet is not initialized in this repository (run `stet init`).");
     return s;
   }
-  saveState(s: StoreState) {
+  async saveState(s: StoreState) {
+    await this.fence();
     return writeJsonAtomic(join(this.root, "state.json"), s);
   }
 
@@ -137,9 +140,13 @@ export class Store {
       utimes(this.lockPath, t, t).catch(() => undefined);
     }, LOCK_TIMING.heartbeat);
     beat.unref();
+    this.session = new Map();
+    this.token = token;
     try {
       return await lockContext.run(this, fn);
     } finally {
+      this.session = null;
+      this.token = null;
       clearInterval(beat);
       const cur = await readJson<{ token?: string }>(this.lockPath).catch(() => null);
       if (cur?.token === token) await rm(this.lockPath, { force: true });
@@ -156,9 +163,12 @@ export class Store {
     } catch {
       return false; // released meanwhile, or unreadable for a moment: just retry
     }
-    const heartbeatStopped = Date.now() - mtime > LOCK_TIMING.stale;
-    const ownerGone = !!info?.pid && info.host === hostname() && !processAlive(info.pid);
-    if (!heartbeatStopped && !ownerGone) return false;
+    const age = Date.now() - mtime;
+    const here = !!info?.pid && info.host === hostname();
+    const alive = here && processAlive(info!.pid!);
+    // A live owner here keeps its lock unless it has been silent for very long (hung).
+    const abandoned = here ? !alive || age > LOCK_TIMING.liveOwner : age > LOCK_TIMING.stale;
+    if (!abandoned) return false;
     // Move exactly this lock file away; if someone else was faster, the rename fails or moves a
     // newer lock, which we then put back.
     const aside = `${this.lockPath}.${randomUUID()}.stale`;
@@ -176,6 +186,19 @@ export class Store {
     return true;
   }
 
+  /** Token of the lock this process holds (null when not holding it). */
+  private token: string | null = null;
+
+  /**
+   * Fencing: before writing, make sure this process still holds the lock. A process whose lock was
+   * taken over (after hanging for long) must not keep writing next to the new owner.
+   */
+  async fence(): Promise<void> {
+    if (lockContext.getStore() !== this || !this.token) return;
+    const cur = await readJson<{ token?: string }>(this.lockPath).catch(() => null);
+    if (cur?.token !== this.token) throw new StetError("Stet lost its lock to another process (this one was unresponsive for too long); nothing more was written. Please try again.");
+  }
+
   /** Allocate sequential ids. Call while holding the lock. */
   async allocate(kind: "item" | "changeset" | "group", n = 1): Promise<string[]> {
     const s = await this.state();
@@ -187,29 +210,61 @@ export class Store {
     return ids;
   }
 
-  private async getOne<T>(kind: "agents" | "changesets" | "groups" | "items", id: string): Promise<T | null> {
+  /**
+   * Records cached for the operation that holds the lock: nobody else can write the store then,
+   * so each kind is read from disk at most once per operation instead of on every lookup.
+   * Callers get copies and may change them freely; writes go to disk and to the cache.
+   */
+  private session: Map<Kind, Map<string, unknown>> | null = null;
+
+  private cached(kind: Kind): Map<string, unknown> | null {
+    return lockContext.getStore() === this && this.session ? (this.session.get(kind) ?? null) : null;
+  }
+
+  private async getOne<T>(kind: Kind, id: string): Promise<T | null> {
     // Ids come from agents (MCP arguments): never let one name a path.
     if (!SAFE_ID.test(id)) return null;
+    const c = this.cached(kind);
+    if (c) return c.has(id) ? structuredClone(c.get(id) as T) : null;
     return readJson<T>(join(this.dir(kind), `${id}.json`));
   }
-  private async list<T>(kind: "agents" | "changesets" | "groups" | "items"): Promise<T[]> {
-    let names: string[];
-    try {
-      names = await readdir(this.dir(kind));
-    } catch {
-      return [];
-    }
-    const out: T[] = [];
-    for (const n of names.filter((n) => n.endsWith(".json"))) {
-      const v = await readJson<T>(join(this.dir(kind), n));
-      if (v) out.push(v);
+
+  private async list<T>(kind: Kind): Promise<T[]> {
+    let records = this.cached(kind) as Map<string, T> | null;
+    if (!records) {
+      records = new Map();
+      let names: string[] = [];
+      try {
+        names = await readdir(this.dir(kind));
+      } catch {
+        /* nothing yet */
+      }
+      // Read in parallel batches (bounded, so large stores don't run out of file handles).
+      const files = names.filter((n) => n.endsWith(".json")).map((n) => join(this.dir(kind), n));
+      for (let i = 0; i < files.length; i += 64) {
+        const batch = await Promise.all(
+          files.slice(i, i + 64).map((f) =>
+            readJson<T>(f).catch(() => {
+              this.unreadable.add(f); // e.g. a damaged file: skip it rather than failing every listing
+              return null;
+            }),
+          ),
+        );
+        for (const v of batch) if (v && typeof (v as any).id === "string") records.set((v as any).id, v);
+      }
+      if (lockContext.getStore() === this && this.session) this.session.set(kind, records);
     }
     const num = (x: any) => Number(String(x.id).replace(/^\D+/, "")) || 0;
-    return out.sort((a, b) => num(a) - num(b) || String((a as any).id).localeCompare(String((b as any).id)));
+    return [...records.values()]
+      .map((v) => structuredClone(v))
+      .sort((a, b) => num(a) - num(b) || String((a as any).id).localeCompare(String((b as any).id)));
   }
-  private put(kind: "agents" | "changesets" | "groups" | "items", v: { id: string }) {
+
+  private async put(kind: Kind, v: { id: string }) {
     if (!SAFE_ID.test(v.id)) throw new Error(`Invalid id '${v.id}'.`);
-    return writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
+    await this.fence();
+    await writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
+    this.cached(kind)?.set(v.id, structuredClone(v));
   }
 
   getAgent = (id: string) => this.getOne<Agent>("agents", id);
@@ -224,7 +279,11 @@ export class Store {
   putItem = (v: Item) => this.put("items", v);
   putChangeset = (v: Changeset) => this.put("changesets", v);
   putGroup = (v: Group) => this.put("groups", v);
-  deleteGroup = (id: string) => rm(join(this.dir("groups"), `${id}.json`), { force: true });
+  deleteGroup = async (id: string) => {
+    await this.fence();
+    await rm(join(this.dir("groups"), `${id}.json`), { force: true });
+    this.cached("groups")?.delete(id);
+  };
 
   /** Append an event. Call while holding the lock. */
   async appendEvent(e: Omit<StetEvent, "seq" | "at">): Promise<StetEvent> {
@@ -236,17 +295,37 @@ export class Store {
     return ev;
   }
 
+  /** Parsed events so far; the log is append-only, so later calls only parse what was added. */
+  private eventCache: { bytes: number; events: StetEvent[] } = { bytes: 0, events: [] };
+
   async events(since = 0): Promise<StetEvent[]> {
-    let raw = "";
+    let fh;
     try {
-      raw = await readFile(join(this.root, "events.jsonl"), "utf8");
+      fh = await open(join(this.root, "events.jsonl"), "r");
     } catch {
       return [];
     }
-    return raw
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as StetEvent)
-      .filter((e) => e.seq > since);
+    try {
+      const size = (await fh.stat()).size;
+      if (size < this.eventCache.bytes) this.eventCache = { bytes: 0, events: [] }; // replaced: start over
+      if (size > this.eventCache.bytes) {
+        const buf = Buffer.alloc(size - this.eventCache.bytes);
+        await fh.read(buf, 0, buf.length, this.eventCache.bytes);
+        // Only complete lines; a line still being appended is read next time.
+        const complete = buf.lastIndexOf(10) + 1;
+        for (const line of buf.subarray(0, complete).toString("utf8").split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            this.eventCache.events.push(JSON.parse(line) as StetEvent);
+          } catch {
+            /* a damaged line: skip it */
+          }
+        }
+        this.eventCache.bytes += complete;
+      }
+    } finally {
+      await fh.close();
+    }
+    return this.eventCache.events.filter((e) => e.seq > since);
   }
 }

@@ -2,7 +2,7 @@
  * View model for the Stet panel and editor integration. No `vscode` import here,
  * so it can be unit-tested with vitest.
  */
-import type { Agent, Changeset, Group, Item, ItemStatus } from "@stet/core";
+import { oneLine, type Agent, type Changeset, type Group, type Item, type ItemStatus } from "@stet/core";
 
 export interface Snapshot {
   agents: Agent[];
@@ -20,6 +20,18 @@ export type Node =
   | { type: "changeset"; changeset: Changeset }
   | { type: "group"; group: Group }
   | { type: "item"; item: Item; parent: string };
+
+/**
+ * An item or group id together with its project, as passed by CodeLens and hover links.
+ * Ids like S3 or G1 are numbered per project, so an id alone is ambiguous with several projects open.
+ */
+export interface Ref {
+  path: string;
+  id: string;
+}
+
+export const isRef = (v: unknown): v is Ref =>
+  !!v && typeof v === "object" && typeof (v as Ref).path === "string" && typeof (v as Ref).id === "string";
 
 export const LIVE: readonly ItemStatus[] = ["pending", "needs_revision"];
 export const isLive = (i: Item) => LIVE.includes(i.status);
@@ -129,10 +141,7 @@ export class TreeModel {
 // ---------------------------------------------------------------------------
 // Labels
 
-export function oneLine(s: string, max = 60): string {
-  const t = s.replace(/\s+/g, " ").trim();
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
-}
+export { oneLine };
 
 export function itemLabel(it: Item): string {
   switch (it.kind) {

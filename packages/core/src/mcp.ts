@@ -5,9 +5,12 @@
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { GroupHint, NoteHint } from "./grouping.js";
-import { MCP_INSTRUCTIONS } from "./instructions.js";
+
+import { archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
 import type { GroupKind, Item, ItemStatus, StetEvent } from "./model.js";
 import { Stet, StetError } from "./service.js";
+import { oneLine } from "./text.js";
+import { pathExists } from "./paths.js";
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -134,34 +137,38 @@ export const TOOLS: ToolDef[] = [
 // ---------------------------------------------------------------------------
 // Text formatting for the model
 
-const clip = (s: string, n = 120) => {
-  const t = s.replace(/\s+/g, " ").trim();
-  return t.length > n ? t.slice(0, n - 1) + "…" : t;
-};
-
 function itemLine(i: Item): string {
-  const change = i.kind !== "modify" ? `${i.kind}` : `"${clip(i.oldText, 60)}" → "${clip(i.newText, 60)}"`;
+  const change = i.kind !== "modify" ? `${i.kind}` : `"${oneLine(i.oldText, 60)}" → "${oneLine(i.newText, 60)}"`;
   return `${i.id} [${i.status}] ${i.file}: ${change}${i.groups.length ? ` (groups ${i.groups.join(",")})` : ""}`;
 }
 
-export function describeFeedback(e: StetEvent): string {
+/** How `describeFeedback` shows labels and the way to answer (the CLI colors them and names its command). */
+export interface FeedbackStyle {
+  label?: (text: string, tone: "good" | "bad" | "warn" | "info") => string;
+  reply?: (itemId: string) => string;
+}
+
+/** One line per feedback event, for agents (MCP) and the CLI alike. */
+export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): string {
+  const label = style.label ?? ((t: string) => t);
+  const reply = style.reply ?? (() => "stet_reply");
   const d = (e.data ?? {}) as any;
-  const it = d.item ? `${d.item.id} (${d.item.file}:${d.item.line}, "${clip(d.item.oldText, 50)}" → "${clip(d.item.newText, 50)}")` : (e.items ?? []).join(", ");
+  const it = d.item ? `${d.item.id} (${d.item.file}:${d.item.line}, "${oneLine(d.item.oldText, 50)}" → "${oneLine(d.item.newText, 50)}")` : (e.items ?? []).join(", ");
   switch (e.type) {
     case "accepted":
-      return `ACCEPTED ${it}${d.finalText !== undefined ? `; the reviewer edited it to: "${clip(d.finalText, 300)}"` : ""}`;
+      return `${label("ACCEPTED", "good")} ${it}${d.finalText !== undefined ? `; the reviewer edited it to: "${oneLine(d.finalText, 300)}"` : ""}`;
     case "rejected":
-      return `REJECTED ${it}${d.reason ? `; reason: ${d.reason}` : ""}. Do not propose this change again.`;
+      return `${label("REJECTED", "bad")} ${it}${d.reason ? `; reason: ${d.reason}` : ""}. Do not propose this change again.`;
     case "revision_requested":
-      return `REVISION REQUESTED for ${it}: ${d.comment}`;
+      return `${label("REVISION REQUESTED", "warn")} for ${it}: ${d.comment}`;
     case "comment":
-      return `COMMENT on ${it}: ${d.text} (answer with stet_reply)`;
+      return `${label("COMMENT", "info")} on ${it}: ${d.text} (answer with ${reply(d.item?.id ?? "")})`;
     case "stale":
-      return `STALE ${it}: ${d.reason}.${d.currentText ? ` Current text around it: "${clip(d.currentText, 400)}"` : ""} Re-propose if still relevant.`;
+      return `${label("STALE", "warn")} ${it}: ${d.reason}.${d.currentText ? ` Current text around it: "${oneLine(d.currentText, 400)}"` : ""} Re-propose if still relevant.`;
     case "repeat_rejected":
-      return `AUTO-REJECTED ${it}: it repeats an earlier rejected change (${d.previous}).`;
+      return `${label("AUTO-REJECTED", "bad")} ${it}: it repeats an earlier rejected change (${d.previous}).`;
     case "group_broken":
-      return `LINKED GROUP BROKEN ${e.group} "${d.title}": ${(d.members ?? []).map((m: any) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
+      return `${label("LINKED GROUP BROKEN", "bad")} ${e.group} "${d.title}": ${(d.members ?? []).map((m: any) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
     default:
       return `${e.type} ${it}`;
   }
@@ -175,6 +182,8 @@ export interface McpOptions {
   /** Explicit workspace (STET_WORKSPACE) and agent id (STET_AGENT) overrides. */
   workspace?: string;
   agentId?: string;
+  /** The reviewer's project folder (STET_PROJECT), used when the workspace folder is gone. */
+  project?: string;
   version: string;
 }
 
@@ -185,8 +194,23 @@ export class StetMcpServer {
 
   private async context(): Promise<{ stet: Stet; agent: string }> {
     const where = this.opts.workspace ?? this.opts.cwd;
-    this.stet ??= await Stet.open(where);
-    const agent = this.opts.agentId ?? (await this.stet.agentForCwd(where)).id;
+    // The project path lets the server explain what happened even when the workspace folder is gone.
+    if (!this.stet) {
+      try {
+        this.stet = await Stet.open(where);
+      } catch (e) {
+        if (!this.opts.project) throw e;
+        this.stet = await Stet.open(this.opts.project);
+      }
+    }
+    const known = this.opts.agentId ? await this.stet.store.getAgent(this.opts.agentId) : await this.stet.agentByWorktree(where);
+    if (known?.state === "archived") throw new StetError(archivedMessage(known));
+    if (!(await pathExists(where))) {
+      throw new StetError(`Stet: this workspace folder (${where}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
+    }
+    // Always identify the agent from its folder (this also verifies the folder's git link).
+    const agent = (await this.stet.agentForCwd(where)).id;
+    if (this.opts.agentId && this.opts.agentId !== agent) throw new StetError(`This workspace belongs to agent '${agent}', not '${this.opts.agentId}'.`);
     return { stet: this.stet, agent };
   }
 
@@ -271,26 +295,27 @@ export class StetMcpServer {
         }
         case "stet_get_feedback": {
           const ev = await stet.feedback(agent, { ack: args.ack !== false });
-          return text(ev.length ? ev.map(describeFeedback).join("\n") : "No new feedback.");
+          return text(ev.length ? ev.map((e) => describeFeedback(e)).join("\n") : "No new feedback.");
         }
         case "stet_list": {
           const items = await stet.listItems({
             agent,
-            ...(Array.isArray(args.status) && args.status.length ? { status: args.status as ItemStatus[] } : {}),
+            ...(args.status !== undefined ? { status: statuses(args.status) } : {}),
             ...(args.file ? { file: String(args.file) } : {}),
           });
           return text(items.length ? items.map(itemLine).join("\n") : "No items.");
         }
         case "stet_show": {
+          // Agents see their own items and groups only (other agents' proposals are not theirs to read).
           const id = String(args.id ?? "").toUpperCase();
           if (id.startsWith("G")) {
-            const g = (await stet.listGroups()).find((x) => x.id === id);
-            if (!g) throw new StetError(`Unknown group ${id}.`);
+            const g = await stet.store.getGroup(id);
+            if (!g || g.agent !== agent) throw new StetError(`Unknown group ${id}.`);
             const members = (await Promise.all(g.items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
             return text([`${g.id} ${g.kind} "${g.title}" (${g.state})`, g.rationale ?? "", ...members.map(itemLine)].filter(Boolean).join("\n"));
           }
           const it = await stet.getItem(id);
-          if (!it) throw new StetError(`Unknown item ${id}.`);
+          if (!it || it.agent !== agent) throw new StetError(`Unknown item ${id}.`);
           return text(
             [
               itemLine(it),
@@ -331,7 +356,6 @@ export class StetMcpServer {
   }
 }
 
-/** Serve MCP over newline-delimited JSON on the given streams. Resolves when input ends. */
 // Tool arguments come from the agent: check their shape instead of trusting the published schema.
 const bad = (what: string): never => {
   throw new StetError(`Invalid argument: ${what}.`);
@@ -341,6 +365,13 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 function strings(v: unknown, what: string): string[] {
   if (!Array.isArray(v) || !v.every((x) => typeof x === "string" || typeof x === "number")) bad(`${what} must be a list of strings`);
   return (v as unknown[]).map(String);
+}
+
+function statuses(v: unknown): ItemStatus[] {
+  const all: ItemStatus[] = ["pending", "needs_revision", "accepted", "rejected", "withdrawn", "superseded", "stale"];
+  const list = strings(v, "status");
+  for (const s of list) if (!all.includes(s as ItemStatus)) bad(`status must be one of ${all.join(", ")}`);
+  return list as ItemStatus[];
 }
 
 function groupKind(v: unknown): GroupKind {
@@ -371,6 +402,7 @@ function noteHints(v: unknown): NoteHint[] {
 
 const validId = (id: unknown) => typeof id === "string" || (typeof id === "number" && Number.isFinite(id));
 
+/** Serve MCP over newline-delimited JSON on the given streams. Resolves when input ends. */
 export async function serveStdio(server: StetMcpServer, input: Readable, output: Writable): Promise<void> {
   const rl = createInterface({ input, crlfDelay: Infinity });
   const send = (o: object) => output.write(JSON.stringify(o) + "\n");

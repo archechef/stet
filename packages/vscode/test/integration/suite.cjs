@@ -78,7 +78,10 @@ exports.run = async function run() {
     });
     check("lenses follow unsaved edits", moved);
 
-    await vscode.commands.executeCommand("stet.accept", fx.items[0]);
+    // Accept exactly as a click on the CodeLens would: with its own (project-scoped) arguments.
+    const args = moved.command.arguments;
+    check("lens arguments name the project", args.length === 1 && args[0].id === fx.items[0] && typeof args[0].path === "string", JSON.stringify(args));
+    await vscode.commands.executeCommand(moved.command.command, ...args);
     const disk = readFileSync(uri.fsPath, "utf8");
     check("accept writes the change", disk.includes("the task of reviewing"), disk.slice(0, 120));
     check("accept keeps the user's unsaved edit (saved first)", disk.startsWith("% my note\n"));
@@ -97,6 +100,27 @@ exports.run = async function run() {
     await vscode.commands.executeCommand("stet.showItem", fx.items[1]);
     const sel = vscode.window.activeTextEditor.selection;
     check("go to change selects it", vscode.window.activeTextEditor.document.getText(sel) === "practice", vscode.window.activeTextEditor.document.getText(sel));
+
+    // Keyboard review: what `j` runs (focus down + select) must move the editor to the change.
+    const bindings = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")).contributes.keybindings;
+    const j = bindings.find((b) => b.key === "j");
+    const ed2 = vscode.window.activeTextEditor;
+    ed2.selection = new vscode.Selection(0, 0, 0, 0);
+    await vscode.commands.executeCommand("stet.review.focus");
+    let followed = false;
+    const trace = [];
+    for (let n = 0; n < 5 && !followed; n++) {
+      try {
+        await vscode.commands.executeCommand(j.command, ...(j.args ? [j.args] : []));
+      } catch (err) {
+        trace.push("err:" + err.message);
+      }
+      await sleep(300);
+      const e = vscode.window.activeTextEditor;
+      trace.push(e ? `${e.document.uri.path.split("/").pop()}@${e.selection.start.line}:${e.selection.start.character}` : "none");
+      followed = !!e && e.document.getText(e.selection) === "practice";
+    }
+    check("j moves through the panel and the editor follows", followed, trace.join(" | "));
   } catch (e) {
     check("no exception", false, e && e.stack);
   }

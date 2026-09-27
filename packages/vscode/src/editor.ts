@@ -1,7 +1,7 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
 import type { Item } from "@stet/core";
-import { diffBlock, ghostText, isLive, LineIndex, STATUS_TEXT, toLf, type TreeModel } from "./model.js";
+import { diffBlock, ghostText, isLive, LineIndex, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import type { Project } from "./project.js";
 
 export interface Located {
@@ -131,6 +131,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     if (!p) return [];
     const model = this.host.model(p);
     const lenses: vscode.CodeLens[] = [];
+    const ref = (id: string): Ref => ({ path: p.mainPath, id });
     for (const { item, range } of await this.locator.locate(doc)) {
       const at = new vscode.Range(range.start, range.start);
       const linked = model.linkedGroup(item);
@@ -140,12 +141,12 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
         new vscode.CodeLens(at, {
           title: rest.length ? `${item.id}${tag}: ✓ Accept all ${rest.length + 1} linked` : `${item.id}${tag}: ✓ Accept`,
           command: rest.length && linked ? "stet.acceptGroup" : "stet.accept",
-          arguments: [rest.length && linked ? linked.id : item.id],
+          arguments: [ref(rest.length && linked ? linked.id : item.id)],
         }),
-        new vscode.CodeLens(at, { title: "✗ Reject", command: "stet.reject", arguments: [item.id] }),
-        new vscode.CodeLens(at, { title: "✎ Edit", command: "stet.edit", arguments: [item.id] }),
-        new vscode.CodeLens(at, { title: "↻ Revise", command: "stet.revise", arguments: [item.id] }),
-        new vscode.CodeLens(at, { title: "💬 Comment", command: "stet.comment", arguments: [item.id] }),
+        new vscode.CodeLens(at, { title: "✗ Reject", command: "stet.reject", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: "✎ Edit", command: "stet.edit", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: "↻ Revise", command: "stet.revise", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: "💬 Comment", command: "stet.comment", arguments: [ref(item.id)] }),
       );
     }
     return lenses;
@@ -157,15 +158,16 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const hits = (await this.locator.locate(doc)).filter(({ range }) => range.contains(pos) || range.end.isEqual(pos));
     if (!hits.length) return undefined;
     const model = this.host.model(p);
+    const ref = (id: string): Ref => ({ path: p.mainPath, id });
     const parts = hits.map(({ item }) => {
       const md = new vscode.MarkdownString(undefined, true);
       md.isTrusted = { enabledCommands: ["stet.accept", "stet.acceptGroup", "stet.reject", "stet.edit", "stet.revise", "stet.comment", "stet.showDiff"] };
       md.supportHtml = false;
       md.appendMarkdown(itemMarkdown(item, model));
       md.appendMarkdown(
-        `\n\n[✓ Accept](${cmd("stet.accept", [item.id])}) · [✗ Reject](${cmd("stet.reject", [item.id])}) · ` +
-          `[✎ Edit](${cmd("stet.edit", [item.id])}) · [↻ Revise](${cmd("stet.revise", [item.id])}) · ` +
-          `[💬 Comment](${cmd("stet.comment", [item.id])}) · [Diff](${cmd("stet.showDiff", [item.id])})`,
+        `\n\n[✓ Accept](${cmd("stet.accept", [ref(item.id)])}) · [✗ Reject](${cmd("stet.reject", [ref(item.id)])}) · ` +
+          `[✎ Edit](${cmd("stet.edit", [ref(item.id)])}) · [↻ Revise](${cmd("stet.revise", [ref(item.id)])}) · ` +
+          `[💬 Comment](${cmd("stet.comment", [ref(item.id)])}) · [Diff](${cmd("stet.showDiff", [ref(item.id)])})`,
       );
       return md;
     });
