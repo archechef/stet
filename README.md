@@ -2,81 +2,115 @@
 
 *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while you review them one by one. Agents work in their own git worktree and never touch your files; a change reaches your document only when you accept it. See [docs/spec.md](docs/spec.md) for the design.
+**Stet lets AI agents propose changes to your LaTeX project while you stay in control.**
+- The agents (Claude, Codex, …) work in their own copy of the project.
+- Their edits reach you as small, reviewable changes.
+- You accept, reject, edit or discuss each one, from VS Code or the command line.
+- Nothing touches your files until you accept it.
 
-**Status:** M1 (core + command-line tool), M2 (MCP server for agents, guardrails) and M3 (VS Code extension) are implemented. Live-tested with the Claude desktop app; Claude Code CLI and Codex are covered by automated tests only so far (their live runs are still to do, see spec §16/§17). The VS Code extension passes an automated run in real VS Code; its panel and dialogs still need a hands-on test. The plans for all pending live tests are in [docs/live-tests.md](docs/live-tests.md).
+```
+claude-1                      3 pending
+└─ Polish the introduction    C2 · 3 pending
+   ├─ 🔗 Rename sec:intro → sec:introduction    linked · 2
+   │  ├─ S7  “\label{sec:intro}” → “\label{sec:introduction}”   main.tex:3
+   │  └─ S9  “\ref{sec:intro}” → “\ref{sec:introduction}”       main.tex:12
+   └─ S8  “problem” → “task”                                     main.tex:4
+```
 
-**Security:** agents can write only their own workspace folder; your project, its `.git` folder and Stet's data are read-only to them, and Stet checks everything they hand over before using it. On macOS, Linux and WSL2 the agent tools' sandbox enforces this. On native Windows, Claude Code has no sandbox, so a guard hook is the only barrier for shell commands: it reliably catches mistakes, but a deliberately evasive agent (e.g. one steered by instructions hidden in a source document) can get around it. For untrusted material, run the agent in WSL2. Details: spec §9.
+## Features
 
-## VS Code (no command line needed)
+- **Reviewable changes:**
+  - Agent edits are split into word- and sentence-level changes that understand LaTeX: math, labels and citations stay intact, and re-wrapped lines are ignored.
+  - Changes that belong together are grouped. *Linked* groups, such as a label and its references, are all-or-nothing.
+- **A real conversation:**
+  - Rejections with a reason, revision requests, comments and edited wording all go back to the agent automatically, through MCP tools. No copy-paste.
+  - The agent learns from them.
+- **Your text keeps moving:** you can keep writing while changes are pending, and Stet finds each change again in your current text. Several agents can work in parallel.
+- **Git-native:**
+  - Each agent has its own git worktree and branch.
+  - Accepted changes are committed in one commit when you finish the review.
+  - Works with Overleaf's git integration.
+- **Safe by design:**
+  - Agents cannot write your project, its `.git` folder or Stet's data.
+  - Git hooks stop agent branches from being merged or pushed.
+  - Stet checks everything an agent hands over. See [SECURITY.md](SECURITY.md).
+- **Works with:** the Claude desktop app, Claude Code and Codex, on Windows, macOS and Linux.
 
-Build the extension package and install it:
+## Getting started
+
+### VS Code (no command line needed)
+
+The extension is distributed as a `.vsix` file; it is not on the Marketplace yet. To build it:
 
 ```bash
 npm install
 npm run build
-npm run package:vscode
-code --install-extension packages/vscode/stet-vscode.vsix
+npm run package:vscode        # → packages/vscode/stet-vscode.vsix
 ```
 
-(or in VS Code: Extensions view → `…` → *Install from VSIX…* → `packages/vscode/stet-vscode.vsix`). Share the `.vsix` with coworkers; they need neither Node.js nor this repository.
+Install it in VS Code: Extensions view → `…` → *Install from VSIX…*. Coworkers only need the `.vsix` file, not Node.js or this repository.
 
-1. Open your LaTeX project folder in VS Code, open the **Stet** view in the activity bar and click **Set up project** (creates a git repository first if there is none).
-2. **New agent workspace** → pick Claude or Codex → copy the folder path and open that folder in the Claude desktop app (Code tab), Claude Code or Codex.
-3. Ask the agent to improve the paper. Its proposals appear in the Stet panel and inline in your `.tex` files: accept (`a`), reject (`r`), edit (`e`), request a revision (`v`), comment (`c`), diff (`d`); `A`/`R` for the whole group. CodeLens actions above each change and hovers do the same.
-4. Accepting only writes your files. **Finish review** (commit icon) commits the whole review in one commit; you can edit the summary line.
+1. Open your LaTeX project folder in VS Code, then open the **Stet** view in the activity bar and click **Set up project**.
+2. Click **New agent workspace**, pick Claude or Codex, and open the workspace folder in that agent.
+3. Ask the agent to improve the paper. Its proposals appear in the Stet panel and inline in your `.tex` files. Keys: `a` accept, `r` reject, `e` edit, `v` revise, `c` comment, `j`/`k` next/previous.
+4. Click **Finish review** to commit everything you accepted in one commit.
 
-Full guide: [docs/vscode.md](docs/vscode.md). The extension brings its own copy of `stet` for the agents (in `.git/stet/bin/`), run with Node.js if installed, otherwise with VS Code's own runtime (setting `stet.runtime`).
+→ [VS Code user manual](docs/vscode.md)
 
-## Command line
+### Command line
 
 Requirements: Node.js ≥ 20 and git ≥ 2.28.
 
 ```bash
-npm install
-npm run build
-cd packages/cli && npm link # optional: puts `stet` on your PATH
+npm install && npm run build
+cd packages/cli && npm link           # puts `stet` on your PATH
 ```
-
-Without `npm link`, run `node <path-to-repo>/packages/cli/dist/index.js` wherever `stet` appears below.
 
 In your LaTeX project (a git repository with at least one commit):
 
 ```bash
-stet init                   # also installs git hooks that stop agent branches from being merged or pushed
-stet agent new claude-1     # prints the agent's workspace folder (use --kind codex for Codex)
-```
-
-Open the printed folder in the Claude desktop app (Code tab), Claude Code or Codex. The workspace already contains:
-
-- the agent's instructions (`CLAUDE.local.md`, `AGENTS.override.md`),
-- the Stet MCP server config (`.mcp.json`, `.codex/config.toml`), giving the agent tools like `stet_submit` and `stet_get_feedback`,
-- guardrails (`.claude/settings.json`): a hook that blocks edits outside the workspace and git commands that would bypass review.
-
-The workspace's MCP server is pre-approved, so Claude Code only asks you to trust the folder. Optionally register it for all workspaces with `stet setup claude` / `stet setup codex`.
-
-Ask the agent to improve the paper; it submits its edits for review itself. (Without MCP, it can run `stet submit -t "Polish the introduction" -m "Shorter sentences"` in the workspace.)
-
-Back in your project folder:
-
-```bash
-stet review                 # pending items, grouped by agent → changeset → group
-stet show S3                # an item with its context
-stet accept S3 S4           # or a whole group: stet accept G1
+stet init                             # set up Stet (and git hooks)
+stet agent new claude-1               # prints the agent's workspace folder: open it in your agent
+stet review                           # what the agent proposed
+stet accept S3 S4                     # or a whole group: stet accept G1
 stet reject S5 -m "keep the original formula"
-stet revise S6 -m "shorter, please"
-stet commit -m "Polish intro" # finish the review: one commit for everything accepted
+stet commit -m "Polish the introduction"
 ```
 
-The agent picks up your decisions with `stet_get_feedback` (or `stet feedback`) and moves onto your latest text with `stet_sync`. Run `stet doctor` if anything looks off, and `stet --help` for all commands.
+→ [Command-line manual](docs/cli.md)
 
-## Development
+## Documentation
 
-```bash
-npm run build     # tsc for packages/core and packages/cli
-npm test          # vitest: unit tests + end-to-end tests on temporary git repos
-```
+| | |
+|---|---|
+| [docs/vscode.md](docs/vscode.md) | **User manual: VS Code extension.** Setup, the panel, reviewing, threads, troubleshooting, settings. |
+| [docs/cli.md](docs/cli.md) | **User manual: command line.** Every command, grouping hints, configuration. |
+| [docs/agents.md](docs/agents.md) | **Working with AI agents.** Connecting Claude and Codex, prompting, the agent's tools, archiving, protections. |
+| [SECURITY.md](SECURITY.md) | Security model, known limitations, reporting problems. |
+| [docs/spec.md](docs/spec.md) | Design specification and development notes (per milestone). |
+| [docs/live-tests.md](docs/live-tests.md) | Hands-on test plans and their status. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, tests, packaging. |
+| [CHANGELOG.md](CHANGELOG.md) | Release history. |
 
-- `packages/core` (`@stet/core`): store, git plumbing, LaTeX-aware splitting, anchoring, the review service, MCP server, guard, git hooks, workspace files, doctor.
-- `packages/cli` (`stet-tex`): the `stet` command.
-- `packages/vscode` (`stet-vscode`): the VS Code extension (bundled with esbuild; `npm run package:vscode` builds the `.vsix`). `npm run test:integration -w stet-vscode` starts your installed VS Code with a throwaway profile and runs the integration checks.
+## Status
+
+Version 0.3.0. Milestones M1–M3 are done:
+- **M1:** core library and CLI.
+- **M2:** MCP server and guardrails.
+- **M3:** VS Code extension.
+
+**Tested:**
+- live with the Claude desktop app;
+- hands-on in VS Code;
+- by automated tests (about 130), run on Windows so far; the CI workflow runs them on Windows, macOS and Linux with Node.js 22 and 24, and checks that Stet runs on Node.js 20.
+
+**Still to do:** live runs with the Claude Code CLI and with Codex ([docs/live-tests.md](docs/live-tests.md)).
+
+**Planned:**
+- **M4:** Overleaf pull/push helpers.
+- **M5:** PDF previews of a change.
+- **M6:** a web UI.
+
+## License
+
+[MIT](LICENSE)

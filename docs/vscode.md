@@ -68,7 +68,9 @@ The agent needs no further setup. The first time it opens the folder, Claude ask
 
 **Working with the agent:** ask it to improve the paper as usual, for example "Tighten the introduction". It edits its own copy and submits the result for review by itself. Several agents can work in parallel, each in its own workspace.
 
-**Right-click an agent in the panel** to open its workspace again, copy its path, or **Archive** it. Archiving withdraws its pending changes and can also delete the folder and its branch. Close the agent's session first.
+**Right-click an agent in the panel** to open its workspace again, copy its path, or **Archive** it. Archiving withdraws its pending changes and can also delete the folder and its branch. Stet shows what it did, and an agent session that is still open is told on its next action that its workspace was archived (and asked to stop); you can then close that session.
+
+More on how agents work with Stet, per tool: [agents.md](agents.md).
 
 ---
 
@@ -170,7 +172,7 @@ Comments and revision requests appear as threads on the change, in the editor an
 ## 6. Other agents, other editors
 
 - **Codex in VS Code:** open the agent workspace in a new VS Code window (**Open in new VS Code window**) and use the Codex extension there. Stet itself is only active in your project window. It deliberately ignores agent workspaces, so the agent's window shows no review panel.
-- **Reviewing from the command line:** the review commands work just as well in a terminal (`stet review`, `stet accept S8`, …; see the main README). The extension and the command line share the same data and see each other's actions immediately.
+- **Reviewing from the command line:** the review commands work just as well in a terminal (`stet review`, `stet accept S8`, …; see [cli.md](cli.md)). The extension and the command line share the same data and see each other's actions immediately.
 
 ---
 
@@ -185,6 +187,10 @@ Run **Stet: Check setup (doctor)** first. It checks git, the hooks, the agent wo
 | "Your project folder is on '…', not 'master'" | Switch your project back to the main branch before accepting. |
 | A change can't be located ("no longer where it was") | Its text changed under it. Reject it or ask for a revision. The agent is told when a change goes stale. |
 | A commit or push of an agent branch is refused | That's the git hooks protecting your review. Accept the changes through Stet instead. |
+| The Stet panel stays empty, VS Code shows *Restricted Mode* | Stet only runs in trusted folders. Choose *Trust* in the Restricted Mode banner. |
+| An agent says its workspace was archived | It was: create a new agent workspace and open that folder in the agent instead. |
+| "Stet lost its lock to another process" | A Stet process was unresponsive for over 10 minutes and another one took over. Nothing more was written; repeat the action. |
+| Check setup reports *damaged record files* | A file in `.git/stet/` could not be read and is skipped. Restore it from a backup or delete it. |
 
 ---
 
@@ -212,6 +218,8 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 ---
 
 ## 10. For developers
+
+Development setup, tests and packaging: [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 - **Source:** `packages/vscode/src`
   - `extension.ts`: panel, commands, setup

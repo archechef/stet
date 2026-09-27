@@ -4,3 +4,4 @@ dist/
 coverage/
 *.vsix
 .codex-reports/
+packages/vscode/LICENSE

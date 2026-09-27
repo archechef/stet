@@ -5,7 +5,17 @@
   "version": "0.3.0",
   "publisher": "stet",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "author": "Noah Tittelbach",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/archechef/stet.git",
+    "directory": "packages/vscode"
+  },
+  "homepage": "https://github.com/archechef/stet#readme",
+  "bugs": {
+    "url": "https://github.com/archechef/stet/issues"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -34,11 +44,11 @@
   ],
   "scripts": {
     "build": "tsc -p . && node esbuild.mjs",
-    "package": "npm run build && vsce package --no-dependencies --skip-license --allow-missing-repository -o stet-vscode.vsix",
+    "package": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\" && npm run build && vsce package --no-dependencies --allow-missing-repository -o stet-vscode.vsix",
     "test:integration": "node test/integration/run.mjs"
   },
   "dependencies": {
-    "@stet/core": "0.1.0"
+    "@stet/core": "0.3.0"
   },
   "devDependencies": {
     "@types/vscode": "~1.100.0",

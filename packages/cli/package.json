@@ -1,12 +1,29 @@
 {
   "name": "stet-tex",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Stet: human-in-the-loop review of AI-proposed changes to LaTeX projects",
   "type": "module",
-  "bin": { "stet": "dist/index.js" },
-  "files": ["dist"],
-  "dependencies": {
-    "@stet/core": "0.1.0"
+  "bin": {
+    "stet": "dist/index.js"
   },
-  "engines": { "node": ">=20" }
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@stet/core": "0.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "author": "Noah Tittelbach",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/archechef/stet.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/archechef/stet#readme",
+  "bugs": {
+    "url": "https://github.com/archechef/stet/issues"
+  }
 }
