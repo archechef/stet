@@ -43,7 +43,7 @@
     "onStartupFinished"
   ],
   "scripts": {
-    "build": "tsc -p . && node esbuild.mjs",
+    "build": "tsc -b ../core && tsc -p . && node esbuild.mjs",
     "package": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\" && npm run build && vsce package --no-dependencies --allow-missing-repository -o stet-vscode.vsix",
     "test:integration": "node test/integration/run.mjs"
   },

@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkToolUse, type GuardContext } from "../src/guard.js";
@@ -117,5 +119,27 @@ describe("guard: shell commands", () => {
 
   it("ignores other tools", () => {
     expect(checkToolUse({ cwd: wt, tool_name: "Read", tool_input: { file_path: join(ctx.mainPath, "main.tex") } }, ctx)).toBeNull();
+  });
+});
+
+describe("guard: path spellings", () => {
+  // CI temp folders have two spellings (macOS /var → /private/var, Windows RUNNER~1); a link does the same here.
+  it("compares real paths, so a linked spelling of the project is still the project", () => {
+    const dir = mkdtempSync(join(tmpdir(), "stet-guard-"));
+    try {
+      const home = join(dir, "real");
+      mkdirSync(join(home, "paper", ".git"), { recursive: true });
+      mkdirSync(join(home, "paper.stet", "a"), { recursive: true });
+      const alias = join(dir, "alias");
+      symlinkSync(home, alias, "junction");
+      const c: GuardContext = { worktree: join(alias, "paper.stet", "a"), mainPath: join(alias, "paper"), commonDir: join(alias, "paper", ".git") };
+      const e = (file_path: string) => checkToolUse({ cwd: c.worktree, tool_name: "Edit", tool_input: { file_path } }, c);
+      expect(e(join(home, "paper", "main.tex"))).toMatch(/outside your proposal workspace/);
+      expect(e(join(home, "paper", ".git", "config"))).toMatch(/git directory/);
+      expect(e(join(home, "paper.stet", "a", "main.tex"))).toBeNull();
+      expect(e("main.tex")).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

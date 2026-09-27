@@ -3,8 +3,9 @@
  * Best effort: blocks writes outside the agent workspace and git commands that
  * would bypass review. It guards against accidents, not against an adversary.
  */
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isInside } from "./paths.js";
 import { WORKSPACE_FILES } from "./workspace.js";
 
@@ -37,10 +38,26 @@ function nativePath(p: string): string {
   return p;
 }
 
-/** Resolve `p` (possibly relative to `cwd`) to an absolute native path. */
+/**
+ * The real path of `p`: links and alternative spellings resolved (macOS `/var` → `/private/var`,
+ * Windows 8.3 names such as `RUNNER~1`), for the longest part of it that exists.
+ */
+function real(p: string): string {
+  const tail: string[] = [];
+  for (let cur = resolve(p); ; cur = dirname(cur)) {
+    try {
+      return join(realpathSync.native(cur), ...tail.reverse());
+    } catch {
+      if (dirname(cur) === cur) return resolve(p);
+      tail.push(basename(cur));
+    }
+  }
+}
+
+/** Resolve `p` (possibly relative to `cwd`) to an absolute native real path. */
 function abs(p: string, cwd: string): string {
   const n = nativePath(p.replace(/^["']|["']$/g, ""));
-  return isAbsolute(n) ? resolve(n) : resolve(cwd, n);
+  return real(isAbsolute(n) ? n : resolve(cwd, n));
 }
 
 const GIT_OPTS = String.raw`\bgit\b(?:\s+(?:-c\s+\S+|-C\s+\S+|--[\w-]+(?:=\S+)?))*\s+`;
@@ -73,18 +90,20 @@ function isOwnFile(rel: string): boolean {
 }
 
 /** Returns a reason to block, or null to allow. */
-export function checkToolUse(input: HookInput, ctx: GuardContext): string | null {
-  const cwd = input.cwd ?? ctx.worktree;
+export function checkToolUse(input: HookInput, shown: GuardContext): string | null {
+  // Compare real paths; messages show the paths as given.
+  const ctx = { worktree: real(shown.worktree), mainPath: real(shown.mainPath), commonDir: real(shown.commonDir) };
+  const cwd = input.cwd ?? shown.worktree;
   const tool = input.tool_name ?? "";
   const ti = input.tool_input ?? {};
-  const writable = [ctx.worktree, tmpdir(), ...(ctx.writable ?? []), ...(input.scratchpad_dir ? [input.scratchpad_dir] : [])];
+  const writable = [ctx.worktree, tmpdir(), ...(shown.writable ?? []), ...(input.scratchpad_dir ? [input.scratchpad_dir] : [])].map(real);
 
   const checkWrite = (file: string): string | null => {
     const p = abs(file, cwd);
     if (isInside(p, ctx.commonDir)) return `Stet: ${file} is inside the project's git directory, which agents must not change.`;
     if (isInside(p, ctx.mainPath) || !writable.some((w) => isInside(p, w))) {
       return (
-        `Stet: ${file} is outside your proposal workspace (${ctx.worktree}). ` +
+        `Stet: ${file} is outside your proposal workspace (${shown.worktree}). ` +
         `Only edit files inside that folder; the reviewer applies accepted changes to the real project.`
       );
     }
@@ -134,8 +153,8 @@ export function checkToolUse(input: HookInput, ctx: GuardContext): string | null
     if (gitC && !isInside(abs(gitC[1]!, cwd), ctx.worktree)) return gitMsg("running git in another folder");
     if (touchesMain && (WRITE_HINT.test(cmd) || !READ_ONLY_START.test(cmd))) {
       return (
-        `Stet: this command refers to the reviewer's project folder (${ctx.mainPath}). ` +
-        `Work only inside your proposal workspace (${ctx.worktree}).`
+        `Stet: this command refers to the reviewer's project folder (${shown.mainPath}). ` +
+        `Work only inside your proposal workspace (${shown.worktree}).`
       );
     }
 
