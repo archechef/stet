@@ -63,6 +63,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         if (e.selection.length === 1 && el?.node?.type === "item" && isLive(el.node.item)) void this.showItem(el, true);
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => void this.discover()),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("stet.runtime")) void this.applyRuntime();
+      }),
       vscode.window.onDidChangeWindowState((s) => {
         if (s.focused) for (const p of this.projects.values()) p.scheduleRefresh(0);
       }),
@@ -111,7 +114,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (cfg.cli && present && !isManaged(cfg.cli, p.storeRoot)) return;
     const script = await installCli(this.ctx.asAbsolutePath("dist/stet.mjs"), p.storeRoot);
     const mode = vscode.workspace.getConfiguration("stet").get<RuntimeMode>("runtime", "auto");
-    if (await p.stet.setCli(await cliCommand(mode, script))) this.output.appendLine(`Agent workspaces of ${p.name} now use ${script}`);
+    const cli = await cliCommand(mode, script);
+    if (await p.stet.setCli(cli)) {
+      const runner = cli.env?.ELECTRON_RUN_AS_NODE ? "VS Code's runtime" : "Node.js";
+      this.output.appendLine(`Agent workspaces of ${p.name} now run ${script} with ${runner} (${cli.command}).`);
+      vscode.window.setStatusBarMessage(`$(check) Stet: agents of ${p.name} now use ${runner}`, 5000);
+    }
   }
 
   private async onProjectChanged(): Promise<void> {
@@ -741,7 +749,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
 
   async refresh(): Promise<void> {
     await this.discover();
+    await this.applyRuntime();
     await Promise.all(this.allProjects().map((p) => p.refresh()));
+  }
+
+  /** Re-check how agents run `stet` (after a Refresh or a change of `stet.runtime`). */
+  async applyRuntime(): Promise<void> {
+    for (const p of this.allProjects()) {
+      await this.ensureRuntime(p).catch((e) => void vscode.window.showErrorMessage(`Stet: ${e?.message ?? e}`));
+    }
   }
 
   dispose(): void {

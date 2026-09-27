@@ -31,10 +31,11 @@ Record the results, and any fixes, in spec §16. Then tick them off here.
 - [ ] The Stet panel shows "not set up" and a **Set up project** button.
 - [ ] Clicking it offers to create a repository ("not a git repository") and then commits the files ("Initial commit").
 - [ ] It reports the main branch and offers **New agent workspace**.
-- [ ] `.git/stet/bin/stet.mjs` exists. **Check setup (doctor)** shows no errors.
-- [ ] Also try once with `stet.runtime = "vscode"`, then run **Refresh**. The workspace's `.mcp.json` should use `Code.exe` with `ELECTRON_RUN_AS_NODE`.
-  - Needed for the *guard hook on VS Code's runtime* check in A7.
-  - Remember to set it back afterwards.
+- [ ] **Check setup (doctor)** (Stet panel → `…` menu) shows no errors in the *Stet* output panel, including a ✓ line for "stet command".
+- [ ] `.git/stet/bin/stet.mjs` exists. VS Code hides `.git`, so check in the terminal (`` Ctrl+` ``): `dir .git\stet\bin`.
+- [ ] Switch the runtime: Settings (`Ctrl+,`) → search `stet.runtime` → `vscode`. The status bar briefly shows "agents … now use VS Code's runtime". `type .git\stet\config.json` shows `"cli"` with `Code.exe` and `ELECTRON_RUN_AS_NODE`.
+  - Leave it on `vscode` until A7 (the guard-hook check there needs it), then set it back to `auto`.
+  - Once an agent exists (A2), its `.mcp.json` shows the same command.
 
 ### A2. Agent workspace
 - [ ] **New agent workspace** → Claude → `claude-1` → **Copy folder path**.
