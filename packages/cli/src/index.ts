@@ -19,6 +19,8 @@ import {
   type CliCommand,
   Stet,
   StetError,
+  SHARE_MODES,
+  type ShareMode,
   type AcceptResult,
   type Agent,
   type AgentKind,
@@ -52,6 +54,7 @@ Review:
   stet revise <S12> -m <what to change>
   stet comment <S12> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
+  stet share [manual|saved|committed]   share your saved edits with agents now, or set when agents see them
   stet group <S1> <S2>... --kind atomic|linked|related -t <title> [-m <rationale>]
   stet ungroup <G3>
 
@@ -395,7 +398,9 @@ async function main() {
       const groups = await stet.listGroups();
       const changesets = await stet.listChangesets();
       if (opt.json) return out(() => {}, { items, groups: groups.filter((g) => g.items.some((i) => items.some((x) => x.id === i))) });
-      if (!items.length) return console.log("Nothing to review.");
+      const share = await stet.shareStatus().catch(() => null);
+      const shareHint = share?.unshared && share.mode === "manual" ? [dim("Agents don't see your latest saved edits yet: `stet share` shares them.")] : [];
+      if (!items.length) return console.log(["Nothing to review.", ...shareHint].join("\n"));
       const lines: string[] = [];
       for (const cs of changesets) {
         const csItems = items.filter((i) => i.changeset === cs.id);
@@ -416,7 +421,7 @@ async function main() {
           lines.push(`    ${itemSummary(i, line)}`);
         }
       }
-      return console.log(lines.join("\n"));
+      return console.log([...lines, ...shareHint].join("\n"));
     }
 
     case "show": {
@@ -513,6 +518,18 @@ async function main() {
         () => (r.commit ? `Committed ${r.items.map((i) => i.id).join(", ")} as ${r.commit.slice(0, 7)}.` : "Nothing to commit: all accepted items are committed."),
         r,
       );
+    }
+
+    case "share": {
+      if (args[0]) {
+        const mode = args[0] as ShareMode;
+        if (!SHARE_MODES.includes(mode)) throw new StetError(`Unknown mode '${args[0]}' (use ${SHARE_MODES.join(", ")}).`);
+        await stet.setShareEdits(mode);
+        const what = { manual: "your saved edits when you run `stet share`", saved: "your saved edits", committed: "only committed text" }[mode];
+        return out(() => `Agents now see ${what}, plus the changes you accepted.`, { shareEdits: mode });
+      }
+      const changed = await stet.shareEdits();
+      return out(() => (changed ? "Shared your saved edits; agents pick them up at their next sync." : "Nothing new to share."), { changed });
     }
 
     case "comment": {

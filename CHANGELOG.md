@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Share my edits:** agents can see your own edits without you committing them first. Click **Share my edits with agents** (VS Code) or run `stet share`. The setting `shareEdits` (`stet.shareEdits` in VS Code) chooses between this (`manual`, default), sharing every save (`saved`), and committed text only (`committed`, the old behaviour).
+- **Guard:** compares real paths, so a link or an alternative spelling of the project folder (macOS `/private/var`, Windows short names) is recognised.
+
 ## 0.3.0 — 2026-09-27
 
 **VS Code extension (milestone M3).**

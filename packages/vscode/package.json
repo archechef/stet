@@ -139,6 +139,12 @@
         "icon": "$(git-commit)"
       },
       {
+        "command": "stet.shareEdits",
+        "title": "Share my edits with agents",
+        "category": "Stet",
+        "icon": "$(cloud-upload)"
+      },
+      {
         "command": "stet.showResolved",
         "title": "Show resolved items",
         "category": "Stet",
@@ -229,6 +235,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "stet.shareEdits",
+          "when": "view == stet.review && stet.unshared",
+          "group": "navigation@0"
+        },
         {
           "command": "stet.finishReview",
           "when": "view == stet.review && stet.uncommitted",
@@ -389,6 +400,10 @@
         {
           "command": "stet.copyAgentPath",
           "when": "false"
+        },
+        {
+          "command": "stet.shareEdits",
+          "when": "stet.active"
         }
       ]
     },
@@ -471,6 +486,21 @@
             "Always use VS Code's own runtime (no Node.js needed)."
           ],
           "description": "What runs the Stet server that AI agents talk to."
+        },
+        "stet.shareEdits": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "saved",
+            "committed"
+          ],
+          "default": "manual",
+          "enumDescriptions": [
+            "Agents see your saved edits when you click Share my edits (in the Stet panel or status bar).",
+            "Agents see your saved edits automatically, whenever they sync.",
+            "Agents see only committed text (and the changes you accepted)."
+          ],
+          "markdownDescription": "Which of your own edits AI agents see. Changes you accepted always reach them. Stored in the project (`.git/stet/config.json`), so it also applies to `stet` on the command line."
         }
       }
     }

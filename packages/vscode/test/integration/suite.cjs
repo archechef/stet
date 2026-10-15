@@ -121,6 +121,13 @@ exports.run = async function run() {
       followed = !!e && e.document.getText(e.selection) === "practice";
     }
     check("j moves through the panel and the editor follows", followed, trace.join(" | "));
+
+    // Share my edits: the user's saved note reaches the agents' review base.
+    const rel = require("node:path").relative(fx.repo, uri.fsPath).replace(/\\/g, "/");
+    const baseText = () => execFileSync("git", ["show", `refs/stet/base:${rel}`], { cwd: fx.repo, encoding: "utf8" });
+    check("own edits not shared before the button", !baseText().startsWith("% my note"), baseText().slice(0, 60));
+    await vscode.commands.executeCommand("stet.shareEdits");
+    check("Share my edits shares them", baseText().startsWith("% my note") && baseText().includes("the task of reviewing"), baseText().slice(0, 60));
   } catch (e) {
     check("no exception", false, e && e.stack);
   }

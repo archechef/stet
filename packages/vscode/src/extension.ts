@@ -2,7 +2,7 @@
 
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, foldPath, pathExists, Repo, Stet, type Agent, type AgentKind, type Group, type Item } from "@stet/core";
+import { doctor, foldPath, pathExists, Repo, Stet, type Agent, type AgentKind, type Group, type Item, type ShareMode } from "@stet/core";
 import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -57,11 +57,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       vscode.workspace.onDidChangeWorkspaceFolders(() => void this.discover()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("stet.runtime")) void this.applyRuntime();
+        if (e.affectsConfiguration("stet.shareEdits")) for (const p of this.projects.values()) void this.applyShareMode(p, true);
       }),
       vscode.window.onDidChangeWindowState((s) => {
         if (s.focused) for (const p of this.projects.values()) p.scheduleRefresh(0);
       }),
       vscode.workspace.onDidCloseTextDocument((d) => this.locator.forget(d)),
+      vscode.workspace.onDidSaveTextDocument((d) => this.projectFor(d.uri)?.scheduleShareCheck()),
     );
   }
 
@@ -94,6 +96,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       p.onDidChange(() => this.onProjectChanged());
       p.startWatching();
       await this.ensureRuntime(p).catch((e) => this.output.appendLine(`Runtime setup for ${p.mainPath}: ${e?.message ?? e}`));
+      await this.applyShareMode(p, false);
       await p.refresh().catch((e) => this.output.appendLine(`Loading ${p.mainPath}: ${e?.message ?? e}`));
     }
     await this.onProjectChanged();
@@ -114,6 +117,20 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     }
   }
 
+  /**
+   * Write `stet.shareEdits` to the project's Stet config, which the agents' `stet` reads too.
+   * On startup only a value the user set: the default must not override `stet share <mode>`.
+   */
+  private async applyShareMode(p: Project, changed: boolean): Promise<void> {
+    const conf = vscode.workspace.getConfiguration("stet", vscode.Uri.file(p.mainPath));
+    const i = conf.inspect<ShareMode>("shareEdits");
+    const set = i?.workspaceFolderValue ?? i?.workspaceValue ?? i?.globalValue;
+    if (!changed && set === undefined) return;
+    await this.run(p, async () => {
+      if (await p.stet.setShareEdits(conf.get<ShareMode>("shareEdits", "manual"))) p.scheduleRefresh(0);
+    });
+  }
+
   private async onProjectChanged(): Promise<void> {
     this.models.clear();
     this.lines.clear();
@@ -125,12 +142,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     await vscode.commands.executeCommand("setContext", "stet.active", all.length > 0);
     await vscode.commands.executeCommand("setContext", "stet.hasAgents", snaps.some((s) => s.agents.some((a) => a.state === "active")));
     await vscode.commands.executeCommand("setContext", "stet.uncommitted", uncommitted > 0);
+    const unshared = all.filter((p) => p.snapshot.unshared).map((p) => p.name);
+    await vscode.commands.executeCommand("setContext", "stet.unshared", unshared.length > 0);
     await vscode.commands.executeCommand("setContext", "stet.showingResolved", this.showResolved);
     this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
     if (all.length) {
-      this.status.text = `$(checklist) ${pending}` + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "");
+      this.status.text = `$(checklist) ${pending}` + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "") + (unshared.length ? " $(cloud-upload)" : "");
       const tip = [`Stet: ${pending} change${pending === 1 ? "" : "s"} to review`];
       if (uncommitted) tip.push(`${uncommitted} accepted, not committed yet (Finish review)`);
+      if (unshared.length) tip.push(`Agents don't see your latest saved edits${all.length > 1 ? ` in ${unshared.join(", ")}` : ""} (Share my edits)`);
       if (sync.length) tip.push(`Behind your latest text: ${sync.join(", ")}. Agents catch up when they next call stet_sync.`);
       this.status.tooltip = tip.join("\n");
       this.status.show();
@@ -810,6 +830,21 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     });
   }
 
+  /** *Share my edits*: save the project's open files and let agents see them at their next sync. */
+  async shareEdits(): Promise<void> {
+    const p = await this.pickProject();
+    if (!p) return;
+    await this.run(p, async () => {
+      for (const d of vscode.workspace.textDocuments) if (d.isDirty && p.relPath(d.uri)) await d.save();
+      const changed = await p.stet.shareEdits();
+      vscode.window.setStatusBarMessage(
+        changed ? "$(cloud-upload) Stet: shared your edits; agents pick them up at their next sync" : "$(check) Stet: agents already see your edits",
+        5000,
+      );
+      await p.refresh();
+    });
+  }
+
   async doctor(): Promise<void> {
     const folder = this.allProjects()[0]?.mainPath ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!folder) return;
@@ -891,6 +926,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.refresh", () => ext.refresh());
   reg("stet.doctor", () => ext.doctor());
   reg("stet.finishReview", () => ext.finishReview());
+  reg("stet.shareEdits", () => ext.shareEdits());
   reg("stet.showResolved", () => ext.setShowResolved(true));
   reg("stet.hideResolved", () => ext.setShowResolved(false));
   reg("stet.accept", (a) => ext.accept(a));

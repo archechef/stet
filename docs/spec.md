@@ -339,7 +339,17 @@ Uncommitted agent edits count as **drafts** and are never shown for review until
 5. Items overlapping the accepted range get `stale` (§7.5). Linked-group rules apply (§6.4.5).
 6. Add an `accepted` event. If the user edited the text, the event includes the final text, so the agent learns the preferred wording.
 
-**Review base:** `refs/stet/base` = `HEAD` + accepted items whose text is not yet in `HEAD`. Stet keeps it as a synthetic commit and rebuilds it after accepts and whenever `HEAD` moves, so agents always see what the user accepted. The user's own **uncommitted** edits are *not* included; agents only see them once committed. The UI shows a hint when uncommitted edits touch lines that have pending items.
+**Review base:** `refs/stet/base` = the user's text as agents should see it + accepted items not yet in it. Stet keeps it as a synthetic commit (parent: `HEAD`) and rebuilds it after accepts and whenever `HEAD` or the shared edits change, so agents always see what the user accepted. Which of the user's own **uncommitted** edits are included is the setting `shareEdits` (added 2026-10-15; before, agents only ever saw committed text, which forced users to commit drafts just so agents could see them):
+
+| `shareEdits` | Agents see |
+|---|---|
+| `manual` (default) | The saved project files as of the user's last **Share my edits** (`stet share`). A new commit on main replaces an older share. |
+| `saved` | The saved project files whenever an agent syncs or submits. |
+| `committed` | `HEAD` only (the behaviour before 2026-10-15). |
+
+The snapshot of "saved project files" is taken with a temporary index (a copy of the user's, so git re-reads only changed files; the user's index is never touched): tracked files and files staged with `git add`, as on disk, plus new **TeX/BibTeX** files that `.gitignore` doesn't exclude. Other new files (build output such as `.aux` or `.pdf`) stay out; staging one shares it. Unsaved editor buffers are not included (the extension saves the project's files before sharing). The snapshot requires the project folder to have the main branch checked out. The share is stored in `state.json` as `shared: {head, tree}`.
+
+`manual` is the default because sharing everything automatically shows agents half-written drafts, which they may "fix" or build proposals on that later go stale. The UI shows when saved edits exist that agents don't see.
 
 ### 7.4 Reject, request revision, comment (user)
 - **Reject** `(ids, reason?)`: status → `rejected`. For members of linked groups, see §6.4.5. Its fingerprint blocks identical re-proposals (§6.3) and a `rejected` event with the reason is added. The change leaves the agent branch at the agent's next sync.
@@ -499,6 +509,7 @@ reaches the real document until a human accepts it.
   "agentBranchPrefix": "stet/",
   "worktreeRoot": "../{repo}.stet",
   "autoCommit": "on-finish",
+  "shareEdits": "manual",
   "split": {
     "mergeGap": 2,
     "rewriteRatio": 0.5,
@@ -658,6 +669,11 @@ A review pass for security, efficiency and duplication before publishing the ext
 - **Efficiency:** commit building batches `ls-tree` and `update-index` over all files; store listings read records in parallel batches (listing 300 items: 91 → 46 ms); the event log is parsed incrementally; submit's candidate matching no longer scans quadratically.
 - **Codex review (in parallel):** commit signing could run an agent-replaceable signing program → signing off for Stet's commits; check/use race on the worktree's git link → `AgentFiles` (above); *Accept all linked* from the editor could resolve `G1` in the wrong project → CodeLens and hover links pass `{path, id}` and resolve within that project; renamed binary files could not be accepted → handled (source checked, destination free, source removed); a live but stalled lock owner could be displaced → kept for 10 minutes, plus fencing; refresh computed each agent's status separately → `agentStatuses()` from one read. Regression tests in `review-findings.test.ts` and the VS Code integration run.
 - **Duplication:** one `oneLine`, one `pathExists`, one `shQuote`, one feedback formatter (`describeFeedback` with a style for the CLI), the extension uses the core's git runner, *Accept all* / *Reject all* share their target resolution, `StetError` lives in `errors.ts` (so the worktree check needs no wrapping).
+
+### Sharing the user's edits (2026-10-15)
+- Committing just so agents could see one's own edits was inconvenient in practice. New setting `shareEdits` (`manual` default, `saved`, `committed`) and *Share my edits* / `stet share` (§7.3). `ensureBase` still decides "accepted but not committed" against `HEAD` (so *Finish review* finds those items), but builds the base from the shared tree, applying only accepted items not already in it.
+- Extension: setting `stet.shareEdits` (written to the project's config when set, so the agents' `stet` and the CLI follow it), command *Share my edits with agents* in the panel title, with a status bar icon while saved edits are unshared (checked after each save). CLI: `stet share [mode]`, and `stet review` mentions unshared edits.
+- Tests: `share.test.ts` (modes, the user's index untouched, build output excluded, accepted items not applied twice, proposals on shared text acceptable, a commit replacing an older share, another branch checked out); the integration suite checks the command.
 
 ## 17. Open points to verify
 

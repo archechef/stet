@@ -6,11 +6,12 @@ import { foldPath, isSafeRepoPath, Stet } from "@stet/core";
 import type { Snapshot } from "./model.js";
 
 export class Project implements vscode.Disposable {
-  snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], syncNeeded: new Set(), uncommitted: [] };
+  snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], syncNeeded: new Set(), uncommitted: [], unshared: false };
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
   private watcher: FSWatcher | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private shareTimer: NodeJS.Timeout | undefined;
   private loading: Promise<void> | undefined;
   private again = false;
 
@@ -86,7 +87,7 @@ export class Project implements vscode.Disposable {
     ]);
     const uncommitted = items.filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
     // Show the review state right away; whether agents are behind comes second (it may rebuild the review base).
-    this.snapshot = { agents, changesets, groups, items, syncNeeded: this.snapshot.syncNeeded, uncommitted };
+    this.snapshot = { ...this.snapshot, agents, changesets, groups, items, uncommitted };
     this.changed.fire();
     const syncNeeded = new Set<string>();
     try {
@@ -99,10 +100,34 @@ export class Project implements vscode.Disposable {
       this.snapshot = { ...this.snapshot, syncNeeded };
       this.changed.fire();
     }
+    await this.checkShare();
+  }
+
+  /** Whether agents see the saved files (after a save, or with the rest of a refresh). */
+  async checkShare(): Promise<void> {
+    let unshared = false;
+    try {
+      // Only with sharing by button: "saved" shares by itself, "committed" never.
+      const st = await this.stet.shareStatus();
+      unshared = st.unshared && st.mode === "manual";
+    } catch {
+      /* e.g. the main branch is missing; doctor explains */
+    }
+    if (unshared !== this.snapshot.unshared) {
+      this.snapshot = { ...this.snapshot, unshared };
+      this.changed.fire();
+    }
+  }
+
+  /** After the user saves a file: check sharing a little later (saves come in bursts). */
+  scheduleShareCheck(delay = 500): void {
+    clearTimeout(this.shareTimer);
+    this.shareTimer = setTimeout(() => void this.checkShare(), delay);
   }
 
   dispose(): void {
     clearTimeout(this.timer);
+    clearTimeout(this.shareTimer);
     this.watcher?.close();
     this.changed.dispose();
   }

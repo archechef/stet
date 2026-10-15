@@ -136,4 +136,6 @@ export interface StoreState {
   nextEvent: number;
   /** Cached review base: key identifies HEAD + uncommitted accepted items. */
   base: { key: string; commit: string } | null;
+  /** The user's saved files as of their last *Share my edits*, on top of main at `head`. */
+  shared?: { head: string; tree: string } | null;
 }

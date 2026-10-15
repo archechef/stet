@@ -1,10 +1,11 @@
 /** Stet service layer (spec §7, §12.1). All frontends go through this class. */
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, rmdir } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { applyItems, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
 import { anchor, captureContext, type Span } from "./anchor.js";
-import { matchesAny, type StetConfig } from "./config.js";
+import { matchesAny, validateConfig, type StetConfig } from "./config.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import {
   autoGroups,
@@ -434,22 +435,43 @@ export class Stet {
       it.resolution!.committed = f && anchor(probe, f.text) ? head : `external:${head}`;
       await this.store.putItem(it);
     }
-    const key = head + ":" + stillOpen.map((i) => i.id).join(",");
+    // The user's shared edits replace HEAD as the starting point; accepted items already in them
+    // (accepting writes the working copy) are not applied twice.
+    const shared = await this.sharedTree(cfg, head);
+    let toApply = stillOpen;
+    if (shared) {
+      const sview = this.treeView(shared);
+      toApply = [];
+      for (const it of stillOpen) {
+        if (it.kind !== "modify") {
+          if ((await this.wholeFileState(it, sview)) === "open") toApply.push(it);
+          continue;
+        }
+        const f = await sview.read(it.file);
+        if (f && anchor(it, f.text, await this.refText(it))) toApply.push(it);
+      }
+    }
+    const key = head + ":" + (shared ?? "") + ":" + toApply.map((i) => i.id).join(",");
     const state = await this.store.state();
     const current = await this.repo.revParse(BASE_REF);
     if (state.base?.key === key && current === state.base.commit) return current;
 
     let commit = head;
-    if (stillOpen.length) {
-      const res = await applyItems(stillOpen, view, {
+    if (toApply.length || shared) {
+      const from = shared ?? head;
+      const res = await applyItems(toApply, this.treeView(from), {
         refText: this.refText,
-        overrides: new Map(stillOpen.map((i) => [i.id, i.resolution!.appliedText])),
+        overrides: new Map(toApply.map((i) => [i.id, i.resolution!.appliedText])),
       });
+      const what = [
+        ...(shared ? ["your shared edits"] : []),
+        ...(res.applied.length ? [`accepted, not yet committed: ${res.applied.map((a) => a.item.id).join(", ")}`] : []),
+      ];
       commit = await this.repo.buildCommit({
         parents: [head],
-        baseRev: head,
+        baseRev: from,
         changes: await this.changesToCommitMap(res.changes),
-        message: `stet: review base (accepted, not yet committed: ${res.applied.map((a) => a.item.id).join(", ")})`,
+        message: `stet: review base (${what.join("; ")})`,
       });
     }
     await this.repo.run(["update-ref", BASE_REF, commit]);
@@ -457,6 +479,85 @@ export class Stet {
     s.base = { key, commit };
     await this.store.saveState(s);
     return commit;
+  }
+
+  /** The tree of the user's edits that agents see per `shareEdits`, or null for "HEAD only". */
+  private async sharedTree(cfg: StetConfig, head: string): Promise<string | null> {
+    let tree: string | null = null;
+    if (cfg.shareEdits === "saved") tree = await this.workingTree(cfg, head);
+    else if (cfg.shareEdits === "manual") {
+      const s = (await this.store.state()).shared;
+      // A share is based on a commit; once main moves on, agents see the new commit instead.
+      if (s && s.head === head) tree = s.tree;
+    }
+    return tree && tree !== (await this.repo.run(["rev-parse", `${head}^{tree}`])) ? tree : null;
+  }
+
+  /**
+   * A tree of the project folder as saved on disk, on top of main at `head`: tracked files (and
+   * files staged with `git add`) as they are now, plus new TeX/BibTeX files git doesn't ignore.
+   * Other new files (build output, PDFs) stay out. Uses its own index; the user's is untouched.
+   * Null if the project folder has another branch checked out.
+   */
+  private async workingTree(cfg: StetConfig, head: string): Promise<string | null> {
+    if ((await this.repo.tryRun(["symbolic-ref", "--quiet", "HEAD"])) !== `refs/heads/${cfg.mainBranch}`) return null;
+    if ((await this.repo.revParse("HEAD")) !== head) return null;
+    const dir = await mkdtemp(join(tmpdir(), "stet-share-"));
+    const env = { GIT_INDEX_FILE: join(dir, "index") };
+    try {
+      // Starting from a copy of the user's index makes git re-read only files whose stat changed.
+      const copied = await copyFile(join(this.commonDir, "index"), env.GIT_INDEX_FILE).then(() => true, () => false);
+      if (!copied || (await this.repo.tryRun(["add", "-u"], { env })) === null) {
+        await this.repo.run(["read-tree", head], { env });
+        await this.repo.run(["add", "-u"], { env });
+      }
+      const untracked = (await this.repo.run(["ls-files", "-z", "--others", "--exclude-standard"], { env }))
+        .split("\0")
+        .filter((p) => p && isSafeRepoPath(p) && this.fileClass(cfg, p) !== "text");
+      for (let i = 0; i < untracked.length; i += 100) await this.repo.run(["add", "--", ...untracked.slice(i, i + 100)], { env });
+      return await this.repo.run(["write-tree"], { env });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * *Share my edits*: agents see the saved project files from now on (until main moves on).
+   * Returns false when there was nothing new to share.
+   */
+  async shareEdits(): Promise<boolean> {
+    return this.store.withLock(async () => {
+      const cfg = await this.config();
+      const head = await this.mainHead(cfg);
+      const tree = await this.workingTree(cfg, head);
+      if (!tree) throw new StetError(`Your project folder isn't on '${cfg.mainBranch}'. Switch back to it to share your edits with agents.`);
+      const s = await this.store.state();
+      if (s.shared?.head === head && s.shared.tree === tree) return false;
+      s.shared = { head, tree };
+      await this.store.saveState(s);
+      const before = await this.repo.revParse(BASE_REF);
+      return (await this.ensureBase()) !== before;
+    });
+  }
+
+  /** Which edits agents see, and whether saved edits exist that they don't. */
+  async shareStatus(): Promise<{ mode: StetConfig["shareEdits"]; unshared: boolean }> {
+    return this.store.withLock(async () => {
+      const cfg = await this.config();
+      const base = await this.ensureBase();
+      const tree = await this.workingTree(cfg, await this.mainHead(cfg));
+      return { mode: cfg.shareEdits, unshared: !!tree && tree !== (await this.repo.run(["rev-parse", `${base}^{tree}`])) };
+    });
+  }
+
+  /** Set `shareEdits`; returns false when it already had that value. */
+  async setShareEdits(mode: StetConfig["shareEdits"]): Promise<boolean> {
+    return this.store.withLock(async () => {
+      const cfg = await this.config();
+      if (cfg.shareEdits === mode) return false;
+      await this.store.saveConfig(validateConfig({ ...cfg, shareEdits: mode }));
+      return true;
+    });
   }
 
   // -------------------------------------------------------------------------

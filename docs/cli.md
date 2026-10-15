@@ -69,12 +69,21 @@ Run these in your project folder. Changes have ids: `S12` (item), `G3` (group), 
 | `stet revise <S12> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <S12> -m <text>` | Sends a message about a change; the agent can reply. |
 | `stet commit [-m <summary>]` | **Finishes the review:** commits all accepted changes in one commit. The summary line defaults to the changeset titles; the body lists the accepted changes and a `Stet-Applied:` trailer. |
+| `stet share` | Lets agents see your saved edits (they pick them up at their next sync). See *What agents see* below. |
+| `stet share manual\|saved\|committed` | Sets when agents see your edits. |
 | `stet group <S1> <S2>… --kind atomic\|linked\|related -t <title> [-m <rationale>]` | Groups changes yourself. |
 | `stet ungroup <G3>` | Dissolves a group; its changes stay. |
 
 **Linked groups** are all-or-nothing:
 - `stet accept G3` applies all members or none.
 - `stet accept S7` on a member is refused unless you add the rest or `--force`.
+
+**What agents see of your own edits:** changes you accept always reach agents. Your own edits reach them depending on `shareEdits`:
+- `manual` (default): when you run `stet share`. Agents then see your saved files as they are at that moment; `stet review` reminds you when you've saved edits since. A new commit replaces an older share.
+- `saved`: automatically, whenever an agent syncs.
+- `committed`: only once you commit them.
+
+Shared are your tracked files, files you staged with `git add`, and new `.tex`/`.bib` files. Other new files (`.aux`, `.pdf`, …) stay out unless you `git add` them. Your git staging area is not changed.
 
 **When changes are committed:** by default, accepting only writes your files, and `stet commit` makes one commit for the whole review. With `"autoCommit": "when-clean"` in `.git/stet/config.json`, each accept is committed right away, unless the file had your own uncommitted edits.
 
@@ -148,6 +157,7 @@ Settings live in `.git/stet/config.json`. Only settings that differ from the def
 | `agentBranchPrefix` | `stet/` | Prefix of agent branches. |
 | `worktreeRoot` | `../{repo}.stet` | Where agent workspaces are created. It must be outside the project. |
 | `autoCommit` | `on-finish` | `on-finish`: `stet commit` / *Finish review* commits. `when-clean`: commit after each accept. |
+| `shareEdits` | `manual` | Which of your own edits agents see: `manual` (after `stet share`), `saved` (always), `committed`. |
 | `guardHooks` | `true` | Install the git hooks at `stet init`. |
 | `split.mergeGap`, `split.rewriteRatio`, `split.abbreviations` | 2, 0.5, … | How edits are split into items (spec §6.2). |
 | `grouping.autoRepeatMin`, `grouping.autoDetect`, … | 3, … | Automatic grouping (spec §6.4). |

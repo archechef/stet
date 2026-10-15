@@ -13,6 +13,8 @@ export interface Snapshot {
   syncNeeded: Set<string>;
   /** Accepted items not committed yet. */
   uncommitted: Item[];
+  /** Saved edits exist that agents don't see yet (setting stet.shareEdits). */
+  unshared: boolean;
 }
 
 export type Node =

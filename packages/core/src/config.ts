@@ -15,6 +15,9 @@ export interface GroupingConfig {
   citeCommands: string[];
 }
 
+export type ShareMode = "manual" | "saved" | "committed";
+export const SHARE_MODES: readonly ShareMode[] = ["manual", "saved", "committed"];
+
 export interface StetConfig {
   mainBranch: string;
   /** How to run the `stet` CLI; recorded by `stet init` for hooks and MCP configs. */
@@ -29,6 +32,12 @@ export interface StetConfig {
    * edits. "never" is the old name of "on-finish".
    */
   autoCommit: "on-finish" | "when-clean" | "never";
+  /**
+   * Which of the user's own edits agents see (spec §7.3): "manual" (default) the saved files as of
+   * the user's last *Share my edits* (`stet share`); "saved" the saved files whenever an agent
+   * looks; "committed" only committed text. Accepted changes always reach agents.
+   */
+  shareEdits: ShareMode;
   split: SplitConfig;
   grouping: GroupingConfig;
   files: { tex: string[]; bib: string[] };
@@ -41,6 +50,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
     guardHooks: true,
     worktreeRoot: "../{repo}.stet",
     autoCommit: "on-finish",
+    shareEdits: "manual",
     split: {
       mergeGap: 2,
       rewriteRatio: 0.5,
@@ -103,6 +113,7 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (!REF_NAME.test(cfg.agentBranchPrefix) || !cfg.agentBranchPrefix.endsWith("/")) bad(`agentBranchPrefix '${cfg.agentBranchPrefix}' (use a plain name ending in '/', e.g. 'stet/')`);
   if (typeof cfg.worktreeRoot !== "string" || !cfg.worktreeRoot) bad("worktreeRoot");
   if (!["on-finish", "when-clean", "never"].includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}'`);
+  if (!SHARE_MODES.includes(cfg.shareEdits)) bad(`shareEdits '${cfg.shareEdits}' (use ${SHARE_MODES.join(", ")})`);
   return cfg;
 }
 

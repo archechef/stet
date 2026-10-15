@@ -101,8 +101,10 @@ The panel is a tree: **agent → changeset → group → change.**
 **Other parts of the window:**
 - The number on the Stet icon and in the status bar counts the changes waiting for you.
 - The status bar also shows how many accepted changes are not committed yet, and a sync icon while an agent is working on an older version of your text. The agent catches up by itself.
+- A cloud icon means you have saved edits that agents don't see yet (see *Sharing your edits* below).
 
 **Panel title buttons:**
+- **Share my edits with agents** (only shown when you have saved edits that agents don't see)
 - **Finish review** (only shown when there is something to commit)
 - **New agent workspace**
 - **Show/Hide resolved items**
@@ -145,6 +147,12 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 - The files are committed as they are at that moment, including your own edits in them.
 - Accepted but not yet committed changes already count as your latest text: agents sync onto them.
 - Prefer a commit per accepted change? Set `"autoCommit": "when-clean"` in `.git/stet/config.json`. Stet then commits after each accept, unless the file had your own uncommitted edits.
+
+**Sharing your edits.** Changes you accept always reach agents. Your own edits reach them when you click **Share my edits with agents** (cloud icon in the panel title, or *Stet: Share my edits with agents* in the command palette). It saves your open project files, and agents work on that version from their next sync. You don't need to commit first.
+
+- The setting `stet.shareEdits` changes this: `saved` shares every save automatically (agents may then see half-written drafts); `committed` shares only committed text.
+- Shared are your tracked files, files staged with `git add`, and new `.tex`/`.bib` files. Build output such as `.aux` or `.pdf` stays out. Your git staging area is not changed.
+- After a new commit, agents see the commit; share again if you have edits on top of it.
 
 **Stale changes:** a change becomes *stale* when:
 - its text was rewritten in the meantime, by you or by accepting another agent's overlapping change, so it no longer applies; or
@@ -209,6 +217,7 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.inlineChanges` | `true` | Strike-through and ghost text in the editor. |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |
+| `stet.shareEdits` | `manual` | Which of your own edits agents see: `manual` (when you click *Share my edits*), `saved` (every save), `committed` (only commits). Accepted changes always reach agents. Stored in the project, so the command line follows it too. |
 
 **How the agents reach Stet:**
 - The extension brings its own copy of the `stet` program and places it in `.git/stet/bin/stet.mjs`. That path stays valid across extension updates.
