@@ -2,7 +2,7 @@
   "name": "stet-vscode",
   "displayName": "Stet",
   "description": "Review AI-proposed changes to LaTeX projects: accept, reject, edit or comment on each change.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "stet",
   "private": true,
   "license": "MIT",
@@ -48,11 +48,11 @@
     "test:integration": "node test/integration/run.mjs"
   },
   "dependencies": {
-    "@stet/core": "0.3.0"
+    "@stet/core": "0.4.0"
   },
   "devDependencies": {
     "@types/vscode": "~1.100.0",
-    "@vscode/vsce": "^3.6.0",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2"
   },
   "contributes": {
