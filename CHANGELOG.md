@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.4.0 — 2026-10-15
+
 - **Share my edits:** agents can see your own edits without you committing them first. Click **Share my edits with agents** (VS Code) or run `stet share`. The setting `shareEdits` (`stet.shareEdits` in VS Code) chooses between this (`manual`, default), sharing every save (`saved`), and committed text only (`committed`, the old behaviour).
 - **Long changes in the editor:** proposals with several lines or more than 80 characters were only shown shortened in the grey inline text. Their full new text now appears in a panel directly below the change (setting `stet.longChanges`).
 - **Guard:** compares real paths, so a link or an alternative spelling of the project folder (macOS `/private/var`, Windows short names) is recognised.

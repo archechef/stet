@@ -53,6 +53,12 @@ if (!/^\d+\.\d+\.\d+$/.test(v ?? "")) fail(`expected a version like 1.2.3, got '
 
 switch (cmd) {
   case "set": {
+    // Check everything before writing anything, so a refused release leaves no files half-changed.
+    const UNRELEASED = /^## Unreleased[ \t]*$/m;
+    const log = read("CHANGELOG.md");
+    if (changelogSection(v)) fail(`CHANGELOG.md already has a "## ${v}" section.`);
+    if (!UNRELEASED.test(log)) fail('CHANGELOG.md has no "## Unreleased" section. Add one with the changes of this release.');
+    if (!changelogSection("Unreleased")) fail('the "Unreleased" section of CHANGELOG.md is empty.');
     for (const p of PACKAGES) {
       const j = JSON.parse(read(p));
       j.version = v;
@@ -61,11 +67,8 @@ switch (cmd) {
     }
     write(CLI_SRC, read(CLI_SRC).replace(VERSION_CONST, `const VERSION = "${v}";`));
     write("README.md", read("README.md").replace(README_VERSION, `Version ${v}. `));
-    const log = read("CHANGELOG.md");
-    if (!/^## Unreleased\s*$/m.test(log)) fail('CHANGELOG.md has no "## Unreleased" section to release.');
     const date = new Date().toISOString().slice(0, 10);
-    write("CHANGELOG.md", log.replace(/^## Unreleased\s*$/m, `## ${v} — ${date}`));
-    if (!changelogSection(v)) fail(`the "Unreleased" section of CHANGELOG.md is empty.`);
+    write("CHANGELOG.md", log.replace(UNRELEASED, `## ${v} — ${date}`));
     execSync("npm install --package-lock-only --ignore-scripts", { cwd: root, stdio: "inherit" });
     console.log(`Version set to ${v}. Next:
   git commit -am "Release v${v}"
