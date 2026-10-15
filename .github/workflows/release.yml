@@ -1,0 +1,51 @@
+name: Release
+
+# Push a tag vX.Y.Z (after `node scripts/release.mjs set X.Y.Z` and a commit) to publish a GitHub release
+# with the VS Code extension and the standalone CLI. Marketplace publishing runs only once the
+# VSCE_PAT / OVSX_PAT repository secrets exist.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Version matches the tag
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          node scripts/release.mjs check "${GITHUB_REF_NAME#v}"
+      - run: git config --global user.name "CI" && git config --global user.email "ci@example.com"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run package:vscode
+      - name: Collect assets
+        run: |
+          mkdir out
+          cp packages/vscode/stet-vscode.vsix "out/stet-vscode-$VERSION.vsix"
+          cp packages/vscode/dist/stet.mjs "out/stet-$VERSION.mjs"
+          node "out/stet-$VERSION.mjs" --help > /dev/null
+          (cd out && sha256sum * > SHA256SUMS.txt)
+          node scripts/release.mjs notes "$VERSION" > notes.md
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --verify-tag --title "Stet $VERSION" --notes-file notes.md
+      - name: Publish to the VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: npm exec -w stet-vscode -- vsce publish --packagePath "$GITHUB_WORKSPACE/out/stet-vscode-$VERSION.vsix"
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish "out/stet-vscode-$VERSION.vsix" -p "$OVSX_PAT"

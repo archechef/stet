@@ -46,6 +46,33 @@ npm run package:vscode    # → packages/vscode/stet-vscode.vsix
 
 The `.vsix` contains the extension and its own copy of the `stet` CLI. Users need neither Node.js nor this repository.
 
+## Releasing
+
+1. Add the release's changes under `## Unreleased` in `CHANGELOG.md` (keep doing this as you go).
+2. Set the version everywhere and date the changelog section:
+   ```bash
+   node scripts/release.mjs set 0.4.0
+   ```
+   This updates the three `package.json` files, the CLI's `VERSION`, the README and `package-lock.json`. Versions are `major.minor.patch` only, as the VS Code Marketplace requires.
+3. Commit, tag and push:
+   ```bash
+   git commit -am "Release v0.4.0"
+   git tag v0.4.0
+   git push && git push origin v0.4.0
+   ```
+
+The tag starts `.github/workflows/release.yml`. It checks that every version matches the tag, builds, runs the tests and creates a GitHub release with:
+- `stet-vscode-<version>.vsix`, the VS Code extension;
+- `stet-<version>.mjs`, the whole CLI in one file (`node stet-<version>.mjs`, Node.js 20 or newer);
+- `SHA256SUMS.txt`;
+- the changelog section as release notes.
+
+**Marketplace publishing** is built in but inactive. It runs once these repository secrets exist (Settings → Secrets and variables → Actions):
+- `VSCE_PAT`: a token for the VS Code Marketplace. The `publisher` in `packages/vscode/package.json` must be your Marketplace publisher id first.
+- `OVSX_PAT`: a token for Open VSX (used by VSCodium, Cursor and others).
+
+If a release fails after the tag was pushed, fix the problem, then move the tag: `git tag -f v0.4.0 && git push -f origin v0.4.0` (delete a half-created GitHub release first).
+
 ## Conventions
 
 - **Language:** TypeScript (strict), ES modules, no runtime dependencies beyond `diff`.
