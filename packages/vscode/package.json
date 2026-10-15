@@ -472,6 +472,21 @@
           "default": true,
           "description": "Show proposed changes inline in the editor (old text struck through, new text as ghost text)."
         },
+        "stet.longChanges": {
+          "type": "string",
+          "enum": [
+            "expanded",
+            "collapsed",
+            "hover"
+          ],
+          "default": "expanded",
+          "enumDescriptions": [
+            "Show the full new text in a panel under the change, open.",
+            "The same panel, closed: click the change's marker in the gutter to open it.",
+            "Only in the hover (and in Show diff)."
+          ],
+          "description": "How proposed changes are shown whose new text is too long for one line of grey text."
+        },
         "stet.runtime": {
           "type": "string",
           "enum": [

@@ -116,6 +116,7 @@ The panel is a tree: **agent → changeset → group → change.**
 Open a `.tex` file with pending changes:
 
 - the **old text is struck through**, and the **new text follows in grey italics**;
+- new text that doesn't fit on one line (several lines, or more than 80 characters) is shortened there, and shown **in full in a panel directly below the change**. The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` opens these panels by default (`expanded`), keeps them closed until you click the gutter marker (`collapsed`), or leaves the full text to the hover (`hover`);
 - above each change is a row of actions: **S8: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**;
 - **hovering** a change shows the agent, the changeset and its rationale, the groups, the diff, the latest thread messages, and the same actions.
 
@@ -216,6 +217,7 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 |---|---|---|
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.inlineChanges` | `true` | Strike-through and ghost text in the editor. |
+| `stet.longChanges` | `expanded` | How changes too long for one line of grey text are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only in the hover (`hover`). |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |
 | `stet.shareEdits` | `manual` | Which of your own edits agents see: `manual` (when you click *Share my edits*), `saved` (every save), `committed` (only commits). Accepted changes always reach agents. Stored in the project, so the command line follows it too. |
 

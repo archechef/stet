@@ -675,6 +675,9 @@ A review pass for security, efficiency and duplication before publishing the ext
 - Extension: setting `stet.shareEdits` (written to the project's config when set, so the agents' `stet` and the CLI follow it), command *Share my edits with agents* in the panel title, with a status bar icon while saved edits are unshared (checked after each save). CLI: `stet share [mode]`, and `stet review` mentions unshared edits.
 - Tests: `share.test.ts` (modes, the user's index untouched, build output excluded, accepted items not applied twice, proposals on shared text acceptable, a commit replacing an older share, another branch checked out); the integration suite checks the command.
 
+### Long proposals in the editor (2026-10-15)
+- Ghost text is a single-line decoration, so multi-line or long new text was cut to 80 characters (⏎ for line breaks), and the full text needed the hover or *Show diff*. Such items now get a comment thread whose first entry is the full new text (fenced, never rendered as Markdown), opened by default directly under the change. VS Code offers no other way to show multi-line content between editor lines. Setting `stet.longChanges`: `expanded` (default), `collapsed`, `hover` (old behaviour).
+
 ## 17. Open points to verify
 
 1. **Claude desktop app:**

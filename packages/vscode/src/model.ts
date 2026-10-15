@@ -190,6 +190,15 @@ export function ghostText(s: string, max = 80): string {
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
+/** Whether ghost text can show `s` in full: one line, not longer than ghostText's limit. */
+export const fitsInline = (s: string, max = 80): boolean => !/[\r\n]/.test(s) && s.length <= max;
+
+/** The full new text of a proposal, for the editor's inline widget. Agent text: fenced, never rendered. */
+export function proposalMarkdown(item: Item): string {
+  const lang = /\.(tex|sty|cls|ltx|dtx|bib)$/i.test(item.file) ? "latex" : "";
+  return `*Proposed text, replacing the struck-through text above:*\n\n${fence(item.newText, lang)}`;
+}
+
 /** Markdown fenced block that is safe for any content. */
 export function fence(text: string, lang = ""): string {
   const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((m) => m.length));

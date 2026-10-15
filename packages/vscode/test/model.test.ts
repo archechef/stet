@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
-import { diffBlock, ghostText, itemLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
+import { diffBlock, fitsInline, ghostText, itemLabel, proposalMarkdown, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
 import { isManaged, managedCliPath } from "../src/runtime.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
@@ -89,6 +89,16 @@ describe("labels and text", () => {
   it("makes ghost text single-line and bounded", () => {
     expect(ghostText("a\nb")).toBe("a ⏎ b");
     expect(ghostText("x".repeat(100), 10)).toBe("xxxxxxxxx…");
+  });
+
+  it("knows when ghost text can't show a proposal, and shows it in full otherwise", () => {
+    expect(fitsInline("short")).toBe(true);
+    expect(fitsInline("a\nb")).toBe(false);
+    expect(fitsInline("x".repeat(81))).toBe(false);
+    const long = "First line with `code`.\nSecond line ``` [link](http://x)\n" + "y".repeat(200);
+    const md = proposalMarkdown(item("S1", "C1", { newText: long }));
+    expect(md).toContain(long); // in full, not shortened
+    expect(md).toMatch(/````latex\n/); // fenced: the agent's text is never rendered as Markdown
   });
 
   it("fences diffs safely", () => {

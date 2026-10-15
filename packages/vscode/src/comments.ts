@@ -2,21 +2,24 @@
 import * as vscode from "vscode";
 import type { Item } from "@stet/core";
 import type { Host, Locator } from "./editor.js";
+import { fitsInline, proposalMarkdown } from "./model.js";
 import type { Project } from "./project.js";
+
+export type LongMode = "expanded" | "collapsed" | "hover";
 
 class StetComment implements vscode.Comment {
   mode = vscode.CommentMode.Preview;
   constructor(
     public body: vscode.MarkdownString,
     public author: vscode.CommentAuthorInformation,
-    public timestamp: Date,
+    public timestamp?: Date,
   ) {}
 }
 
 export class Threads implements vscode.Disposable {
   private readonly controller = vscode.comments.createCommentController("stet", "Stet");
   /** item id → thread */
-  private threads = new Map<string, { thread: vscode.CommentThread; count: number; project: Project }>();
+  private threads = new Map<string, { thread: vscode.CommentThread; sig: string; project: Project }>();
   private disposables: vscode.Disposable[] = [];
 
   constructor(
@@ -28,22 +31,47 @@ export class Threads implements vscode.Disposable {
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: async (doc) => (await this.locator.locate(doc)).map((l) => new vscode.Range(l.range.start.line, 0, l.range.end.line, 0)),
     };
-    this.disposables.push(this.controller, host.onDidChange(() => void this.sync()));
+    this.disposables.push(
+      this.controller,
+      host.onDidChange(() => void this.sync()),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration("stet.longChanges")) void this.rebuild();
+      }),
+    );
   }
 
-  /** Create or update threads for items that have a conversation. */
+  /** Recreate all threads (their initial open/closed state depends on the setting). */
+  private async rebuild(): Promise<void> {
+    for (const t of this.threads.values()) t.thread.dispose();
+    this.threads.clear();
+    await this.sync();
+  }
+
+  /** How proposals too long for ghost text are shown (setting stet.longChanges). */
+  private longMode(): LongMode {
+    return vscode.workspace.getConfiguration("stet").get<LongMode>("longChanges", "expanded");
+  }
+
+  /** Whether the item's full new text goes into its thread (ghost text can't show it). */
+  private showsProposal(item: Item): boolean {
+    return this.longMode() !== "hover" && item.kind === "modify" && !!item.newText && !fitsInline(item.newText);
+  }
+
+  /** Create or update threads for items that have a conversation or a proposal too long for ghost text. */
   async sync(): Promise<void> {
     const seen = new Set<string>();
     for (const p of this.projects()) {
-      for (const item of p.snapshot.items.filter((i) => i.thread.length && (i.status === "pending" || i.status === "needs_revision"))) {
+      const live = p.snapshot.items.filter((i) => i.status === "pending" || i.status === "needs_revision");
+      for (const item of live.filter((i) => i.thread.length || this.showsProposal(i))) {
         seen.add(item.id + "@" + p.mainPath);
         const key = item.id + "@" + p.mainPath;
         const existing = this.threads.get(key);
         const range = await this.rangeOf(p, item);
+        const sig = this.signature(item);
         if (existing) {
-          if (existing.count !== item.thread.length) {
+          if (existing.sig !== sig) {
             existing.thread.comments = this.comments(item);
-            existing.count = item.thread.length;
+            existing.sig = sig;
           }
           if (range && !existing.thread.range?.isEqual(range)) existing.thread.range = range;
           continue;
@@ -52,8 +80,12 @@ export class Threads implements vscode.Disposable {
         thread.label = `${item.id} · ${item.agent}`;
         thread.canReply = true;
         thread.contextValue = item.id;
-        thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
-        this.threads.set(key, { thread, count: item.thread.length, project: p });
+        // Open by default only to show a long proposal; the user's collapsing is kept afterwards.
+        thread.collapsibleState =
+          this.showsProposal(item) && this.longMode() === "expanded"
+            ? vscode.CommentThreadCollapsibleState.Expanded
+            : vscode.CommentThreadCollapsibleState.Collapsed;
+        this.threads.set(key, { thread, sig, project: p });
       }
     }
     for (const [key, t] of this.threads) {
@@ -74,11 +106,19 @@ export class Threads implements vscode.Disposable {
     return new vscode.Range(line - 1, 0, line - 1, 0);
   }
 
+  /** What the thread shows; changes when the proposal or the conversation does. */
+  private signature(item: Item): string {
+    return `${this.showsProposal(item) ? item.newText : ""}\0${item.thread.length}`;
+  }
+
   private comments(item: Item): vscode.Comment[] {
-    return item.thread.map(
+    const proposal = this.showsProposal(item)
+      ? [new StetComment(new vscode.MarkdownString(proposalMarkdown(item)), { name: item.agent })]
+      : [];
+    return proposal.concat(item.thread.map(
       // Plain text: agent replies must not render links or remote images.
       (t) => new StetComment(new vscode.MarkdownString().appendText(t.text), { name: t.author === "user" ? "You" : item.agent }, new Date(t.at)),
-    );
+    ));
   }
 
   /** The item a reply belongs to: known thread, or the item under a thread the user just opened. */
