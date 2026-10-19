@@ -94,7 +94,7 @@ stet commit -m "Polish the introduction"
 
 ## Status
 
-Version 0.4.1. Milestones M1–M3 are done:
+Version 0.4.2. Milestones M1–M3 are done:
 - **M1:** core library and CLI.
 - **M2:** MCP server and guardrails.
 - **M3:** VS Code extension.

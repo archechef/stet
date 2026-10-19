@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2 — 2026-10-19
 
 - **Clearer changes in long formulas:** a change to a formula covers the whole formula (it is reviewed as a unit), but the editor now marks only the symbols that actually differ, instead of striking through the whole formula and repeating it.
 - **Word wrap:** the proposed new text after a change now wraps with the line (it is shown as an inlay hint instead of a decoration, which word wrap ignored). With word wrap on, single-line proposals up to 400 characters are shown inline in full.
