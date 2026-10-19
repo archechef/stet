@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 — 2026-10-19
 
 - **VS Code Marketplace:** the extension is published as a preview under the publisher *archechef*, with an icon and a self-contained Marketplace page.
 - **Release script:** `release.mjs set` checks the changelog before changing any file.
