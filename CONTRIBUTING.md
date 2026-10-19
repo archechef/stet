@@ -67,9 +67,14 @@ The tag starts `.github/workflows/release.yml`. It checks that every version mat
 - `SHA256SUMS.txt`;
 - the changelog section as release notes.
 
-**Marketplace publishing** is built in but inactive. It runs once these repository secrets exist (Settings → Secrets and variables → Actions):
-- `VSCE_PAT`: a token for the VS Code Marketplace. The `publisher` in `packages/vscode/package.json` must be your Marketplace publisher id first.
-- `OVSX_PAT`: a token for Open VSX (used by VSCodium, Cursor and others).
+**VS Code Marketplace** (publisher `archechef`): upload by hand.
+1. Download `stet-vscode-<version>.vsix` from the GitHub release.
+2. At [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage), open the extension's **⋯** menu → **Update**, and upload the file. (The very first upload was **+ New extension → Visual Studio Code**.)
+3. Microsoft checks the package; the new version is live a few minutes later.
+
+Automatic publishing would need a Marketplace token. The tokens Azure DevOps offered for this ("all accessible organizations") are retired on 2026-12-01; their replacement, signing in with Microsoft Entra ID (`vsce publish --azure-credential`), needs an Azure subscription. Not worth it for occasional releases.
+
+**Open VSX** (VSCodium, Cursor and others): the release workflow publishes there by itself once the repository secret `OVSX_PAT` exists (Settings → Secrets and variables → Actions), a token from open-vsx.org.
 
 If a release fails after the tag was pushed, fix the problem, then move the tag: `git tag -f v0.4.0 && git push -f origin v0.4.0` (delete a half-created GitHub release first).
 

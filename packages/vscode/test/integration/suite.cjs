@@ -21,7 +21,7 @@ exports.run = async function run() {
   const results = [];
   const check = (name, ok, detail = "") => results.push({ name, ok: !!ok, detail: String(detail) });
   try {
-    const ext = vscode.extensions.getExtension("stet.stet-vscode");
+    const ext = vscode.extensions.getExtension("archechef.stet-vscode");
     await ext.activate();
     check("activates", ext.isActive);
 

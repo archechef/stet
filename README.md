@@ -40,7 +40,7 @@ claude-1                      3 pending
 
 ### VS Code (no command line needed)
 
-The extension is distributed as a `.vsix` file; it is not on the Marketplace yet. Download `stet-vscode-<version>.vsix` from the repository's **Releases** page, or build it:
+Install **Stet** (publisher *archechef*) from the VS Code Marketplace, or download `stet-vscode-<version>.vsix` from the repository's **Releases** page, or build it:
 
 ```bash
 npm install

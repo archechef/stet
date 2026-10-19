@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **VS Code Marketplace:** the extension is published as a preview under the publisher *archechef*, with an icon and a self-contained Marketplace page.
+- **Release script:** `release.mjs set` checks the changelog before changing any file.
+
 ## 0.4.0 — 2026-10-15
 
 - **Share my edits:** agents can see your own edits without you committing them first. Click **Share my edits with agents** (VS Code) or run `stet share`. The setting `shareEdits` (`stet.shareEdits` in VS Code) chooses between this (`manual`, default), sharing every save (`saved`), and committed text only (`committed`, the old behaviour).

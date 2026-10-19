@@ -1,8 +1,8 @@
 name: Release
 
 # Push a tag vX.Y.Z (after `node scripts/release.mjs set X.Y.Z` and a commit) to publish a GitHub release
-# with the VS Code extension and the standalone CLI. Marketplace publishing runs only once the
-# VSCE_PAT / OVSX_PAT repository secrets exist.
+# with the VS Code extension and the standalone CLI. The .vsix is uploaded to the VS Code
+# Marketplace by hand (see CONTRIBUTING.md). Open VSX publishing runs once the OVSX_PAT secret exists.
 on:
   push:
     tags: ["v*"]
@@ -14,7 +14,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v4
@@ -43,9 +42,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" out/* --verify-tag --title "Stet $VERSION" --notes-file notes.md
-      - name: Publish to the VS Code Marketplace
-        if: env.VSCE_PAT != ''
-        run: npm exec -w stet-vscode -- vsce publish --packagePath "$GITHUB_WORKSPACE/out/stet-vscode-$VERSION.vsix"
       - name: Publish to Open VSX
         if: env.OVSX_PAT != ''
         run: npx --yes ovsx publish "out/stet-vscode-$VERSION.vsix" -p "$OVSX_PAT"

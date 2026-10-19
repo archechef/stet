@@ -3,32 +3,32 @@
   "displayName": "Stet",
   "description": "Review AI-proposed changes to LaTeX projects: accept, reject, edit or comment on each change.",
   "version": "0.4.0",
-  "publisher": "stet",
-  "private": true,
+  "publisher": "archechef",
   "license": "MIT",
   "author": "Noah Tittelbach",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/archechef/stet.git",
-    "directory": "packages/vscode"
-  },
-  "homepage": "https://github.com/archechef/stet#readme",
-  "bugs": {
-    "url": "https://github.com/archechef/stet/issues"
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#F6F1E4",
+    "theme": "light"
   },
   "engines": {
     "vscode": "^1.100.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
   "keywords": [
     "latex",
     "tex",
+    "overleaf",
     "review",
+    "proofreading",
     "ai",
+    "agent",
     "claude",
-    "codex"
+    "codex",
+    "mcp"
   ],
   "main": "./dist/extension.js",
   "capabilities": {
@@ -519,5 +519,6 @@
         }
       }
     }
-  }
+  },
+  "preview": true
 }

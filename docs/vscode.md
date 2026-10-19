@@ -8,10 +8,8 @@ You don't need the command line or Node.js for any of this.
 
 ## 1. Installation
 
-The extension is not on the Marketplace yet. It is distributed as a single file, `stet-vscode.vsix`.
-
-- **In VS Code:** Extensions view → `…` menu → **Install from VSIX…** → choose `stet-vscode.vsix`.
-- **From a terminal:** `code --install-extension stet-vscode.vsix`
+- **From the Marketplace:** search for **Stet** (publisher *archechef*) in VS Code's Extensions view and click **Install**.
+- **From a file:** download `stet-vscode-<version>.vsix` from the repository's Releases page, then Extensions view → `…` menu → **Install from VSIX…**, or `code --install-extension stet-vscode-<version>.vsix`.
 
 **Requirements:**
 - VS Code 1.100 or newer
