@@ -135,6 +135,8 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 | **Dissolve group** | (context menu) | Removes a group, for example a wrong automatic one. The changes themselves stay. |
 | **Next / previous change** | `j` / `k` | Selects the next or previous change and shows it in the editor, keeping the focus in the panel. The arrow keys move through the panel too; press Enter to show the change. |
 
+After you accept, reject, edit or request a revision, Stet **moves on to the next pending change** and shows it, so reviewing takes one key per change. From the panel, the focus stays in the panel; from the actions in the editor, the editor moves to the next change. The setting `stet.autoAdvance` turns this off.
+
 **Linked changes:**
 - Accepting or rejecting one member of a linked group asks what to do with the rest:
   - *Accept all linked changes*, or *Accept only this one*, which breaks the group.
@@ -214,6 +216,7 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 | Setting | Default | Meaning |
 |---|---|---|
 | `stet.codeLens` | `true` | Actions above each proposed change. |
+| `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
 | `stet.inlineChanges` | `true` | Strike-through and ghost text in the editor. |
 | `stet.longChanges` | `expanded` | How changes too long for one line of grey text are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only in the hover (`hover`). |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |

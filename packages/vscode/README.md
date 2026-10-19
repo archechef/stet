@@ -69,6 +69,8 @@ You can keep writing while changes are pending: Stet finds each change again in 
 | **Accept all / Reject all** | `Shift+A` / `Shift+R` | The whole group or changeset. |
 | **Next / previous change** | `j` / `k` | Moves through the proposals and shows each one in the editor. |
 
+After each decision, Stet moves on to the next pending change, so reviewing takes one key per change.
+
 **Conversations** appear as comment threads on the change and in the **Comments** view. Type in a thread and click **Send to agent** to answer.
 
 **Finish review** (commit icon in the panel title) makes one commit for everything you accepted. The summary line is prefilled with the titles of the agent's changesets, and you can edit it.
@@ -103,6 +105,7 @@ When a task is done, right-click the agent → **Archive agent**. Its pending pr
 | `stet.longChanges` | `expanded` | How long proposals are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only on hover (`hover`). |
 | `stet.inlineChanges` | `true` | Strike-through and grey new text in the editor. |
 | `stet.codeLens` | `true` | Actions above each proposed change. |
+| `stet.autoAdvance` | `true` | After a decision on a change, move on to the next pending change. |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents: Node.js 20 or newer if installed, otherwise VS Code's own runtime. `node` or `vscode` forces one. |
 
 ---

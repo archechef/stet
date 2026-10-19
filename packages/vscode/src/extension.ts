@@ -247,6 +247,28 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     await this.showItem(next, true);
   }
 
+  /**
+   * Run a decision on `anchor` (accept, reject, …), then select the next pending change in panel
+   * order and show it, so reviewing is one key per change. Nothing moves if the decision was
+   * cancelled or failed. `fromPanel`: keep the focus in the panel (keyboard review); otherwise
+   * (CodeLens, hover) the editor moves to the next change.
+   */
+  private async decide(p: Project, anchor: string, fromPanel: boolean, action: () => Promise<void>): Promise<void> {
+    const idOf = (e: El) => (e.node?.type === "item" ? e.node.item.id : "");
+    const before = this.itemsInOrder().filter((e) => e.project === p).map(idOf);
+    const status = this.model(p).item(anchor)?.status;
+    await action();
+    if (!vscode.workspace.getConfiguration("stet").get<boolean>("autoAdvance", true)) return;
+    if (this.model(p).item(anchor)?.status === status) return;
+    const live = new Map(this.itemsInOrder().filter((e) => e.project === p && e.node?.type === "item" && isLive(e.node.item)).map((e) => [idOf(e), e]));
+    const i = before.indexOf(anchor);
+    const next = [...before.slice(i + 1), ...before.slice(0, Math.max(i, 0))].map((id) => live.get(id)).find((e) => e !== undefined);
+    if (!next) return;
+    // From the editor with the panel closed, only the editor moves (revealing would open the panel).
+    if (fromPanel || this.tree.visible) await this.tree.reveal(next, { select: true, focus: fromPanel });
+    await this.showItem(next, fromPanel);
+  }
+
   private async buildTreeItem(el: El): Promise<vscode.TreeItem> {
     const E = vscode.TreeItemCollapsibleState.Expanded;
     if (!el.node) {
@@ -431,7 +453,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       if (pick.label === all) ids = [item.id, ...rest.map((r) => r.id)];
       else overrideLinked = true;
     }
-    await this.doAccept(p, ids, { overrideLinked });
+    await this.decide(p, item.id, !isRef(arg), () => this.doAccept(p, ids, { overrideLinked }));
   }
 
   private async doAccept(p: Project, ids: string[], opts: { overrideLinked?: boolean; edited?: Record<string, string> } = {}): Promise<void> {
@@ -487,7 +509,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const ok = await vscode.window.showWarningMessage(`Accept all ${ids.length} changes of ${s.what}?`, { modal: true }, "Accept all");
       if (ok !== "Accept all") return;
     }
-    await this.doAccept(s.project, ids);
+    await this.decide(s.project, s.ids[0]!, !isRef(arg), () => this.doAccept(s.project, ids));
   }
 
   private async reason(prompt: string): Promise<string | undefined> {
@@ -512,10 +534,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     }
     const reason = await this.reason(`Reject ${item.id}`);
     if (reason === undefined) return;
-    await this.run(p, async () => {
+    await this.decide(p, item.id, !isRef(arg), () => this.run(p, async () => {
       const r = await p.stet.reject([item.id], { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
       vscode.window.setStatusBarMessage(`$(close) Rejected ${r.map((i) => i.id).join(", ")}`, 4000);
-    });
+    }));
   }
 
   async rejectAll(arg: unknown): Promise<void> {
@@ -524,10 +546,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const reason = await this.reason(`Reject all ${s.ids.length} changes of ${s.what}`);
     if (reason === undefined) return;
     const p = s.project;
-    await this.run(p, async () => {
+    await this.decide(p, s.ids[0]!, !isRef(arg), () => this.run(p, async () => {
       const r = await p.stet.reject(s.ids, { ...(reason ? { reason } : {}), mode: "all" });
       vscode.window.setStatusBarMessage(`$(close) Rejected ${r.map((i) => i.id).join(", ")}`, 4000);
-    });
+    }));
   }
 
   async edit(arg: unknown): Promise<void> {
@@ -552,7 +574,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     }
     if (text === undefined) return;
     const rest = this.model(p).linkedRest([item.id]);
-    await this.doAccept(p, [item.id, ...rest.map((r) => r.id)], { edited: { [item.id]: toLf(text) } });
+    await this.decide(p, item.id, !isRef(arg), () => this.doAccept(p, [item.id, ...rest.map((r) => r.id)], { edited: { [item.id]: toLf(text) } }));
   }
 
   async comment(arg: unknown): Promise<void> {
@@ -568,7 +590,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (!t) return;
     const text = await vscode.window.showInputBox({ title: `Request a revision of ${t.item.id}`, prompt: "What should the agent change?", placeHolder: "e.g. shorter, and keep the term “ansatz”" });
     if (!text) return;
-    await this.run(t.project, () => t.project.stet.requestRevision(t.item.id, text));
+    await this.decide(t.project, t.item.id, !isRef(arg), () => this.run(t.project, () => t.project.stet.requestRevision(t.item.id, text)).then(() => undefined));
   }
 
   async ungroup(arg: unknown): Promise<void> {

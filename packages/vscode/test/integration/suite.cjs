@@ -86,6 +86,11 @@ exports.run = async function run() {
     check("accept writes the change", disk.includes("the task of reviewing"), disk.slice(0, 120));
     check("accept keeps the user's unsaved edit (saved first)", disk.startsWith("% my note\n"));
     check("editor shows the accepted text", doc.getText().includes("the task of reviewing") && !doc.isDirty);
+    const nextSel = await until("the next change after accepting", () => {
+      const e = vscode.window.activeTextEditor;
+      return e && e.document.getText(e.selection) === "practice" ? e : null;
+    }, 5000).catch(() => null);
+    check("accept moves on to the next change", nextSel);
     const log = execFileSync("git", ["log", "--format=%s"], { cwd: fx.repo, encoding: "utf8" });
     check("not committed because of the user's own edit", !log.includes("stet: accept"), log);
 

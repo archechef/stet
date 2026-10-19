@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Faster reviewing:** after you accept, reject, edit or request a revision of a change, the extension selects the next pending change and shows it (setting `stet.autoAdvance`).
+
 ## 0.4.1 — 2026-10-19
 
 - **VS Code Marketplace:** the extension is published as a preview under the publisher *archechef*, with an icon and a self-contained Marketplace page.

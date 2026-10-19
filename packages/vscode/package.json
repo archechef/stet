@@ -462,6 +462,11 @@
     "configuration": {
       "title": "Stet",
       "properties": {
+        "stet.autoAdvance": {
+          "type": "boolean",
+          "default": true,
+          "description": "After you accept, reject, edit or request a revision of a change, select the next pending change and show it."
+        },
         "stet.codeLens": {
           "type": "boolean",
           "default": true,
