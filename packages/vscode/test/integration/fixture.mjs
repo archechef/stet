@@ -24,6 +24,11 @@ We show that this approach is effective in practice. It scales to large document
 \\end{document}
 `,
 );
+// A formula: one item for review, but only the changed parts should be marked.
+writeFileSync(join(repo, "math.tex"), String.raw`\begin{align}
+  f(x) &= \sum_{i=1}^{n} a_i x^i + b
+\end{align}
+`);
 git(repo, "add", "-A");
 git(repo, "commit", "-qm", "init");
 
@@ -32,5 +37,7 @@ const stet = await Stet.init(repo);
 const agent = await stet.newAgent("claude-1", { kind: "claude-code" });
 const f = join(agent.worktree, "main.tex");
 writeFileSync(f, readFileSync(f, "utf8").replace("the problem of reviewing", "the task of reviewing").replace("effective in practice", "effective in real use"));
+const m = join(agent.worktree, "math.tex");
+writeFileSync(m, readFileSync(m, "utf8").replace("x^i + b", "x^{i+1} - b"));
 const r = await stet.submit("claude-1", { title: "Polish wording", rationale: "Clearer terms." });
 console.log(JSON.stringify({ repo, worktree: agent.worktree, items: r.items.map((i) => i.id) }));

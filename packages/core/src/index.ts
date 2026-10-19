@@ -5,6 +5,7 @@ export { StetError } from "./errors.js";
 export type { SubmitResult, SyncResult, AcceptResult, AgentStatus, ItemFilter } from "./service.js";
 export type { GroupHint, NoteHint } from "./grouping.js";
 export { tokenize } from "./tokenizer.js";
+export { inlineDiff, type InlineDiff } from "./inline.js";
 export { splitText, type Edit } from "./split.js";
 export { anchor } from "./anchor.js";
 export { doctor, type DoctorCheck } from "./doctor.js";

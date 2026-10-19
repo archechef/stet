@@ -133,6 +133,42 @@ exports.run = async function run() {
     check("own edits not shared before the button", !baseText().startsWith("% my note"), baseText().slice(0, 60));
     await vscode.commands.executeCommand("stet.shareEdits");
     check("Share my edits shares them", baseText().startsWith("% my note") && baseText().includes("the task of reviewing"), baseText().slice(0, 60));
+
+    // New text is an inlay hint, so word wrap makes room for it. The 83-character line fits in
+    // 86 columns on its own; with " real use" after "practice" it has to wrap.
+    const doc2 = await vscode.workspace.openTextDocument(uri);
+    const ed3 = await vscode.window.showTextDocument(doc2);
+    const lineNo = doc2.getText().split("\n").findIndex((l) => l.startsWith("We show that this approach"));
+    const hints = await vscode.commands.executeCommand("vscode.executeInlayHintProvider", uri, new vscode.Range(0, 0, doc2.lineCount, 0));
+    const labels = (hints || []).map((h) => (typeof h.label === "string" ? h.label : h.label.map((x) => x.value).join("")));
+    check("new text is an inlay hint", labels.includes("real use"), JSON.stringify(labels));
+    const editorCfg = vscode.workspace.getConfiguration("editor");
+    await editorCfg.update("wordWrapColumn", 86, vscode.ConfigurationTarget.Global);
+    await editorCfg.update("wordWrap", "wordWrapColumn", vscode.ConfigurationTarget.Global);
+    const wraps = async () => {
+      ed3.selection = new vscode.Selection(lineNo, 0, lineNo, 0);
+      await vscode.commands.executeCommand("cursorMove", { to: "down", by: "wrappedLine" });
+      return ed3.selection.active.line === lineNo;
+    };
+    const wrappedWithHint = await until("the line to wrap with the hint", wraps, 5000).catch(() => false);
+    await vscode.workspace.getConfiguration("stet").update("inlineChanges", false, vscode.ConfigurationTarget.Global);
+    const wrappedWithout = await until("the line to fit without the hint", async () => !(await wraps()), 5000).then(() => false, () => true);
+    check("word wrap makes room for the new text", wrappedWithHint && !wrappedWithout, `with hint: ${wrappedWithHint}, without: ${wrappedWithout}`);
+    await vscode.workspace.getConfiguration("stet").update("inlineChanges", true, vscode.ConfigurationTarget.Global);
+
+    // A changed exponent and sign in a formula: one item, but only those parts are shown as new.
+    const mathUri = vscode.Uri.file(join(fx.repo, "math.tex"));
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(mathUri));
+    const mathLabels = await until("hints in the formula", async () => {
+      const h = await vscode.commands.executeCommand("vscode.executeInlayHintProvider", mathUri, new vscode.Range(0, 0, 10, 0));
+      const l = (h || []).map((x) => (typeof x.label === "string" ? x.label : x.label.map((p) => p.value).join("")));
+      return l.length ? l : null;
+    }, 5000).catch(() => []);
+    check(
+      "formula changes are shown part by part",
+      mathLabels.length >= 1 && mathLabels.length <= 3 && mathLabels.every((l) => l.trim().length <= 4),
+      JSON.stringify(mathLabels),
+    );
   } catch (e) {
     check("no exception", false, e && e.stack);
   }

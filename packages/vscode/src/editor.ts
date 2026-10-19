@@ -1,7 +1,7 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
 import type { Item } from "@stet/core";
-import { diffBlock, ghostText, isLive, LineIndex, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
+import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import type { Project } from "./project.js";
 
 export interface Located {
@@ -57,26 +57,48 @@ export class Locator {
   }
 }
 
+/**
+ * How much new text is shown inline after a change. With word wrap on, inline text wraps with the
+ * line, so a longer single-line proposal fits; without it, long text would run off the screen.
+ */
+export function inlineMax(uri: vscode.Uri): number {
+  return vscode.workspace.getConfiguration("editor", uri).get<string>("wordWrap", "off") !== "off" ? 400 : 80;
+}
+
+/**
+ * What to mark for a located item: only the parts that change. A whole formula may be one item,
+ * but a changed exponent should not look like a rewritten equation.
+ */
+function marks(doc: vscode.TextDocument, item: Item, range: vscode.Range): { removed: vscode.Range[]; inserted: { at: vscode.Position; text: string }[] } {
+  const here = toLf(doc.getText(range));
+  // The located text is the item's old text; if not (e.g. while typing), mark the whole span.
+  const d =
+    here === item.oldText
+      ? itemDiff(item)
+      : { removed: here ? [[0, here.length] as [number, number]] : [], inserted: item.newText ? [{ at: here.length, text: item.newText }] : [] };
+  const pos = (offset: number) => {
+    const p = positionIn(range.start, here, offset);
+    return new vscode.Position(p.line, p.character);
+  };
+  return {
+    removed: d.removed.map(([a, b]) => new vscode.Range(pos(a), pos(b))),
+    inserted: d.inserted.map((i) => ({ at: pos(i.at), text: i.text })),
+  };
+}
+
 const cmd = (command: string, args: unknown[]) => `command:${command}?${encodeURIComponent(JSON.stringify(args))}`;
 
-export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.Disposable {
+export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.InlayHintsProvider, vscode.Disposable {
   private readonly removed = vscode.window.createTextEditorDecorationType({
     textDecoration: "line-through",
     backgroundColor: new vscode.ThemeColor("diffEditor.removedTextBackground"),
     overviewRulerColor: new vscode.ThemeColor("editorOverviewRuler.modifiedForeground"),
     overviewRulerLane: vscode.OverviewRulerLane.Left,
   });
-  private readonly inserted = vscode.window.createTextEditorDecorationType({
-    after: {
-      backgroundColor: new vscode.ThemeColor("diffEditor.insertedTextBackground"),
-      fontStyle: "italic",
-      margin: "0 0 0 1px",
-    },
-    overviewRulerColor: new vscode.ThemeColor("editorOverviewRuler.modifiedForeground"),
-    overviewRulerLane: vscode.OverviewRulerLane.Left,
-  });
   private readonly lensChanged = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this.lensChanged.event;
+  private readonly hintsChanged = new vscode.EventEmitter<void>();
+  readonly onDidChangeInlayHints = this.hintsChanged.event;
   private disposables: vscode.Disposable[] = [];
   private timer: NodeJS.Timeout | undefined;
 
@@ -88,13 +110,15 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     this.disposables.push(
       vscode.languages.registerCodeLensProvider(selector, this),
       vscode.languages.registerHoverProvider(selector, this),
+      // New text as inlay hints: unlike decoration text, they take part in word wrap.
+      vscode.languages.registerInlayHintsProvider(selector, this),
       host.onDidChange(() => this.update()),
       vscode.window.onDidChangeVisibleTextEditors(() => this.update()),
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.contentChanges.length) this.update(300);
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("stet")) this.update();
+        if (e.affectsConfiguration("stet") || e.affectsConfiguration("editor.wordWrap")) this.update();
       }),
     );
   }
@@ -103,6 +127,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.lensChanged.fire();
+      this.hintsChanged.fire();
       for (const ed of vscode.window.visibleTextEditors) void this.decorate(ed);
     }, delay);
   }
@@ -110,19 +135,28 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   private async decorate(ed: vscode.TextEditor): Promise<void> {
     const on = vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true);
     const located = on ? await this.locator.locate(ed.document) : [];
-    const removed: vscode.DecorationOptions[] = [];
-    const inserted: vscode.DecorationOptions[] = [];
-    for (const { item, range } of located) {
-      if (!range.isEmpty) removed.push({ range });
-      if (item.newText) {
-        inserted.push({
-          range: new vscode.Range(range.end, range.end),
-          renderOptions: { after: { contentText: ghostText(item.newText), color: new vscode.ThemeColor("editorGhostText.foreground") } },
-        });
+    ed.setDecorations(
+      this.removed,
+      located.flatMap(({ item, range }) => marks(ed.document, item, range).removed.map((r) => ({ range: r }))),
+    );
+  }
+
+  /** The proposed new text, each part right where it goes (after the struck-through text it replaces). */
+  async provideInlayHints(doc: vscode.TextDocument, range: vscode.Range): Promise<vscode.InlayHint[]> {
+    if (!vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true)) return [];
+    const max = inlineMax(doc.uri);
+    const hints: vscode.InlayHint[] = [];
+    for (const { item, range: span } of await this.locator.locate(doc)) {
+      if (!item.newText || !range.intersection(span)) continue;
+      const tip = new vscode.MarkdownString(`**${item.id}** proposes:\n\n${fence(item.newText, "latex")}`);
+      for (const ins of marks(doc, item, span).inserted) {
+        if (!range.contains(ins.at)) continue;
+        const hint = new vscode.InlayHint(ins.at, ghostText(ins.text, max));
+        hint.tooltip = tip;
+        hints.push(hint);
       }
     }
-    ed.setDecorations(this.removed, removed);
-    ed.setDecorations(this.inserted, inserted);
+    return hints;
   }
 
   async provideCodeLenses(doc: vscode.TextDocument): Promise<vscode.CodeLens[]> {
@@ -177,8 +211,8 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   dispose(): void {
     clearTimeout(this.timer);
     this.removed.dispose();
-    this.inserted.dispose();
     this.lensChanged.dispose();
+    this.hintsChanged.dispose();
     for (const d of this.disposables) d.dispose();
   }
 }

@@ -113,8 +113,9 @@ The panel is a tree: **agent → changeset → group → change.**
 
 Open a `.tex` file with pending changes:
 
-- the **old text is struck through**, and the **new text follows in grey italics**;
-- new text that doesn't fit on one line (several lines, or more than 80 characters) is shortened there, and shown **in full in a panel directly below the change**. The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` opens these panels by default (`expanded`), keeps them closed until you click the gutter marker (`collapsed`), or leaves the full text to the hover (`hover`);
+- **only what actually changes is marked:** a change may span a whole formula (math is always reviewed whole, so it can't end up half-edited), but only the symbols that differ are struck through, and the new ones appear in grey right where they go. Everything unchanged stays plain;
+- the **old text is struck through**, and the **new text follows in grey**, as an inlay hint (so it wraps with the line when word wrap is on; it needs `editor.inlayHints.enabled` on, the default);
+- new text that doesn't fit there is shortened, and shown **in full in a panel directly below the change**. That is new text with several lines, or longer than 80 characters (400 with word wrap on). The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` opens these panels by default (`expanded`), keeps them closed until you click the gutter marker (`collapsed`), or leaves the full text to the hover (`hover`);
 - above each change is a row of actions: **S8: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**;
 - **hovering** a change shows the agent, the changeset and its rationale, the groups, the diff, the latest thread messages, and the same actions.
 
@@ -217,10 +218,12 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 |---|---|---|
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
-| `stet.inlineChanges` | `true` | Strike-through and ghost text in the editor. |
+| `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. |
 | `stet.longChanges` | `expanded` | How changes too long for one line of grey text are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only in the hover (`hover`). |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |
 | `stet.shareEdits` | `manual` | Which of your own edits agents see: `manual` (when you click *Share my edits*), `saved` (every save), `committed` (only commits). Accepted changes always reach agents. Stored in the project, so the command line follows it too. |
+
+For LaTeX and BibTeX files, the extension sets `editor.inlayHints.maximumLength` to `0` (no limit), so proposed text isn't cut at VS Code's default of 43 characters. You can override it in your settings.
 
 **How the agents reach Stet:**
 - The extension brings its own copy of the `stet` program and places it in `.git/stet/bin/stet.mjs`. That path stays valid across extension updates.

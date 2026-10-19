@@ -523,6 +523,17 @@
           "markdownDescription": "Which of your own edits AI agents see. Changes you accepted always reach them. Stored in the project (`.git/stet/config.json`), so it also applies to `stet` on the command line."
         }
       }
+    },
+    "configurationDefaults": {
+      "[latex]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[tex]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[bibtex]": {
+        "editor.inlayHints.maximumLength": 0
+      }
     }
   },
   "preview": true

@@ -1,8 +1,8 @@
 /** Item threads through the VS Code Comments API (spec §12.2). */
 import * as vscode from "vscode";
 import type { Item } from "@stet/core";
-import type { Host, Locator } from "./editor.js";
-import { fitsInline, proposalMarkdown } from "./model.js";
+import { inlineMax, type Host, type Locator } from "./editor.js";
+import { fitsInline, itemDiff, proposalMarkdown } from "./model.js";
 import type { Project } from "./project.js";
 
 export type LongMode = "expanded" | "collapsed" | "hover";
@@ -35,7 +35,7 @@ export class Threads implements vscode.Disposable {
       this.controller,
       host.onDidChange(() => void this.sync()),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("stet.longChanges")) void this.rebuild();
+        if (e.affectsConfiguration("stet.longChanges") || e.affectsConfiguration("editor.wordWrap")) void this.rebuild();
       }),
     );
   }
@@ -53,8 +53,11 @@ export class Threads implements vscode.Disposable {
   }
 
   /** Whether the item's full new text goes into its thread (ghost text can't show it). */
-  private showsProposal(item: Item): boolean {
-    return this.longMode() !== "hover" && item.kind === "modify" && !!item.newText && !fitsInline(item.newText);
+  private showsProposal(project: Project, item: Item): boolean {
+    if (this.longMode() === "hover" || item.kind !== "modify" || !item.newText) return false;
+    // Only the changed parts are shown inline; the panel is for parts too long for that.
+    const max = inlineMax(project.fileUri(item.file));
+    return itemDiff(item).inserted.some((i) => !fitsInline(i.text, max));
   }
 
   /** Create or update threads for items that have a conversation or a proposal too long for ghost text. */
@@ -62,27 +65,27 @@ export class Threads implements vscode.Disposable {
     const seen = new Set<string>();
     for (const p of this.projects()) {
       const live = p.snapshot.items.filter((i) => i.status === "pending" || i.status === "needs_revision");
-      for (const item of live.filter((i) => i.thread.length || this.showsProposal(i))) {
+      for (const item of live.filter((i) => i.thread.length || this.showsProposal(p, i))) {
         seen.add(item.id + "@" + p.mainPath);
         const key = item.id + "@" + p.mainPath;
         const existing = this.threads.get(key);
         const range = await this.rangeOf(p, item);
-        const sig = this.signature(item);
+        const sig = this.signature(p, item);
         if (existing) {
           if (existing.sig !== sig) {
-            existing.thread.comments = this.comments(item);
+            existing.thread.comments = this.comments(p, item);
             existing.sig = sig;
           }
           if (range && !existing.thread.range?.isEqual(range)) existing.thread.range = range;
           continue;
         }
-        const thread = this.controller.createCommentThread(p.fileUri(item.file), range ?? new vscode.Range(0, 0, 0, 0), this.comments(item));
+        const thread = this.controller.createCommentThread(p.fileUri(item.file), range ?? new vscode.Range(0, 0, 0, 0), this.comments(p, item));
         thread.label = `${item.id} · ${item.agent}`;
         thread.canReply = true;
         thread.contextValue = item.id;
         // Open by default only to show a long proposal; the user's collapsing is kept afterwards.
         thread.collapsibleState =
-          this.showsProposal(item) && this.longMode() === "expanded"
+          this.showsProposal(p, item) && this.longMode() === "expanded"
             ? vscode.CommentThreadCollapsibleState.Expanded
             : vscode.CommentThreadCollapsibleState.Collapsed;
         this.threads.set(key, { thread, sig, project: p });
@@ -107,12 +110,12 @@ export class Threads implements vscode.Disposable {
   }
 
   /** What the thread shows; changes when the proposal or the conversation does. */
-  private signature(item: Item): string {
-    return `${this.showsProposal(item) ? item.newText : ""}\0${item.thread.length}`;
+  private signature(project: Project, item: Item): string {
+    return `${this.showsProposal(project, item) ? item.newText : ""}\0${item.thread.length}`;
   }
 
-  private comments(item: Item): vscode.Comment[] {
-    const proposal = this.showsProposal(item)
+  private comments(project: Project, item: Item): vscode.Comment[] {
+    const proposal = this.showsProposal(project, item)
       ? [new StetComment(new vscode.MarkdownString(proposalMarkdown(item)), { name: item.agent })]
       : [];
     return proposal.concat(item.thread.map(

@@ -2,7 +2,7 @@
  * View model for the Stet panel and editor integration. No `vscode` import here,
  * so it can be unit-tested with vitest.
  */
-import { oneLine, type Agent, type Changeset, type Group, type Item, type ItemStatus } from "@stet/core";
+import { inlineDiff, oneLine, type Agent, type Changeset, type Group, type InlineDiff, type Item, type ItemStatus } from "@stet/core";
 
 export interface Snapshot {
   agents: Agent[];
@@ -188,6 +188,26 @@ export function groupDescription(g: Group, shown: number): string {
 export function ghostText(s: string, max = 80): string {
   const t = s.replace(/\r?\n/g, " ⏎ ");
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
+/** What changes inside an item (removed spans, inserted text), cached: computed on every redraw. */
+const diffs = new Map<string, InlineDiff>();
+export function itemDiff(item: Pick<Item, "oldText" | "newText">): InlineDiff {
+  const key = item.oldText + "\0" + item.newText;
+  let d = diffs.get(key);
+  if (!d) {
+    if (diffs.size > 500) diffs.clear();
+    diffs.set(key, (d = inlineDiff(item.oldText, item.newText)));
+  }
+  return d;
+}
+
+/** Line/character of `offset` in `text`, when `text` starts at line/character `start`. */
+export function positionIn(start: { line: number; character: number }, text: string, offset: number): { line: number; character: number } {
+  const before = text.slice(0, offset);
+  const nl = before.lastIndexOf("\n");
+  if (nl < 0) return { line: start.line, character: start.character + offset };
+  return { line: start.line + (before.match(/\n/g)?.length ?? 0), character: offset - nl - 1 };
 }
 
 /** Whether ghost text can show `s` in full: one line, not longer than ghostText's limit. */
