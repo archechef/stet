@@ -51,8 +51,8 @@ claude-1                      3 pending
 - ▣ **Related** groups share a theme and can be accepted or rejected in one go.
 
 **In the editor**, each proposed change appears in place:
-- only what actually changes is marked, even inside a long formula: the differing symbols are struck through, the new ones appear in grey right where they go;
-- the old text is struck through and the new text follows in grey, wrapping with the line when word wrap is on;
+- only what actually changes is marked, even inside a long formula: the differing symbols are struck through, the new ones appear right where they go;
+- removed text is struck through in red, new text follows in green. With word wrap on, new text wraps with the line; the colour button in the panel keeps it green there too;
 - new text with several lines, or too long for the line, is shown in full in a panel directly below the change;
 - actions sit above each change: **✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**;
 - hovering shows the agent's rationale, the diff and the conversation.
@@ -104,6 +104,7 @@ When a task is done, right-click the agent → **Archive agent**. Its pending pr
 |---|---|---|
 | `stet.shareEdits` | `manual` | Which of your own edits agents see: `manual` (when you click *Share my edits*), `saved` (every save), `committed` (only commits). |
 | `stet.longChanges` | `expanded` | How long proposals are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only on hover (`hover`). |
+| `stet.newTextStyle` | `auto` | How new text is drawn: `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line), or `auto` (by the word wrap setting). |
 | `stet.inlineChanges` | `true` | Strike-through and grey new text in the editor (shown as inlay hints: keep `editor.inlayHints.enabled` on). |
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.autoAdvance` | `true` | After a decision on a change, move on to the next pending change. |

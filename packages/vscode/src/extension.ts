@@ -27,6 +27,16 @@ type El = { project: Project; node?: Node };
 /** Put a folder path on the clipboard, in the form the platform's apps expect (backslashes on Windows). */
 const copyPath = (p: string) => vscode.env.clipboard.writeText(process.platform === "win32" ? p.replace(/\//g, "\\") : p);
 
+/**
+ * Green for Stet's proposed text in word-wrapped editors. Inlay hints can't be coloured per hint,
+ * only per kind in the user's colour customizations; Stet's hints are of kind "parameter".
+ */
+const HIGHLIGHT: Record<string, string> = {
+  "editorInlayHint.parameterForeground": "#2DA44E",
+  "editorInlayHint.parameterBackground": "#2EA04326",
+};
+const HIGHLIGHT_PREVIOUS = "stet.highlightPrevious";
+
 class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposable {
   private projects = new Map<string, Project>();
   private models = new Map<Project, TreeModel>();
@@ -57,13 +67,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       vscode.workspace.onDidChangeWorkspaceFolders(() => void this.discover()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("stet.runtime")) void this.applyRuntime();
+        if (e.affectsConfiguration("workbench.colorCustomizations")) void this.updateHighlightContext();
         if (e.affectsConfiguration("stet.shareEdits")) for (const p of this.projects.values()) void this.applyShareMode(p, true);
       }),
       vscode.window.onDidChangeWindowState((s) => {
         if (s.focused) for (const p of this.projects.values()) p.scheduleRefresh(0);
       }),
       vscode.workspace.onDidCloseTextDocument((d) => this.locator.forget(d)),
-      vscode.workspace.onDidSaveTextDocument((d) => this.projectFor(d.uri)?.scheduleShareCheck()),
+      vscode.workspace.onDidSaveTextDocument((d) => this.projectFor(d.uri)?.scheduleChecks()),
     );
   }
 
@@ -864,7 +875,42 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         5000,
       );
       await p.refresh();
+      p.scheduleChecks(0);
     });
+  }
+
+  private colorCustomizations(): Record<string, unknown> {
+    return { ...(vscode.workspace.getConfiguration("workbench").inspect<Record<string, unknown>>("colorCustomizations")?.globalValue ?? {}) };
+  }
+
+  async updateHighlightContext(): Promise<void> {
+    const cc = this.colorCustomizations();
+    await vscode.commands.executeCommand("setContext", "stet.highlighted", Object.entries(HIGHLIGHT).every(([k, v]) => cc[k] === v));
+  }
+
+  /** Panel button: green proposed text in word-wrapped editors, or back to the theme's colours. */
+  async setHighlight(on: boolean): Promise<void> {
+    const cc = this.colorCustomizations();
+    if (on) {
+      // Keep the user's own values for these keys, to restore them when switched off.
+      const previous = Object.fromEntries(Object.keys(HIGHLIGHT).filter((k) => k in cc && cc[k] !== HIGHLIGHT[k]).map((k) => [k, cc[k]]));
+      await this.ctx.globalState.update(HIGHLIGHT_PREVIOUS, previous);
+      Object.assign(cc, HIGHLIGHT);
+    } else {
+      for (const k of Object.keys(HIGHLIGHT)) delete cc[k];
+      Object.assign(cc, this.ctx.globalState.get<Record<string, unknown>>(HIGHLIGHT_PREVIOUS) ?? {});
+      await this.ctx.globalState.update(HIGHLIGHT_PREVIOUS, undefined);
+    }
+    await vscode.workspace
+      .getConfiguration("workbench")
+      .update("colorCustomizations", Object.keys(cc).length ? cc : undefined, vscode.ConfigurationTarget.Global);
+    await this.updateHighlightContext();
+    if (on) {
+      void vscode.window.showInformationMessage(
+        "Stet: proposed text is now green in word-wrapped editors too (without word wrap it always is). " +
+          "This colours parameter-name hints in your user settings; other extensions' parameter hints turn green as well. Click the button again to undo.",
+      );
+    }
   }
 
   async doctor(): Promise<void> {
@@ -949,6 +995,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.doctor", () => ext.doctor());
   reg("stet.finishReview", () => ext.finishReview());
   reg("stet.shareEdits", () => ext.shareEdits());
+  reg("stet.highlightOn", () => ext.setHighlight(true));
+  reg("stet.highlightOff", () => ext.setHighlight(false));
   reg("stet.showResolved", () => ext.setShowResolved(true));
   reg("stet.hideResolved", () => ext.setShowResolved(false));
   reg("stet.accept", (a) => ext.accept(a));
@@ -964,6 +1012,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.next", () => ext.step(1));
   reg("stet.previous", () => ext.step(-1));
   reg("stet.replyThread", (r: vscode.CommentReply) => ext.replyThread(r, threads));
+  await ext.updateHighlightContext();
   await ext.discover();
 }
 

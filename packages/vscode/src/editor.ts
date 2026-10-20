@@ -62,7 +62,19 @@ export class Locator {
  * line, so a longer single-line proposal fits; without it, long text would run off the screen.
  */
 export function inlineMax(uri: vscode.Uri): number {
-  return vscode.workspace.getConfiguration("editor", uri).get<string>("wordWrap", "off") !== "off" ? 400 : 80;
+  return wraps(uri) && usesHints(uri) ? 400 : 80;
+}
+
+const wraps = (uri: vscode.Uri) => vscode.workspace.getConfiguration("editor", uri).get<string>("wordWrap", "off") !== "off";
+
+/**
+ * How new text is drawn (setting stet.newTextStyle). Decorations can be coloured (green) but are
+ * ignored by word wrap; inlay hints wrap with the line but take the theme's inlay hint colour
+ * (made green by Stet: Highlight proposed text). "auto" picks by the word wrap setting.
+ */
+export function usesHints(uri: vscode.Uri): boolean {
+  const style = vscode.workspace.getConfiguration("stet").get<string>("newTextStyle", "auto");
+  return style === "wrapping" || (style === "auto" && wraps(uri));
 }
 
 /**
@@ -91,9 +103,17 @@ const cmd = (command: string, args: unknown[]) => `command:${command}?${encodeUR
 export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.InlayHintsProvider, vscode.Disposable {
   private readonly removed = vscode.window.createTextEditorDecorationType({
     textDecoration: "line-through",
-    backgroundColor: new vscode.ThemeColor("diffEditor.removedTextBackground"),
+    color: new vscode.ThemeColor("stet.removedText.foreground"),
+    backgroundColor: new vscode.ThemeColor("stet.removedText.background"),
     overviewRulerColor: new vscode.ThemeColor("editorOverviewRuler.modifiedForeground"),
     overviewRulerLane: vscode.OverviewRulerLane.Left,
+  });
+  /** New text as coloured decorations (when word wrap is off; see usesHints). */
+  private readonly inserted = vscode.window.createTextEditorDecorationType({
+    after: {
+      color: new vscode.ThemeColor("stet.insertedText.foreground"),
+      backgroundColor: new vscode.ThemeColor("stet.insertedText.background"),
+    },
   });
   private readonly lensChanged = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this.lensChanged.event;
@@ -135,15 +155,20 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   private async decorate(ed: vscode.TextEditor): Promise<void> {
     const on = vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true);
     const located = on ? await this.locator.locate(ed.document) : [];
+    const all = located.map(({ item, range }) => marks(ed.document, item, range));
+    ed.setDecorations(this.removed, all.flatMap((m) => m.removed.map((r) => ({ range: r }))));
+    const max = inlineMax(ed.document.uri);
     ed.setDecorations(
-      this.removed,
-      located.flatMap(({ item, range }) => marks(ed.document, item, range).removed.map((r) => ({ range: r }))),
+      this.inserted,
+      usesHints(ed.document.uri)
+        ? []
+        : all.flatMap((m) => m.inserted.map((i) => ({ range: new vscode.Range(i.at, i.at), renderOptions: { after: { contentText: ghostText(i.text, max) } } }))),
     );
   }
 
   /** The proposed new text, each part right where it goes (after the struck-through text it replaces). */
   async provideInlayHints(doc: vscode.TextDocument, range: vscode.Range): Promise<vscode.InlayHint[]> {
-    if (!vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true)) return [];
+    if (!vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true) || !usesHints(doc.uri)) return [];
     const max = inlineMax(doc.uri);
     const hints: vscode.InlayHint[] = [];
     for (const { item, range: span } of await this.locator.locate(doc)) {
@@ -151,7 +176,8 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       const tip = new vscode.MarkdownString(`**${item.id}** proposes:\n\n${fence(item.newText, "latex")}`);
       for (const ins of marks(doc, item, span).inserted) {
         if (!range.contains(ins.at)) continue;
-        const hint = new vscode.InlayHint(ins.at, ghostText(ins.text, max));
+        // Kind "parameter": its colour can be set apart from other hints (Stet: Highlight proposed text).
+        const hint = new vscode.InlayHint(ins.at, ghostText(ins.text, max), vscode.InlayHintKind.Parameter);
         hint.tooltip = tip;
         hints.push(hint);
       }
@@ -211,6 +237,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   dispose(): void {
     clearTimeout(this.timer);
     this.removed.dispose();
+    this.inserted.dispose();
     this.lensChanged.dispose();
     this.hintsChanged.dispose();
     for (const d of this.disposables) d.dispose();

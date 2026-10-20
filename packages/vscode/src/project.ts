@@ -11,7 +11,9 @@ export class Project implements vscode.Disposable {
   readonly onDidChange = this.changed.event;
   private watcher: FSWatcher | undefined;
   private timer: NodeJS.Timeout | undefined;
-  private shareTimer: NodeJS.Timeout | undefined;
+  private checkTimer: NodeJS.Timeout | undefined;
+  private checking = false;
+  private checkAgain = false;
   private loading: Promise<void> | undefined;
   private again = false;
 
@@ -86,9 +88,39 @@ export class Project implements vscode.Disposable {
       this.stet.listItems(),
     ]);
     const uncommitted = items.filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
-    // Show the review state right away; whether agents are behind comes second (it may rebuild the review base).
     this.snapshot = { ...this.snapshot, agents, changesets, groups, items, uncommitted };
     this.changed.fire();
+    this.scheduleChecks();
+  }
+
+  /**
+   * Whether agents are behind and whether the user has unshared edits. These rebuild the review
+   * base and snapshot the project (about a second after an accept), and they hold the store lock:
+   * they run in the background, once the user pauses, so a series of decisions isn't slowed down.
+   */
+  scheduleChecks(delay = 800): void {
+    clearTimeout(this.checkTimer);
+    this.checkTimer = setTimeout(() => void this.runChecks(), delay);
+  }
+
+  private async runChecks(): Promise<void> {
+    if (this.checking) {
+      this.checkAgain = true;
+      return;
+    }
+    this.checking = true;
+    try {
+      do {
+        this.checkAgain = false;
+        await this.checkAgents();
+        await this.checkShare();
+      } while (this.checkAgain);
+    } finally {
+      this.checking = false;
+    }
+  }
+
+  private async checkAgents(): Promise<void> {
     const syncNeeded = new Set<string>();
     try {
       for (const s of await this.stet.agentStatuses()) if (s.syncNeeded) syncNeeded.add(s.agent.id);
@@ -100,11 +132,10 @@ export class Project implements vscode.Disposable {
       this.snapshot = { ...this.snapshot, syncNeeded };
       this.changed.fire();
     }
-    await this.checkShare();
   }
 
-  /** Whether agents see the saved files (after a save, or with the rest of a refresh). */
-  async checkShare(): Promise<void> {
+  /** Whether agents see the saved files. */
+  private async checkShare(): Promise<void> {
     let unshared = false;
     try {
       // Only with sharing by button: "saved" shares by itself, "committed" never.
@@ -119,15 +150,9 @@ export class Project implements vscode.Disposable {
     }
   }
 
-  /** After the user saves a file: check sharing a little later (saves come in bursts). */
-  scheduleShareCheck(delay = 500): void {
-    clearTimeout(this.shareTimer);
-    this.shareTimer = setTimeout(() => void this.checkShare(), delay);
-  }
-
   dispose(): void {
     clearTimeout(this.timer);
-    clearTimeout(this.shareTimer);
+    clearTimeout(this.checkTimer);
     this.watcher?.close();
     this.changed.dispose();
   }

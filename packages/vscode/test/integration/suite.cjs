@@ -81,16 +81,19 @@ exports.run = async function run() {
     // Accept exactly as a click on the CodeLens would: with its own (project-scoped) arguments.
     const args = moved.command.arguments;
     check("lens arguments name the project", args.length === 1 && args[0].id === fx.items[0] && typeof args[0].path === "string", JSON.stringify(args));
+    const t0 = Date.now();
     await vscode.commands.executeCommand(moved.command.command, ...args);
+    const acceptMs = Date.now() - t0;
     const disk = readFileSync(uri.fsPath, "utf8");
     check("accept writes the change", disk.includes("the task of reviewing"), disk.slice(0, 120));
     check("accept keeps the user's unsaved edit (saved first)", disk.startsWith("% my note\n"));
-    check("editor shows the accepted text", doc.getText().includes("the task of reviewing") && !doc.isDirty);
+    const shows = await until("the editor to show the accepted text", () => doc.getText().includes("the task of reviewing") && !doc.isDirty, 3000).catch(() => false);
+    check("editor shows the accepted text", shows);
     const nextSel = await until("the next change after accepting", () => {
       const e = vscode.window.activeTextEditor;
       return e && e.document.getText(e.selection) === "practice" ? e : null;
     }, 5000).catch(() => null);
-    check("accept moves on to the next change", nextSel);
+    check(`accept moves on to the next change (${acceptMs} ms)`, nextSel);
     const log = execFileSync("git", ["log", "--format=%s"], { cwd: fx.repo, encoding: "utf8" });
     check("not committed because of the user's own edit", !log.includes("stet: accept"), log);
 
@@ -134,17 +137,25 @@ exports.run = async function run() {
     await vscode.commands.executeCommand("stet.shareEdits");
     check("Share my edits shares them", baseText().startsWith("% my note") && baseText().includes("the task of reviewing"), baseText().slice(0, 60));
 
-    // New text is an inlay hint, so word wrap makes room for it. The 83-character line fits in
-    // 86 columns on its own; with " real use" after "practice" it has to wrap.
+    // Without word wrap, new text is a (green) decoration; with word wrap, an inlay hint, so word
+    // wrap makes room for it. The 83-character line fits in 86 columns on its own; with
+    // " real use" after "practice" it has to wrap.
     const doc2 = await vscode.workspace.openTextDocument(uri);
     const ed3 = await vscode.window.showTextDocument(doc2);
     const lineNo = doc2.getText().split("\n").findIndex((l) => l.startsWith("We show that this approach"));
-    const hints = await vscode.commands.executeCommand("vscode.executeInlayHintProvider", uri, new vscode.Range(0, 0, doc2.lineCount, 0));
-    const labels = (hints || []).map((h) => (typeof h.label === "string" ? h.label : h.label.map((x) => x.value).join("")));
-    check("new text is an inlay hint", labels.includes("real use"), JSON.stringify(labels));
+    const hintLabels = async (u) => {
+      const h = await vscode.commands.executeCommand("vscode.executeInlayHintProvider", u, new vscode.Range(0, 0, 50, 0));
+      return (h || []).map((x) => (typeof x.label === "string" ? x.label : x.label.map((p) => p.value).join("")));
+    };
+    check("without word wrap, new text is not an inlay hint", (await hintLabels(uri)).length === 0, JSON.stringify(await hintLabels(uri)));
     const editorCfg = vscode.workspace.getConfiguration("editor");
     await editorCfg.update("wordWrapColumn", 86, vscode.ConfigurationTarget.Global);
     await editorCfg.update("wordWrap", "wordWrapColumn", vscode.ConfigurationTarget.Global);
+    const labels = await until("inlay hints with word wrap", async () => {
+      const l = await hintLabels(uri);
+      return l.length ? l : null;
+    }, 5000).catch(() => []);
+    check("with word wrap, new text is an inlay hint", labels.includes("real use"), JSON.stringify(labels));
     const wraps = async () => {
       ed3.selection = new vscode.Selection(lineNo, 0, lineNo, 0);
       await vscode.commands.executeCommand("cursorMove", { to: "down", by: "wrappedLine" });
@@ -155,6 +166,19 @@ exports.run = async function run() {
     const wrappedWithout = await until("the line to fit without the hint", async () => !(await wraps()), 5000).then(() => false, () => true);
     check("word wrap makes room for the new text", wrappedWithHint && !wrappedWithout, `with hint: ${wrappedWithHint}, without: ${wrappedWithout}`);
     await vscode.workspace.getConfiguration("stet").update("inlineChanges", true, vscode.ConfigurationTarget.Global);
+
+    // The colour button: green parameter hints in the user's settings, and back (keeping their own value).
+    const workbench = () => vscode.workspace.getConfiguration("workbench").inspect("colorCustomizations").globalValue || {};
+    await vscode.workspace.getConfiguration("workbench").update("colorCustomizations", { "editorInlayHint.parameterForeground": "#123456", "editor.background": "#fafafa" }, vscode.ConfigurationTarget.Global);
+    await vscode.commands.executeCommand("stet.highlightOn");
+    const on = workbench();
+    await vscode.commands.executeCommand("stet.highlightOff");
+    const off = workbench();
+    check(
+      "colour button turns proposed text green and back",
+      on["editorInlayHint.parameterForeground"] === "#2DA44E" && off["editorInlayHint.parameterForeground"] === "#123456" && !("editorInlayHint.parameterBackground" in off) && off["editor.background"] === "#fafafa",
+      JSON.stringify({ on, off }),
+    );
 
     // A changed exponent and sign in a formula: one item, but only those parts are shown as new.
     const mathUri = vscode.Uri.file(join(fx.repo, "math.tex"));

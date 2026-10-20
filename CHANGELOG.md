@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Colours:** removed text is struck through in red, new text is green. With word wrap on (where new text is an inlay hint, so it wraps), a button in the Stet panel makes it green as well. Setting `stet.newTextStyle` to choose explicitly.
+- **Faster reviewing:** moving on to the next change after a decision takes about 0.3 s instead of 2 s. The checks whether agents are behind and whether you have unshared edits now run in the background once you pause.
+
 ## 0.4.2 — 2026-10-19
 
 - **Clearer changes in long formulas:** a change to a formula covers the whole formula (it is reviewed as a unit), but the editor now marks only the symbols that actually differ, instead of striking through the whole formula and repeating it.

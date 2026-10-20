@@ -105,6 +105,7 @@ The panel is a tree: **agent → changeset → group → change.**
 - **Share my edits with agents** (only shown when you have saved edits that agents don't see)
 - **Finish review** (only shown when there is something to commit)
 - **New agent workspace**
+- **Highlight proposed text in green** / **Show proposed text in theme colours** (for word-wrapped editors, see 4.2)
 - **Show/Hide resolved items**
 - **Refresh**
 - `…` menu: **Check setup**, **Set up project**
@@ -113,8 +114,10 @@ The panel is a tree: **agent → changeset → group → change.**
 
 Open a `.tex` file with pending changes:
 
-- **only what actually changes is marked:** a change may span a whole formula (math is always reviewed whole, so it can't end up half-edited), but only the symbols that differ are struck through, and the new ones appear in grey right where they go. Everything unchanged stays plain;
-- the **old text is struck through**, and the **new text follows in grey**, as an inlay hint (so it wraps with the line when word wrap is on; it needs `editor.inlayHints.enabled` on, the default);
+- **only what actually changes is marked:** a change may span a whole formula (math is always reviewed whole, so it can't end up half-edited), but only the symbols that differ are marked, and the new ones appear right where they go. Everything unchanged stays plain;
+- the **old text is struck through in red**, and the **new text follows in green**;
+- **with word wrap on**, the new text is drawn so that it wraps with the line (as an inlay hint). VS Code draws those in your theme's inlay-hint colour, usually grey. The **colour button** in the Stet panel title (*Highlight proposed text in green*) makes them green: it sets the colour of parameter-name hints in your user settings, so other extensions' parameter hints turn green too (LaTeX files rarely have any). Click it again to undo; a value you had set before is restored. Inlay hints must be enabled (`editor.inlayHints.enabled`, on by default);
+- the setting `stet.newTextStyle` chooses explicitly: `highlighted` (always green, doesn't wrap) or `wrapping`. The default `auto` follows the word wrap setting. Toggling word wrap with Alt+Z doesn't change that setting, so if you toggle it that way, choose explicitly;
 - new text that doesn't fit there is shortened, and shown **in full in a panel directly below the change**. That is new text with several lines, or longer than 80 characters (400 with word wrap on). The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` opens these panels by default (`expanded`), keeps them closed until you click the gutter marker (`collapsed`), or leaves the full text to the hover (`hover`);
 - above each change is a row of actions: **S8: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**;
 - **hovering** a change shows the agent, the changeset and its rationale, the groups, the diff, the latest thread messages, and the same actions.
@@ -220,8 +223,11 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 | `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
 | `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. |
 | `stet.longChanges` | `expanded` | How changes too long for one line of grey text are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only in the hover (`hover`). |
+| `stet.newTextStyle` | `auto` | How new text is drawn: `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line, in the inlay-hint colour), or `auto` (by the word wrap setting). |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |
 | `stet.shareEdits` | `manual` | Which of your own edits agents see: `manual` (when you click *Share my edits*), `saved` (every save), `committed` (only commits). Accepted changes always reach agents. Stored in the project, so the command line follows it too. |
+
+**Colours:** the theme colours `stet.insertedText.foreground`/`.background` and `stet.removedText.foreground`/`.background` can be changed in `workbench.colorCustomizations`.
 
 For LaTeX and BibTeX files, the extension sets `editor.inlayHints.maximumLength` to `0` (no limit), so proposed text isn't cut at VS Code's default of 43 characters. You can override it in your settings.
 

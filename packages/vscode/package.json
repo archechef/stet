@@ -145,6 +145,18 @@
         "icon": "$(cloud-upload)"
       },
       {
+        "command": "stet.highlightOn",
+        "title": "Highlight proposed text in green",
+        "category": "Stet",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "stet.highlightOff",
+        "title": "Show proposed text in theme colours",
+        "category": "Stet",
+        "icon": "$(paintcan)"
+      },
+      {
         "command": "stet.showResolved",
         "title": "Show resolved items",
         "category": "Stet",
@@ -274,6 +286,16 @@
           "command": "stet.setup",
           "when": "view == stet.review",
           "group": "more@2"
+        },
+        {
+          "command": "stet.highlightOn",
+          "when": "view == stet.review && stet.active && !stet.highlighted",
+          "group": "navigation@3"
+        },
+        {
+          "command": "stet.highlightOff",
+          "when": "view == stet.review && stet.highlighted",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -404,6 +426,14 @@
         {
           "command": "stet.shareEdits",
           "when": "stet.active"
+        },
+        {
+          "command": "stet.highlightOn",
+          "when": "stet.active && !stet.highlighted"
+        },
+        {
+          "command": "stet.highlightOff",
+          "when": "stet.highlighted"
         }
       ]
     },
@@ -492,6 +522,21 @@
           ],
           "description": "How proposed changes are shown whose new text is too long for one line of grey text."
         },
+        "stet.newTextStyle": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "highlighted",
+            "wrapping"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Highlighted when word wrap is off, wrapping when it is on.",
+            "Proposed text in green. It doesn't take part in word wrap.",
+            "Proposed text wraps with the line, in the colour of inlay hints (the panel's colour button makes them green)."
+          ],
+          "description": "How proposed new text is drawn in the editor. Toggling word wrap with Alt+Z doesn't change the word wrap setting, so choose explicitly if you do that."
+        },
         "stet.runtime": {
           "type": "string",
           "enum": [
@@ -534,7 +579,49 @@
       "[bibtex]": {
         "editor.inlayHints.maximumLength": 0
       }
-    }
+    },
+    "colors": [
+      {
+        "id": "stet.insertedText.foreground",
+        "description": "Proposed new text in the editor (when drawn highlighted).",
+        "defaults": {
+          "dark": "#7EE2A8",
+          "light": "#116329",
+          "highContrast": "#7EE2A8",
+          "highContrastLight": "#116329"
+        }
+      },
+      {
+        "id": "stet.insertedText.background",
+        "description": "Background of proposed new text (when drawn highlighted).",
+        "defaults": {
+          "dark": "#2EA04333",
+          "light": "#2EA04326",
+          "highContrast": null,
+          "highContrastLight": null
+        }
+      },
+      {
+        "id": "stet.removedText.foreground",
+        "description": "Text a proposal removes (struck through).",
+        "defaults": {
+          "dark": "#FF9492",
+          "light": "#B3261E",
+          "highContrast": "#FF9492",
+          "highContrastLight": "#B3261E"
+        }
+      },
+      {
+        "id": "stet.removedText.background",
+        "description": "Background of text a proposal removes.",
+        "defaults": {
+          "dark": "diffEditor.removedTextBackground",
+          "light": "diffEditor.removedTextBackground",
+          "highContrast": null,
+          "highContrastLight": null
+        }
+      }
+    ]
   },
   "preview": true
 }
