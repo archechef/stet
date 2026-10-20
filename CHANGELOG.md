@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.3 — 2026-10-20
 
 - **Colours:** removed text is struck through in red, new text is green. With word wrap on (where new text is an inlay hint, so it wraps), a button in the Stet panel makes it green as well. Setting `stet.newTextStyle` to choose explicitly.
 - **Faster reviewing:** moving on to the next change after a decision takes about 0.3 s instead of 2 s. The checks whether agents are behind and whether you have unshared edits now run in the background once you pause.
