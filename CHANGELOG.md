@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: accepted changes applied twice.** An accepted change whose new text contains its old text (`pk` → `\pk`, `H` → `\Hash`) was applied a second time when Stet built the agents' view of your text: after *Share my edits*, or after you committed accepted changes with git yourself. Agents then saw `\\pk` and `\\Hashash`, text that isn't in your document, and proposed "fixes" for it. Workspaces affected by this are repaired at the agent's next sync; their proposals for the broken text become stale. Accepting a proposal that is already in your text is now refused instead of applied twice.
+
 ## 0.4.3 — 2026-10-20
 
 - **Colours:** removed text is struck through in red, new text is green. With word wrap on (where new text is an inlay hint, so it wraps), a button in the Stet panel makes it green as well. Setting `stet.newTextStyle` to choose explicitly.

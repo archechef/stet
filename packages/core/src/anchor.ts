@@ -4,6 +4,8 @@ import { allIndexesOf, similarity } from "./text.js";
 
 export interface Anchorable {
   oldText: string;
+  /** The text replacing it (for accepted items: the text actually applied). See `insideNewText`. */
+  newText?: string;
   range: { start: number; end: number };
   context: { before: string; after: string };
 }
@@ -80,8 +82,30 @@ function buildMapper(ref: string, target: string): Mapper {
 /**
  * Find where `item` (defined against `ref`) now lives in `target`.
  * `ref` may be omitted when the base text is unavailable; steps 1–2 are then skipped.
+ * Null if the old text isn't there, or only as part of the item's new text (the change is
+ * already in `target`).
  */
 export function anchor(item: Anchorable, target: string, ref?: string): Span | null {
+  const span = findOldText(item, target, ref);
+  return span && item.newText !== undefined && insideNewText(item.oldText, item.newText, target, span) ? null : span;
+}
+
+/**
+ * Whether the old text found at `span` is part of the new text, i.e. the change has already been
+ * made there. When the new text contains the old (pk → \pk, H → \Hash), the old text is still
+ * found after the change; applying it again gave \\pk and \\Hashash (bug report 2026-10-21).
+ */
+export function insideNewText(oldText: string, newText: string, target: string, span: Span): boolean {
+  if (newText.length <= oldText.length) return false;
+  for (let k = newText.indexOf(oldText); k >= 0; k = newText.indexOf(oldText, k + 1)) {
+    const s = span.start - k;
+    if (s >= 0 && target.startsWith(newText, s)) return true;
+    if (k >= newText.length) break; // an empty old text matches at every offset
+  }
+  return false;
+}
+
+function findOldText(item: Anchorable, target: string, ref?: string): Span | null {
   const { oldText, range, context } = item;
   const check = (s: number, e: number) => target.slice(s, e) === oldText;
 

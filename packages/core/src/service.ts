@@ -426,12 +426,13 @@ export class Stet {
       }
       const f = await view.read(it.file);
       const ref = await this.refText(it);
-      if (f && anchor(it, f.text, ref)) {
+      // Still open if the old text is there, and not just as part of the applied text.
+      if (f && anchor({ ...it, newText: applied }, f.text, ref)) {
         stillOpen.push(it);
         continue;
       }
       // Either committed by the user, or overwritten; both mean "no longer ours to carry".
-      const probe = { ...it, oldText: applied, range: { start: it.range.start, end: it.range.start + applied.length } };
+      const probe = { ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } };
       it.resolution!.committed = f && anchor(probe, f.text) ? head : `external:${head}`;
       await this.store.putItem(it);
     }
@@ -448,7 +449,7 @@ export class Stet {
           continue;
         }
         const f = await sview.read(it.file);
-        if (f && anchor(it, f.text, await this.refText(it))) toApply.push(it);
+        if (f && anchor({ ...it, newText: it.resolution!.appliedText }, f.text, await this.refText(it))) toApply.push(it);
       }
     }
     const key = head + ":" + (shared ?? "") + ":" + toApply.map((i) => i.id).join(",");
