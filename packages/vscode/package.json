@@ -71,6 +71,12 @@
           "id": "stet.review",
           "name": "Review",
           "icon": "media/stet.svg"
+        },
+        {
+          "id": "stet.history",
+          "name": "History",
+          "icon": "media/stet.svg",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -155,18 +161,6 @@
         "title": "Show proposed text in theme colours",
         "category": "Stet",
         "icon": "$(paintcan)"
-      },
-      {
-        "command": "stet.showResolved",
-        "title": "Show resolved items",
-        "category": "Stet",
-        "icon": "$(eye)"
-      },
-      {
-        "command": "stet.hideResolved",
-        "title": "Hide resolved items",
-        "category": "Stet",
-        "icon": "$(eye-closed)"
       },
       {
         "command": "stet.accept",
@@ -263,19 +257,9 @@
           "group": "navigation@2"
         },
         {
-          "command": "stet.showResolved",
-          "when": "view == stet.review && stet.active && !stet.showingResolved",
-          "group": "navigation@3"
-        },
-        {
-          "command": "stet.hideResolved",
-          "when": "view == stet.review && stet.showingResolved",
-          "group": "navigation@3"
-        },
-        {
           "command": "stet.refresh",
           "when": "view == stet.review",
-          "group": "navigation@4"
+          "group": "navigation@5"
         },
         {
           "command": "stet.doctor",
@@ -393,6 +377,26 @@
           "command": "stet.archiveAgent",
           "when": "view == stet.review && viewItem == agent",
           "group": "2_manage@1"
+        },
+        {
+          "command": "stet.showDiff",
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "inline"
+        },
+        {
+          "command": "stet.showDiff",
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "1_view@1"
+        },
+        {
+          "command": "stet.showItem",
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "1_view@2"
+        },
+        {
+          "command": "stet.comment",
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "2_talk@1"
         }
       ],
       "comments/commentThread/context": [
@@ -406,14 +410,6 @@
         {
           "command": "stet.replyThread",
           "when": "false"
-        },
-        {
-          "command": "stet.showResolved",
-          "when": "stet.active && !stet.showingResolved"
-        },
-        {
-          "command": "stet.hideResolved",
-          "when": "stet.showingResolved"
         },
         {
           "command": "stet.ungroup",

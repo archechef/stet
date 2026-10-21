@@ -2,7 +2,7 @@
 
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, foldPath, pathExists, Repo, Stet, type Agent, type AgentKind, type Group, type Item, type ShareMode } from "@stet/core";
+import { doctor, foldPath, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type ShareMode } from "@stet/core";
 import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -13,10 +13,12 @@ import {
   isRef,
   itemLabel,
   oneLine,
+  roundLabel,
   STATUS_TEXT,
   suggestAgentId,
   toLf,
   TreeModel,
+  type TreeMode,
   type Node,
 } from "./model.js";
 import { Project } from "./project.js";
@@ -39,14 +41,16 @@ const HIGHLIGHT_PREVIOUS = "stet.highlightPrevious";
 
 class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposable {
   private projects = new Map<string, Project>();
-  private models = new Map<Project, TreeModel>();
-  private showResolved = false;
+  private models = new Map<string, TreeModel>();
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
   private readonly treeChanged = new vscode.EventEmitter<El | undefined>();
   readonly onDidChangeTreeData = this.treeChanged.event;
   private lines = new Map<string, number>();
   private readonly tree: vscode.TreeView<El>;
+  /** Decided changes, by round (the Review panel shows only open ones). */
+  private readonly history: vscode.TreeView<El>;
+  private readonly historyChanged = new vscode.EventEmitter<El | undefined>();
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   private readonly output = vscode.window.createOutputChannel("Stet");
   readonly locator: Locator;
@@ -55,9 +59,20 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   constructor(private ctx: vscode.ExtensionContext) {
     this.locator = new Locator(this);
     this.tree = vscode.window.createTreeView("stet.review", { treeDataProvider: this, showCollapseAll: true });
+    this.history = vscode.window.createTreeView("stet.history", {
+      showCollapseAll: true,
+      treeDataProvider: {
+        onDidChangeTreeData: this.historyChanged.event,
+        getChildren: (el?: El) => this.childrenOf(el, "history"),
+        getTreeItem: (el: El) => this.treeItemOf(el, "history"),
+        getParent: (el: El) => this.getParent(el),
+      },
+    });
     this.status.command = "stet.review.focus";
     this.disposables.push(
       this.tree,
+      this.history,
+      this.historyChanged,
       this.status,
       this.output,
       this.tree.onDidChangeSelection((e) => {
@@ -153,6 +168,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const unshared = all.filter((p) => p.snapshot.unshared).map((p) => p.name);
     // Redraw first: selecting the next change waits for the tree, not for the context keys.
     this.treeChanged.fire(undefined);
+    this.historyChanged.fire(undefined);
     this.changed.fire();
     this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
     if (all.length) {
@@ -169,7 +185,6 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       ["stet.hasAgents", snaps.some((s) => s.agents.some((a) => a.state === "active"))],
       ["stet.uncommitted", uncommitted > 0],
       ["stet.unshared", unshared.length > 0],
-      ["stet.showingResolved", this.showResolved],
     ];
     await Promise.all(context.map(([k, v]) => vscode.commands.executeCommand("setContext", k, v)));
   }
@@ -178,9 +193,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return [...this.projects.values()].find((p) => p.relPath(uri) !== null);
   }
 
-  model(p: Project): TreeModel {
-    let m = this.models.get(p);
-    if (!m) this.models.set(p, (m = new TreeModel(p.snapshot, this.showResolved)));
+  model(p: Project, mode: TreeMode = "review"): TreeModel {
+    const key = `${mode}|${p.mainPath}`;
+    let m = this.models.get(key);
+    if (!m) this.models.set(key, (m = new TreeModel(p.snapshot, mode)));
     return m;
   }
 
@@ -188,25 +204,28 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return [...this.projects.values()];
   }
 
-  setShowResolved(v: boolean): void {
-    this.showResolved = v;
-    void this.onProjectChanged();
-  }
-
   // -------------------------------------------------------------------------
   // Tree
 
   getChildren(el?: El): El[] {
-    const ps = this.allProjects();
-    if (!el) {
-      if (ps.length === 1) return this.model(ps[0]!).children().map((node) => ({ project: ps[0]!, node }));
-      return ps.map((project) => ({ project }));
-    }
-    return this.model(el.project).children(el.node).map((node) => ({ project: el.project, node }));
+    return this.childrenOf(el, "review");
   }
 
-  async getTreeItem(el: El): Promise<vscode.TreeItem> {
-    const t = await this.buildTreeItem(el);
+  getTreeItem(el: El): Promise<vscode.TreeItem> {
+    return this.treeItemOf(el, "review");
+  }
+
+  private childrenOf(el: El | undefined, mode: TreeMode): El[] {
+    const ps = this.allProjects();
+    if (!el) {
+      if (ps.length === 1) return this.model(ps[0]!, mode).children().map((node) => ({ project: ps[0]!, node }));
+      return ps.map((project) => ({ project }));
+    }
+    return this.model(el.project, mode).children(el.node).map((node) => ({ project: el.project, node }));
+  }
+
+  private async treeItemOf(el: El, mode: TreeMode): Promise<vscode.TreeItem> {
+    const t = await this.buildTreeItem(el, mode);
     t.id = elId(el);
     return t;
   }
@@ -284,7 +303,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     await this.showItem(next, fromPanel);
   }
 
-  private async buildTreeItem(el: El): Promise<vscode.TreeItem> {
+  private async buildTreeItem(el: El, mode: TreeMode): Promise<vscode.TreeItem> {
     const E = vscode.TreeItemCollapsibleState.Expanded;
     if (!el.node) {
       const t = new vscode.TreeItem(el.project.name, E);
@@ -293,13 +312,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       return t;
     }
     const n = el.node;
-    const model = this.model(el.project);
+    const model = this.model(el.project, mode);
+    const history = mode === "history";
     const snap = el.project.snapshot;
     switch (n.type) {
       case "agent": {
         const t = new vscode.TreeItem(n.agent.id, E);
         const pending = model.liveCount((i) => i.agent === n.agent.id);
-        const parts = [`${pending} pending`];
+        const parts = history ? [model.outcome((i) => i.agent === n.agent.id)] : [`${pending} pending`];
         if (snap.syncNeeded.has(n.agent.id)) parts.push("behind your text");
         if (n.agent.state === "archived") parts.push("archived");
         t.description = parts.join(" · ");
@@ -313,11 +333,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }
       case "changeset": {
         const cs = n.changeset;
-        const t = new vscode.TreeItem(cs.title, E);
+        // Old rounds stay closed in History, so it reads as a list of rounds.
+        const t = new vscode.TreeItem(roundLabel(cs), history ? vscode.TreeItemCollapsibleState.Collapsed : E);
         const live = model.liveCount((i) => i.changeset === cs.id);
-        t.description = `${cs.id} · ${live} pending`;
+        t.description = history ? model.outcome((i) => i.changeset === cs.id) : `${live} pending`;
         t.iconPath = new vscode.ThemeIcon("layers");
-        t.tooltip = new vscode.MarkdownString(`**${cs.id}** ${esc(cs.title)}\n\n${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`);
+        t.tooltip = new vscode.MarkdownString(`**Round ${roundOf(cs.id)}** (${cs.id}) ${esc(cs.title)}\n\n${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`);
         t.contextValue = live ? "changeset.live" : "changeset.done";
         return t;
       }
@@ -348,7 +369,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const md = new vscode.MarkdownString(itemMarkdown(it, model));
         t.tooltip = md;
         t.contextValue = isLive(it) ? `item.live.${it.kind}` : `item.done.${it.kind}`;
-        t.command = { command: "stet.showItem", title: "Go to change", arguments: [el, true] };
+        // Decided changes open as a diff of the change itself; open ones are shown in the file.
+        t.command = history
+          ? { command: "stet.showDiff", title: "Show diff", arguments: [el] }
+          : { command: "stet.showItem", title: "Go to change", arguments: [el, true] };
         return t;
       }
     }
@@ -664,6 +688,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const after = q.get("side") === "after";
     if (item.kind === "binary") return `(binary file ${item.file})`;
     if (item.kind !== "modify") return after ? item.newText : item.oldText;
+    if (!isLive(item)) {
+      const { before, after: rest } = item.context;
+      return before + (after ? (item.resolution?.appliedText ?? item.newText) : item.oldText) + rest;
+    }
     const uri2 = p.fileUri(item.file);
     const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri2.toString()) ?? (await vscode.workspace.openTextDocument(uri2));
     const text = toLf(doc.getText());
@@ -1011,8 +1039,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.shareEdits", () => ext.shareEdits());
   reg("stet.highlightOn", () => ext.setHighlight(true));
   reg("stet.highlightOff", () => ext.setHighlight(false));
-  reg("stet.showResolved", () => ext.setShowResolved(true));
-  reg("stet.hideResolved", () => ext.setShowResolved(false));
   reg("stet.accept", inOrder((a) => ext.accept(a)));
   reg("stet.reject", inOrder((a) => ext.reject(a)));
   reg("stet.edit", inOrder((a) => ext.edit(a)));

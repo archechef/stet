@@ -19,7 +19,10 @@ import {
   type NoteHint,
 } from "./grouping.js";
 import {
+  compareItemIds,
   FEEDBACK_TYPES,
+  itemId,
+  numberInRound,
   isLive,
   type Agent,
   type AgentKind,
@@ -978,7 +981,8 @@ export class Stet {
     // Create items.
     const rejected = new Map(allItems.filter((i) => i.status === "rejected").map((i) => [i.fingerprint, i]));
     const [csId] = await this.store.allocate("changeset");
-    const ids = await this.store.allocate("item", fresh.length);
+    // Changes are numbered within their round (submission): 12.1, 12.2, …
+    const ids = fresh.map((_, k) => itemId(csId!, k + 1));
     const baseTextOf = async (c: Candidate) => (await this.textAt(base, c.oldFile ?? c.file))?.text ?? "";
     const created: Item[] = [];
     const candOf = new Map<Item, Candidate>();
@@ -1281,7 +1285,7 @@ export class Stet {
       if (onBranch !== cfg.mainBranch)
         throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back first.`);
       await this.ensureBase(); // marks items the user already committed
-      const items = (await this.uncommittedAccepted()).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+      const items = (await this.uncommittedAccepted()).sort((a, b) => compareItemIds(a.id, b.id));
       if (!items.length) return { commit: null, items };
       const paths = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
       const commit = await this.commitAccepted(items, paths, opts.subject);
@@ -1410,7 +1414,7 @@ export class Stet {
       await this.updateGroups([...items, ...stale]);
       // The review base is rebuilt lazily, when an agent next needs it (status, sync, submit):
       // rebuilding it here made every accept several git calls slower.
-      const accepted = res.applied.map((a) => a.item).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+      const accepted = res.applied.map((a) => a.item).sort((a, b) => compareItemIds(a.id, b.id));
       return { accepted, stale, committed, warnings };
     });
   }
@@ -1598,7 +1602,9 @@ export class Stet {
       pos = it.range.end;
     }
     newText += bt.slice(pos, end);
-    const [id] = await this.store.allocate("item");
+    // The merged change joins its round under the next free number.
+    const taken = (await this.store.items()).filter((i) => i.changeset === first.changeset).map((i) => numberInRound(i.id) ?? 0);
+    const id = itemId(first.changeset, Math.max(0, ...taken) + 1);
     const merged: Item = {
       ...first,
       id: id!,

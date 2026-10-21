@@ -695,6 +695,12 @@ A review pass for security, efficiency and duplication before publishing the ext
 - **Ordering:** decision commands (`accept`, `reject`, `edit`, `revise`, group variants, `next`/`previous`) run one after another. A second `a` before the panel moved on acted on the stale selection: one change stayed pending (integration check *two quick accepts accept two changes*, fails without the queue).
 - **Review of the code since the pre-release review:** shared-edit snapshots run git in the user's project with the user's own config (filters from the user's `.gitattributes`); fsmonitor is off for all of Stet's git calls, and agents can't change the project's config or attributes under a sandbox (on native Windows the guard is best effort, as before). Markdown from agents stays fenced and untrusted in panels and tooltips; the colour button only writes its two keys and restores the user's previous values. `npm audit`: runtime dependencies clean; a high-severity advisory in `vite` (dev only, via the test runner) fixed by updating the lockfile.
 
+### Rounds and history (2026-10-21)
+- **Ids:** with hundreds of changes the global numbering (S412) got long and the panel crowded. A round is one submission (changeset `C12` → round 12); new items are `<round>.<n>` (`12.3`), numbered at submit; a merged (atomic) item gets the next free number of its round. Old `S` ids stay valid; `compareItemIds` sorts both (old first). Ids stay plain strings for the store, CLI and MCP (`SAFE_ID` already allows dots; the CLI and MCP tell groups and rounds apart by their `G`/`C` prefix).
+- **Panel:** rounds are labelled "Round 12: title", changes by their number within the round (`shortId`); full ids appear in CodeLens, hovers and messages.
+- **History view** (`stet.history`, collapsed by default): the same tree model in `history` mode shows decided items (not live), rounds collapsed and summarised (`outcome`). Clicking a decided item opens a diff of the change in its original context (`context.before + old/applied + context.after`), since the current file no longer contains the old text. Replaces the *Show/Hide resolved* toggle.
+- Panel title buttons had the same `navigation@3` position (highlight and show/hide resolved) and VS Code ordered them by title, so they swapped when toggled; each button now has its own position.
+
 ## 17. Open points to verify
 
 1. **Claude desktop app:**

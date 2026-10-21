@@ -58,25 +58,25 @@ Names use letters, digits, `.`, `_` and `-`. What happens inside a workspace, an
 
 ## 4. Reviewing
 
-Run these in your project folder. Changes have ids: `S12` (item), `G3` (group), `C4` (changeset).
+Run these in your project folder. Changes have ids like `12.3`: change 3 of round 12, where a round is one submission by an agent (`C12` on the command line). Groups are `G3`. Changes from before this numbering keep their old ids (`S412`).
 
 | Command | What it does |
 |---|---|
-| `stet review [--agent <a>] [--status <s>] [--all]` | Lists changes waiting for review (pending or revision requested), per agent → changeset → group. `--status` takes a comma-separated list (`pending,accepted,…`); `--all` shows everything. |
-| `stet show <S12\|G3\|C4>` | Shows an item with its context, or a group or changeset with its members. |
-| `stet accept <S12\|G3>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group anyway, which marks the group broken. |
-| `stet reject <S12\|G3>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
-| `stet revise <S12> -m <what to change>` | Asks the agent for a new version. |
-| `stet comment <S12> -m <text>` | Sends a message about a change; the agent can reply. |
+| `stet review [--agent <a>] [--status <s>] [--all]` | Lists changes waiting for review (pending or revision requested), per agent → round → group. `--status` takes a comma-separated list (`pending,accepted,…`); `--all` shows everything. |
+| `stet show <12.3\|G3\|C12>` | Shows a change with its context, or a group or round with its members. |
+| `stet accept <12.3\|G3>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group anyway, which marks the group broken. |
+| `stet reject <12.3\|G3>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
+| `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
+| `stet comment <12.3> -m <text>` | Sends a message about a change; the agent can reply. |
 | `stet commit [-m <summary>]` | **Finishes the review:** commits all accepted changes in one commit. The summary line defaults to the changeset titles; the body lists the accepted changes and a `Stet-Applied:` trailer. |
 | `stet share` | Lets agents see your saved edits (they pick them up at their next sync). See *What agents see* below. |
 | `stet share manual\|saved\|committed` | Sets when agents see your edits. |
-| `stet group <S1> <S2>… --kind atomic\|linked\|related -t <title> [-m <rationale>]` | Groups changes yourself. |
+| `stet group <12.1> <12.2>… --kind atomic\|linked\|related -t <title> [-m <rationale>]` | Groups changes yourself. |
 | `stet ungroup <G3>` | Dissolves a group; its changes stay. |
 
 **Linked groups** are all-or-nothing:
 - `stet accept G3` applies all members or none.
-- `stet accept S7` on a member is refused unless you add the rest or `--force`.
+- `stet accept 2.5` on a member is refused unless you add the rest or `--force`.
 
 **What agents see of your own edits:** changes you accept always reach agents. Your own edits reach them depending on `shareEdits`:
 - `manual` (default): when you run `stet share`. Agents then see your saved files as they are at that moment; `stet review` reminds you when you've saved edits since. A new commit replaces an older share.
@@ -91,12 +91,12 @@ Shared are your tracked files, files you staged with `git add`, and new `.tex`/`
 
 ```bash
 stet review
-stet show S3
-stet accept S3 S4
+stet show 2.1
+stet accept 2.1 2.2
 stet accept G1                            # a whole group
-stet reject S5 -m "keep the original formula"
-stet revise S6 -m "shorter, please"
-stet accept S7 --text "our revised wording"
+stet reject 2.3 -m "keep the original formula"
+stet revise 2.4 -m "shorter, please"
+stet accept 2.5 --text "our revised wording"
 stet commit -m "Polish the introduction"
 ```
 
@@ -113,8 +113,8 @@ Agents normally use the Stet tools through MCP (see [agents.md](agents.md)). The
 | `stet sync` | Moves the workspace onto your latest text: accepted changes become part of it, rejected ones disappear, pending ones stay. |
 | `stet feedback [--peek]` | New decisions and comments since the last call; `--peek` leaves them unread. |
 | `stet list [--status <s>]` | The agent's own items. |
-| `stet reply <S12> -m <text>` | Answers a reviewer comment. |
-| `stet withdraw <S12>… [-m <reason>]` | Withdraws the agent's own pending items. |
+| `stet reply <12.3> -m <text>` | Answers a reviewer comment. |
+| `stet withdraw <12.3>… [-m <reason>]` | Withdraws the agent's own pending items. |
 
 **Grouping hints for `submit --groups`:** a JSON list, from a file or `-` for standard input. Locations are `file`, `file:line` or `file:from-to`, in the workspace after the edits:
 

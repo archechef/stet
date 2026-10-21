@@ -139,3 +139,33 @@ export interface StoreState {
   /** The user's saved files as of their last *Share my edits*, on top of main at `head`. */
   shared?: { head: string; tree: string } | null;
 }
+
+// ---------------------------------------------------------------------------
+// Item ids: "<round>.<n>", round = the changeset's number (one agent submission), n = the
+// change within it, e.g. 12.3. Items created before 2026-10-21 have ids like S412.
+
+/** The round (submission) number of a changeset id: C12 → 12. */
+export const roundOf = (changesetId: string): number => Number(changesetId.slice(1));
+
+/** The id of the n-th change of a round. */
+export const itemId = (changesetId: string, n: number): string => `${roundOf(changesetId)}.${n}`;
+
+/** The number of a change within its round (3 for 12.3), or null for old-style ids (S412). */
+export function numberInRound(id: string): number | null {
+  const m = /^\d+\.(\d+)$/.exec(id);
+  return m ? Number(m[1]) : null;
+}
+
+/** Sort key of an item id: old-style ids first (in their order), then by round and number. */
+function idKey(id: string): [number, number] {
+  const m = /^(\d+)\.(\d+)$/.exec(id);
+  if (m) return [Number(m[1]), Number(m[2])];
+  const old = /^S(\d+)$/i.exec(id);
+  return old ? [0, Number(old[1])] : [Number.MAX_SAFE_INTEGER, 0];
+}
+
+export function compareItemIds(a: string, b: string): number {
+  const [ra, na] = idKey(a);
+  const [rb, nb] = idKey(b);
+  return ra - rb || na - nb || a.localeCompare(b);
+}

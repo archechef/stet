@@ -20,6 +20,7 @@ import {
   Stet,
   StetError,
   SHARE_MODES,
+  roundOf,
   type ShareMode,
   type AcceptResult,
   type Agent,
@@ -48,14 +49,14 @@ Project (run in your project folder):
 Review:
   stet review [--agent <a>] [--status <s>] [--all]
                                         list items (default: pending)
-  stet show <S12|G3|C4>                 show an item, group or changeset
-  stet accept <S12|G3>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
-  stet reject <S12|G3>... [-m <reason>] [--all | --revise-rest | --only]
-  stet revise <S12> -m <what to change>
-  stet comment <S12> -m <text>
+  stet show <12.3|G3|C12>               show a change (round 12, change 3), group or round
+  stet accept <12.3|G3>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
+  stet reject <12.3|G3>... [-m <reason>] [--all | --revise-rest | --only]
+  stet revise <12.3> -m <what to change>
+  stet comment <12.3> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
   stet share [manual|saved|committed]   share your saved edits with agents now, or set when agents see them
-  stet group <S1> <S2>... --kind atomic|linked|related -t <title> [-m <rationale>]
+  stet group <12.1> <12.2>... --kind atomic|linked|related -t <title> [-m <rationale>]
   stet ungroup <G3>
 
 Agent side (run inside an agent workspace, or pass --agent <name>):
@@ -64,8 +65,8 @@ Agent side (run inside an agent workspace, or pass --agent <name>):
   stet sync
   stet feedback [--peek]
   stet list [--status <s>]
-  stet reply <S12> -m <text>
-  stet withdraw <S12>... [-m <reason>]
+  stet reply <12.3> -m <text>
+  stet withdraw <12.3>... [-m <reason>]
 
 Internal (called by agents' tools):
   stet mcp                              MCP server over stdio
@@ -405,7 +406,7 @@ async function main() {
       for (const cs of changesets) {
         const csItems = items.filter((i) => i.changeset === cs.id);
         if (!csItems.length) continue;
-        lines.push(`${bold(cs.agent)} › ${bold(cs.id)} ${cs.title}${cs.rationale ? dim(" — " + oneLine(cs.rationale, 60)) : ""}`);
+        lines.push(`${bold(cs.agent)} › ${bold(`Round ${roundOf(cs.id)}`)} (${cs.id}) ${cs.title}${cs.rationale ? dim(" — " + oneLine(cs.rationale, 60)) : ""}`);
         const shown = new Set<string>();
         for (const g of groups.filter((g) => g.items.some((i) => csItems.some((x) => x.id === i)))) {
           const icon = g.kind === "linked" ? "⛓" : g.kind === "related" ? "≡" : "◆";
@@ -453,7 +454,7 @@ async function main() {
     }
 
     case "accept": {
-      if (!args.length) throw new StetError("Usage: stet accept <S12|G3>...");
+      if (!args.length) throw new StetError("Usage: stet accept <12.3|G3>...");
       const commit = opt["no-commit"] ? false : opt.commit ? true : undefined;
       const edited: Record<string, string> = {};
       const text = opt["text-file"] ? await readFile(opt["text-file"], "utf8") : opt.text;
@@ -481,7 +482,7 @@ async function main() {
     }
 
     case "reject": {
-      if (!args.length) throw new StetError("Usage: stet reject <S12|G3>... [-m reason]");
+      if (!args.length) throw new StetError("Usage: stet reject <12.3|G3>... [-m reason]");
       const mode = opt.all ? "all" : opt["revise-rest"] ? "revise-rest" : opt.only ? "only" : undefined;
       let ids: string[] = [];
       for (const a of args) {

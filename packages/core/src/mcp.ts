@@ -101,13 +101,13 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "stet_show",
-    description: "Show one item (S12) with its text, note, groups and discussion thread, or a group (G3) with its members.",
-    inputSchema: obj({ id: str("Item id like S12 or group id like G3.") }, ["id"]),
+    description: "Show one item (12.3: round 12, change 3) with its text, note, groups and discussion thread, or a group (G3) with its members.",
+    inputSchema: obj({ id: str("Item id like 12.3 or group id like G3.") }, ["id"]),
   },
   {
     name: "stet_reply",
     description: "Reply to the reviewer's comment on one of your items.",
-    inputSchema: obj({ itemId: str("Item id, e.g. S12."), text: str("Your reply.") }, ["itemId", "text"]),
+    inputSchema: obj({ itemId: str("Item id, e.g. 12.3."), text: str("Your reply.") }, ["itemId", "text"]),
   },
   {
     name: "stet_withdraw",

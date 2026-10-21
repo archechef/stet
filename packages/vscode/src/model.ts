@@ -2,7 +2,7 @@
  * View model for the Stet panel and editor integration. No `vscode` import here,
  * so it can be unit-tested with vitest.
  */
-import { inlineDiff, oneLine, type Agent, type Changeset, type Group, type InlineDiff, type Item, type ItemStatus } from "@stet/core";
+import { compareItemIds, inlineDiff, numberInRound, oneLine, roundOf, type Agent, type Changeset, type Group, type InlineDiff, type Item, type ItemStatus } from "@stet/core";
 
 export interface Snapshot {
   agents: Agent[];
@@ -25,7 +25,7 @@ export type Node =
 
 /**
  * An item or group id together with its project, as passed by CodeLens and hover links.
- * Ids like S3 or G1 are numbered per project, so an id alone is ambiguous with several projects open.
+ * Ids like 12.3 or G1 are numbered per project, so an id alone is ambiguous with several projects open.
  */
 export interface Ref {
   path: string;
@@ -38,23 +38,31 @@ export const isRef = (v: unknown): v is Ref =>
 export const LIVE: readonly ItemStatus[] = ["pending", "needs_revision"];
 export const isLive = (i: Item) => LIVE.includes(i.status);
 const num = (id: string) => Number(id.slice(1));
-const byId = (a: { id: string }, b: { id: string }) => num(a.id) - num(b.id);
+const byNum = (a: { id: string }, b: { id: string }) => num(a.id) - num(b.id);
+const byId = (a: { id: string }, b: { id: string }) => compareItemIds(a.id, b.id);
 
-/** Tree structure: agent → changeset → group → item, ungrouped items directly under the changeset. */
+/** Which changes a tree shows: the Review panel the open ones, the History view the decided ones. */
+export type TreeMode = "review" | "history";
+
+/**
+ * Tree structure: agent → round (changeset) → group → item, ungrouped items directly under the
+ * round. The same round can appear in both trees: its open changes under Review, its decided
+ * ones under History.
+ */
 export class TreeModel {
   private items = new Map<string, Item>();
   private groups = new Map<string, Group>();
 
   constructor(
     readonly snap: Snapshot,
-    readonly showResolved: boolean,
+    readonly mode: TreeMode = "review",
   ) {
     for (const i of snap.items) this.items.set(i.id, i);
     for (const g of snap.groups) this.groups.set(g.id, g);
   }
 
   visible(i: Item): boolean {
-    return this.showResolved ? true : isLive(i);
+    return this.mode === "history" ? !isLive(i) : isLive(i);
   }
 
   /** Visible members of a group (atomic groups never show: their members are merged). */
@@ -64,7 +72,7 @@ export class TreeModel {
   }
 
   private groupsOf(cs: Changeset): Group[] {
-    return this.snap.groups.filter((g) => g.changeset === cs.id && this.members(g).length > 0).sort(byId);
+    return this.snap.groups.filter((g) => g.changeset === cs.id && this.members(g).length > 0).sort(byNum);
   }
 
   private ungrouped(cs: Changeset): Item[] {
@@ -84,7 +92,7 @@ export class TreeModel {
   children(node?: Node): Node[] {
     if (!node) {
       return this.snap.agents
-        .filter((a) => a.state === "active" || this.snap.items.some((i) => i.agent === a.id && this.visible(i)))
+        .filter((a) => (this.mode === "review" && a.state === "active") || this.snap.items.some((i) => i.agent === a.id && this.visible(i)))
         .sort((a, b) => a.id.localeCompare(b.id))
         .map((agent) => ({ type: "agent", agent }));
     }
@@ -108,6 +116,14 @@ export class TreeModel {
 
   liveCount(pred: (i: Item) => boolean): number {
     return this.snap.items.filter((i) => isLive(i) && pred(i)).length;
+  }
+
+  /** How the decided changes matching `pred` were decided, e.g. "5 accepted · 2 rejected". */
+  outcome(pred: (i: Item) => boolean): string {
+    const counts = new Map<ItemStatus, number>();
+    for (const i of this.snap.items) if (!isLive(i) && pred(i)) counts.set(i.status, (counts.get(i.status) ?? 0) + 1);
+    const order: ItemStatus[] = ["accepted", "rejected", "stale", "withdrawn", "superseded"];
+    return order.filter((st) => counts.has(st)).map((st) => `${counts.get(st)} ${STATUS_TEXT[st]}`).join(" · ");
   }
 
   item(id: string): Item | undefined {
@@ -145,22 +161,29 @@ export class TreeModel {
 
 export { oneLine };
 
+/** How a change is numbered in the panel: 3 for 12.3 (its round shows 12), the full id for old ones. */
+export const shortId = (id: string): string => String(numberInRound(id) ?? id);
+
 export function itemLabel(it: Item): string {
+  const n = shortId(it.id);
   switch (it.kind) {
     case "add-file":
-      return `${it.id}  new file ${it.file}`;
+      return `${n}  new file ${it.file}`;
     case "delete-file":
-      return `${it.id}  delete ${it.file}`;
+      return `${n}  delete ${it.file}`;
     case "rename-file":
-      return `${it.id}  rename ${it.oldFile} → ${it.file}`;
+      return `${n}  rename ${it.oldFile} → ${it.file}`;
     case "binary":
-      return `${it.id}  binary ${it.file}`;
+      return `${n}  binary ${it.file}`;
     default:
-      if (!it.oldText) return `${it.id}  + “${oneLine(it.newText, 50)}”`;
-      if (!it.newText) return `${it.id}  − “${oneLine(it.oldText, 50)}”`;
-      return `${it.id}  “${oneLine(it.oldText, 28)}” → “${oneLine(it.newText, 28)}”`;
+      if (!it.oldText) return `${n}  + “${oneLine(it.newText, 50)}”`;
+      if (!it.newText) return `${n}  − “${oneLine(it.oldText, 50)}”`;
+      return `${n}  “${oneLine(it.oldText, 28)}” → “${oneLine(it.newText, 28)}”`;
   }
 }
+
+/** Label of a round (changeset): its number and the agent's title. */
+export const roundLabel = (cs: Changeset): string => `Round ${roundOf(cs.id)}: ${cs.title}`;
 
 export const STATUS_TEXT: Record<ItemStatus, string> = {
   pending: "pending",

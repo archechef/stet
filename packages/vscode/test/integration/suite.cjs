@@ -194,6 +194,16 @@ exports.run = async function run() {
       JSON.stringify(mathLabels),
     );
 
+    // History: the view exists and opens; decided changes show as a diff of the change itself.
+    let historyOk = true;
+    await Promise.resolve(vscode.commands.executeCommand("stet.history.focus")).catch(() => (historyOk = false));
+    check("history view opens", historyOk);
+    const decided = fx.items[0];
+    const diffAfter = await vscode.workspace.openTextDocument(
+      vscode.Uri.from({ scheme: "stet-diff", path: "/main.tex", query: `p=${encodeURIComponent(fx.repo)}&id=${decided}&side=after` }),
+    );
+    check("diff of a decided change shows the accepted text in context", diffAfter.getText().includes("the task of reviewing"), diffAfter.getText().slice(0, 100));
+
     // Pressing `a` twice in quick succession accepts two changes: the second waits until the
     // panel has moved on from the first.
     await vscode.commands.executeCommand("stet.review.focus");

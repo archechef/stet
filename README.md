@@ -9,12 +9,12 @@
 - Nothing touches your files until you accept it.
 
 ```
-claude-1                      3 pending
-└─ Polish the introduction    C2 · 3 pending
+claude-1                                       3 pending
+└─ Round 2: Polish the introduction            3 pending
    ├─ 🔗 Rename sec:intro → sec:introduction    linked · 2
-   │  ├─ S7  “\label{sec:intro}” → “\label{sec:introduction}”   main.tex:3
-   │  └─ S9  “\ref{sec:intro}” → “\ref{sec:introduction}”       main.tex:12
-   └─ S8  “problem” → “task”                                     main.tex:4
+   │  ├─ 1  “\label{sec:intro}” → “\label{sec:introduction}”   main.tex:3
+   │  └─ 3  “\ref{sec:intro}” → “\ref{sec:introduction}”       main.tex:12
+   └─ 2  “problem” → “task”                                     main.tex:4
 ```
 
 ## Features
@@ -72,8 +72,8 @@ In your LaTeX project (a git repository with at least one commit):
 stet init                             # set up Stet (and git hooks)
 stet agent new claude-1               # prints the agent's workspace folder: open it in your agent
 stet review                           # what the agent proposed
-stet accept S3 S4                     # or a whole group: stet accept G1
-stet reject S5 -m "keep the original formula"
+stet accept 2.1 2.2                   # round 2, changes 1 and 2; or a whole group: stet accept G1
+stet reject 2.3 -m "keep the original formula"
 stet commit -m "Polish the introduction"
 ```
 

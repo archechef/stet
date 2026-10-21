@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
-import { diffBlock, fitsInline, ghostText, itemLabel, proposalMarkdown, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
+import { diffBlock, fitsInline, ghostText, itemLabel, proposalMarkdown, roundLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
 import { isManaged, managedCliPath } from "../src/runtime.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
@@ -41,7 +41,7 @@ const ids = (nodes: Node[]) =>
 
 describe("tree model", () => {
   it("shows live items as agent → changeset → group → item", () => {
-    const m = new TreeModel(snap(), false);
+    const m = new TreeModel(snap(), "review");
     const [a] = m.children();
     expect(ids(m.children())).toEqual(["claude-1"]);
     const css = m.children(a);
@@ -51,18 +51,38 @@ describe("tree model", () => {
     expect(ids(m.children(g))).toEqual(["S1", "S2", "S5"]);
   });
 
-  it("shows resolved items when asked, and archived agents that still have them", () => {
-    const m = new TreeModel(snap(), true);
+  it("history shows only decided changes, newest round first", () => {
+    const m = new TreeModel(snap(), "history");
     expect(ids(m.children())).toEqual(["claude-1"]);
     const [a] = m.children();
     const css = m.children(a);
     expect(ids(css)).toEqual(["C2", "C1"]);
     expect(ids(m.children(css[0]))).toEqual(["S4"]);
-    expect(ids(m.children(css[1]))).toEqual(["G1", "S3"]);
+    expect(ids(m.children(css[1]))).toEqual(["S3"]); // G1's members are all still open
+    expect(m.outcome(() => true)).toBe("1 accepted · 1 rejected");
+  });
+
+  it("history includes archived agents' decisions; review only active agents and open work", () => {
+    const s = snap();
+    s.items.push(item("S6", "C3", { agent: "old", status: "accepted" }));
+    s.changesets.push({ ...cs("C3", ["S6"]), agent: "old" });
+    expect(ids(new TreeModel(s, "history").children())).toEqual(["claude-1", "old"]);
+    expect(ids(new TreeModel(s, "review").children())).toEqual(["claude-1"]);
+  });
+
+  it("numbers changes within their round, after old-style ids", () => {
+    const s = snap();
+    s.changesets.push(cs("C12", ["12.1", "12.2", "12.10"]));
+    s.items.push(item("12.10", "C12"), item("12.2", "C12"), item("12.1", "C12"));
+    const m = new TreeModel(s, "review");
+    const c12 = m.children(m.children()[0]).find((n) => n.type === "changeset" && n.changeset.id === "C12")!;
+    expect(ids(m.children(c12))).toEqual(["12.1", "12.2", "12.10"]);
+    expect(itemLabel(item("12.3", "C12", { oldText: "problem", newText: "task" }))).toBe("3  “problem” → “task”");
+    expect(roundLabel(cs("C12", []))).toBe("Round 12: title C12");
   });
 
   it("finds the rest of a linked group", () => {
-    const m = new TreeModel(snap(), false);
+    const m = new TreeModel(snap(), "review");
     expect(m.linkedRest(["S1"]).map((i) => i.id)).toEqual(["S2", "S5"]);
     expect(m.linkedRest(["S1", "S2", "S5"])).toEqual([]);
     expect(m.linkedGroup(m.item("s2")!)?.id).toBe("G1");
@@ -73,7 +93,7 @@ describe("tree model", () => {
     const s = snap();
     s.groups.push(group("G2", "C1", "atomic", ["S3"]));
     s.items[2] = item("S3", "C1", { groups: ["G2"] });
-    const m = new TreeModel(s, false);
+    const m = new TreeModel(s, "review");
     const c1 = m.children(m.children()[0])[0];
     expect(ids(m.children(c1))).toEqual(["G1", "S3"]);
   });

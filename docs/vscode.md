@@ -77,17 +77,19 @@ More on how agents work with Stet, per tool: [agents.md](agents.md).
 ### 4.1 The Stet panel
 
 ```
-claude-1                      3 pending
-└─ Polish the introduction    C2 · 3 pending
+claude-1                                       3 pending
+└─ Round 2: Polish the introduction            3 pending
    ├─ 🔗 Rename sec:intro → sec:introduction    linked · 2
-   │  ├─ S7  “\label{sec:intro}” → “\label{sec:introduction}”   main.tex:3
-   │  └─ S9  “\ref{sec:intro}” → “\ref{sec:introduction}”       main.tex:12
-   └─ S8  “problem” → “task”                                     main.tex:4
+   │  ├─ 1  “\label{sec:intro}” → “\label{sec:introduction}”   main.tex:3
+   │  └─ 3  “\ref{sec:intro}” → “\ref{sec:introduction}”       main.tex:12
+   └─ 2  “problem” → “task”                                     main.tex:4
 ```
 
-The panel is a tree: **agent → changeset → group → change.**
+The panel is a tree: **agent → round → group → change.** It shows only what is still open; decided changes move to the **History** view (below).
 
-- **Changeset:** one submission by the agent, with its title and rationale. Hover it to read the rationale.
+**Numbering:** each submission of an agent is a **round**, numbered in the order they arrive. Changes are numbered within their round, so change 3 of round 12 is `12.3`. The panel shows the round number on the round and just the number on each change; the full id appears in the editor's actions, hovers and messages, and is what the agent and the command line use. Changes from before this numbering keep their old ids (`S412`).
+
+- **Round:** one submission by the agent, with its title and rationale. Hover it to read the rationale.
 - **Group:**
   - 🔗 **linked:** changes that must be accepted together, such as a label and its references. Accepting only some of them could break the document.
   - ▣ **related:** changes on the same theme, which you can accept or reject in one go.
@@ -106,9 +108,16 @@ The panel is a tree: **agent → changeset → group → change.**
 - **Finish review** (only shown when there is something to commit)
 - **New agent workspace**
 - **Highlight proposed text in green** / **Show proposed text in theme colours** (for word-wrapped editors, see 4.2)
-- **Show/Hide resolved items**
 - **Refresh**
 - `…` menu: **Check setup**, **Set up project**
+
+#### The History view
+
+The **History** view (under Review in the Stet sidebar; click its title to open it) lists the decided changes: accepted, rejected, withdrawn or stale. It has the same structure, agent → round → change, with the newest round first. Each round is closed by default and says how it was decided, e.g. *4 accepted · 1 rejected*.
+
+- Clicking a change shows its diff: the old text against the text that was accepted (your edited version, if you edited it), in its original context.
+- Right-click for **Go to change** and **Comment…** (the agent can still reply).
+- A round that is partly decided appears in both views: its open changes under Review, the decided ones under History.
 
 ### 4.2 In the editor
 
@@ -119,8 +128,8 @@ Open a `.tex` file with pending changes:
 - **with word wrap on**, the new text is drawn so that it wraps with the line (as an inlay hint). VS Code draws those in your theme's inlay-hint colour, usually grey. The **colour button** in the Stet panel title (*Highlight proposed text in green*) makes them green: it sets the colour of parameter-name hints in your user settings, so other extensions' parameter hints turn green too (LaTeX files rarely have any). Click it again to undo; a value you had set before is restored. Inlay hints must be enabled (`editor.inlayHints.enabled`, on by default);
 - the setting `stet.newTextStyle` chooses explicitly: `highlighted` (always green, doesn't wrap) or `wrapping`. The default `auto` follows the word wrap setting. Toggling word wrap with Alt+Z doesn't change that setting, so if you toggle it that way, choose explicitly;
 - new text that doesn't fit there is shortened, and shown **in full in a panel directly below the change**. That is new text with several lines, or longer than 80 characters (400 with word wrap on). The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` opens these panels by default (`expanded`), keeps them closed until you click the gutter marker (`collapsed`), or leaves the full text to the hover (`hover`);
-- above each change is a row of actions: **S8: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**;
-- **hovering** a change shows the agent, the changeset and its rationale, the groups, the diff, the latest thread messages, and the same actions.
+- above each change is a row of actions: **2.2: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**;
+- **hovering** a change shows the agent, the round and its rationale, the groups, the diff, the latest thread messages, and the same actions.
 
 You can keep typing in the file while changes are pending. Stet finds each change again in your current text, including unsaved edits.
 
@@ -134,8 +143,8 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 | **Request revision…** | `v` | Tells the agent what to change. The change stays open until the agent resubmits it. |
 | **Comment…** | `c` | Sends a message about the change; the agent can reply. |
 | **Show diff** | `d` | Opens a side-by-side diff of your current file and the file with this change. File additions, deletions and renames are shown this way too. |
-| **Accept all** | `Shift+A` | Accepts the whole group. On a changeset, it accepts the whole changeset, after asking. |
-| **Reject all…** | `Shift+R` | Rejects the whole group or changeset with one reason. |
+| **Accept all** | `Shift+A` | Accepts the whole group. On a round, it accepts the whole round, after asking. |
+| **Reject all…** | `Shift+R` | Rejects the whole group or round with one reason. |
 | **Dissolve group** | (context menu) | Removes a group, for example a wrong automatic one. The changes themselves stay. |
 | **Next / previous change** | `j` / `k` | Selects the next or previous change and shows it in the editor, keeping the focus in the panel. The arrow keys move through the panel too; press Enter to show the change. |
 
@@ -185,7 +194,7 @@ Comments and revision requests appear as threads on the change, in the editor an
 ## 6. Other agents, other editors
 
 - **Codex in VS Code:** open the agent workspace in a new VS Code window (**Open in new VS Code window**) and use the Codex extension there. Stet itself is only active in your project window. It deliberately ignores agent workspaces, so the agent's window shows no review panel.
-- **Reviewing from the command line:** the review commands work just as well in a terminal (`stet review`, `stet accept S8`, …; see [cli.md](cli.md)). The extension and the command line share the same data and see each other's actions immediately.
+- **Reviewing from the command line:** the review commands work just as well in a terminal (`stet review`, `stet accept 2.2`, …; see [cli.md](cli.md)). The extension and the command line share the same data and see each other's actions immediately.
 
 ---
 

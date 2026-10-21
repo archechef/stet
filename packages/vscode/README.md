@@ -36,15 +36,15 @@ Everything Stet stores lives in `.git/stet/`. It is never committed or pushed, s
 
 ## Reviewing
 
-**The Stet panel** lists the proposals by agent → changeset (one submission, with the agent's rationale) → group → change:
+**The Stet panel** lists the open proposals by agent → round (one submission, with the agent's rationale) → group → change. Changes are numbered within their round: change 3 of round 2 is `2.3`.
 
 ```
-claude-1                      3 pending
-└─ Polish the introduction    C2 · 3 pending
+claude-1                                       3 pending
+└─ Round 2: Polish the introduction            3 pending
    ├─ 🔗 Rename sec:intro → sec:introduction    linked · 2
-   │  ├─ S7  "\label{sec:intro}" → "\label{sec:introduction}"   main.tex:3
-   │  └─ S9  "\ref{sec:intro}" → "\ref{sec:introduction}"       main.tex:12
-   └─ S8  "problem" → "task"                                     main.tex:4
+   │  ├─ 1  "\label{sec:intro}" → "\label{sec:introduction}"   main.tex:3
+   │  └─ 3  "\ref{sec:intro}" → "\ref{sec:introduction}"       main.tex:12
+   └─ 2  "problem" → "task"                                     main.tex:4
 ```
 
 - 🔗 **Linked** groups must be accepted together, such as a label and its references, because accepting only part would break the document.
@@ -67,10 +67,12 @@ You can keep writing while changes are pending: Stet finds each change again in 
 | **Request revision** | `v` | Tell the agent what to change; it resubmits. |
 | **Comment** | `c` | A message about the change; the agent can reply. |
 | **Show diff** | `d` | Side-by-side diff of your file with this change. |
-| **Accept all / Reject all** | `Shift+A` / `Shift+R` | The whole group or changeset. |
+| **Accept all / Reject all** | `Shift+A` / `Shift+R` | The whole group or round. |
 | **Next / previous change** | `j` / `k` | Moves through the proposals and shows each one in the editor. |
 
 After each decision, Stet moves on to the next pending change, so reviewing takes one key per change.
+
+Decided changes move to the **History** view below the panel, by round, newest first. Click a change there to see what was accepted.
 
 **Conversations** appear as comment threads on the change and in the **Comments** view. Type in a thread and click **Send to agent** to answer.
 
