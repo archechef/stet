@@ -1,17 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-10-21
 
+- **Fix: accepted changes applied twice.** An accepted change whose new text contains its old text (`pk` → `\pk`, `H` → `\Hash`) was applied a second time when Stet built the agents' view of your text: after *Share my edits*, or after you committed accepted changes with git yourself. Agents then saw `\\pk` and `\\Hashash`, text that isn't in your document, and proposed "fixes" for it. Workspaces affected by this are repaired at the agent's next sync; their proposals for the broken text become stale. Accepting a proposal that is already in your text is now refused instead of applied twice.
 - **Rounds:** each agent submission is a round, and its changes are numbered within it: `12.3` is change 3 of round 12. The panel shows "Round 12: title" with the changes numbered 1, 2, 3 … underneath. The ids are the same for agents and the command line. Existing changes keep their old ids (`S412`).
 - **History view:** decided changes (accepted, rejected, withdrawn, stale) move from the Review panel to a separate History view, by round, newest first, each round with a summary such as "4 accepted · 1 rejected". Clicking a change shows what was accepted. The *Show/Hide resolved* button is gone.
-- The buttons in the panel title no longer change order when one of them is toggled.
-
-## Unreleased
-
 - **Faster accepting:** accepting a change and moving on to the next takes about 0.15 s (was 0.25–0.9 s). Accept starts fewer git processes, the panel redraws before updating its buttons, and the background checks wait for a 2-second pause, so they don't hold up the next accept.
 - **Quick key presses:** pressing `a` (or `r`, `j`, …) again before the panel has moved on no longer acts on the change just decided; decisions run one after another.
+- The buttons in the panel title no longer change order when one of them is toggled.
 - Development tools: `vite` (used by the test runner) updated for a security advisory. The extension and CLI were not affected.
-- **Fix: accepted changes applied twice.** An accepted change whose new text contains its old text (`pk` → `\pk`, `H` → `\Hash`) was applied a second time when Stet built the agents' view of your text: after *Share my edits*, or after you committed accepted changes with git yourself. Agents then saw `\\pk` and `\\Hashash`, text that isn't in your document, and proposed "fixes" for it. Workspaces affected by this are repaired at the agent's next sync; their proposals for the broken text become stale. Accepting a proposal that is already in your text is now refused instead of applied twice.
 
 ## 0.4.3 — 2026-10-20
 
