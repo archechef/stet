@@ -150,12 +150,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const pending = snaps.reduce((n, s) => n + s.items.filter(isLive).length, 0);
     const uncommitted = snaps.reduce((n, s) => n + s.uncommitted.length, 0);
     const sync = snaps.flatMap((s) => [...s.syncNeeded]);
-    await vscode.commands.executeCommand("setContext", "stet.active", all.length > 0);
-    await vscode.commands.executeCommand("setContext", "stet.hasAgents", snaps.some((s) => s.agents.some((a) => a.state === "active")));
-    await vscode.commands.executeCommand("setContext", "stet.uncommitted", uncommitted > 0);
     const unshared = all.filter((p) => p.snapshot.unshared).map((p) => p.name);
-    await vscode.commands.executeCommand("setContext", "stet.unshared", unshared.length > 0);
-    await vscode.commands.executeCommand("setContext", "stet.showingResolved", this.showResolved);
+    // Redraw first: selecting the next change waits for the tree, not for the context keys.
+    this.treeChanged.fire(undefined);
+    this.changed.fire();
     this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
     if (all.length) {
       this.status.text = `$(checklist) ${pending}` + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "") + (unshared.length ? " $(cloud-upload)" : "");
@@ -166,8 +164,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       this.status.tooltip = tip.join("\n");
       this.status.show();
     } else this.status.hide();
-    this.treeChanged.fire(undefined);
-    this.changed.fire();
+    const context: [string, boolean][] = [
+      ["stet.active", all.length > 0],
+      ["stet.hasAgents", snaps.some((s) => s.agents.some((a) => a.state === "active"))],
+      ["stet.uncommitted", uncommitted > 0],
+      ["stet.unshared", unshared.length > 0],
+      ["stet.showingResolved", this.showResolved],
+    ];
+    await Promise.all(context.map(([k, v]) => vscode.commands.executeCommand("setContext", k, v)));
   }
 
   projectFor(uri: vscode.Uri): Project | undefined {
@@ -985,6 +989,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const editor = new EditorIntegration(ext, ext.locator);
   const threads = new Threads(ext, ext.locator, () => ext.allProjects());
   const reg = (id: string, fn: (...a: any[]) => unknown) => ctx.subscriptions.push(vscode.commands.registerCommand(id, fn));
+  // Decisions and moves run one after another. Pressing `a` again before the panel has moved on
+  // would otherwise act on the old selection, i.e. the change just accepted.
+  let queue: Promise<unknown> = Promise.resolve();
+  const inOrder =
+    (fn: (...a: any[]) => Promise<unknown>) =>
+    (...a: any[]) =>
+      (queue = queue.then(
+        () => fn(...a),
+        () => fn(...a),
+      ));
   ctx.subscriptions.push(ext, editor, threads, vscode.workspace.registerTextDocumentContentProvider("stet-diff", new DiffContent((u) => ext.diffSide(u))));
   reg("stet.setup", () => ext.setup());
   reg("stet.newAgent", () => ext.newAgent());
@@ -999,18 +1013,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.highlightOff", () => ext.setHighlight(false));
   reg("stet.showResolved", () => ext.setShowResolved(true));
   reg("stet.hideResolved", () => ext.setShowResolved(false));
-  reg("stet.accept", (a) => ext.accept(a));
-  reg("stet.reject", (a) => ext.reject(a));
-  reg("stet.edit", (a) => ext.edit(a));
+  reg("stet.accept", inOrder((a) => ext.accept(a)));
+  reg("stet.reject", inOrder((a) => ext.reject(a)));
+  reg("stet.edit", inOrder((a) => ext.edit(a)));
   reg("stet.comment", (a) => ext.comment(a));
-  reg("stet.revise", (a) => ext.revise(a));
-  reg("stet.acceptGroup", (a) => ext.acceptAll(a));
-  reg("stet.rejectGroup", (a) => ext.rejectAll(a));
+  reg("stet.revise", inOrder((a) => ext.revise(a)));
+  reg("stet.acceptGroup", inOrder((a) => ext.acceptAll(a)));
+  reg("stet.rejectGroup", inOrder((a) => ext.rejectAll(a)));
   reg("stet.ungroup", (a) => ext.ungroup(a));
   reg("stet.showItem", (a, keepFocus) => ext.showItem(a, keepFocus === true));
   reg("stet.showDiff", (a) => ext.showDiff(a));
-  reg("stet.next", () => ext.step(1));
-  reg("stet.previous", () => ext.step(-1));
+  reg("stet.next", inOrder(() => ext.step(1)));
+  reg("stet.previous", inOrder(() => ext.step(-1)));
   reg("stet.replyThread", (r: vscode.CommentReply) => ext.replyThread(r, threads));
   await ext.updateHighlightContext();
   await ext.discover();

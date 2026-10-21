@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Faster accepting:** accepting a change and moving on to the next takes about 0.15 s (was 0.25–0.9 s). Accept starts fewer git processes, the panel redraws before updating its buttons, and the background checks wait for a 2-second pause, so they don't hold up the next accept.
+- **Quick key presses:** pressing `a` (or `r`, `j`, …) again before the panel has moved on no longer acts on the change just decided; decisions run one after another.
+- Development tools: `vite` (used by the test runner) updated for a security advisory. The extension and CLI were not affected.
 - **Fix: accepted changes applied twice.** An accepted change whose new text contains its old text (`pk` → `\pk`, `H` → `\Hash`) was applied a second time when Stet built the agents' view of your text: after *Share my edits*, or after you committed accepted changes with git yourself. Agents then saw `\\pk` and `\\Hashash`, text that isn't in your document, and proposed "fixes" for it. Workspaces affected by this are repaired at the agent's next sync; their proposals for the broken text become stale. Accepting a proposal that is already in your text is now refused instead of applied twice.
 
 ## 0.4.3 — 2026-10-20

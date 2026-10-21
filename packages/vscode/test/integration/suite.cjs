@@ -193,6 +193,24 @@ exports.run = async function run() {
       mathLabels.length >= 1 && mathLabels.length <= 3 && mathLabels.every((l) => l.trim().length <= 4),
       JSON.stringify(mathLabels),
     );
+
+    // Pressing `a` twice in quick succession accepts two changes: the second waits until the
+    // panel has moved on from the first.
+    await vscode.commands.executeCommand("stet.review.focus");
+    for (let n = 0; n < 6; n++) {
+      const e = vscode.window.activeTextEditor;
+      if (e && e.document.getText(e.selection) === "practice") break;
+      await vscode.commands.executeCommand("stet.next");
+      await sleep(200);
+    }
+    const errors = [];
+    await Promise.all([1, 2].map(() => Promise.resolve(vscode.commands.executeCommand("stet.accept")).catch((err) => errors.push(err.message))));
+    const statusOf = (id) => JSON.parse(readFileSync(join(store, "items", `${id}.json`), "utf8")).status;
+    check(
+      "two quick accepts accept two changes",
+      !errors.length && statusOf(fx.items[1]) === "accepted" && statusOf(fx.items[2]) === "accepted",
+      JSON.stringify({ errors, a: statusOf(fx.items[1]), b: statusOf(fx.items[2]) }),
+    );
   } catch (e) {
     check("no exception", false, e && e.stack);
   }

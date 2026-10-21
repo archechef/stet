@@ -193,6 +193,17 @@ export class Stet {
     return head;
   }
 
+  /**
+   * The branch checked out in the project folder, or null if detached. Read from the main
+   * worktree's HEAD file: accept and Finish review check it every time, and starting git for it
+   * cost more than the rest of the check.
+   */
+  private async projectBranch(): Promise<string | null> {
+    const head = await readFile(join(this.commonDir, "HEAD"), "utf8").catch(() => null);
+    if (head === null) return this.repo.tryRun(["symbolic-ref", "--short", "HEAD"]);
+    return /^ref: refs\/heads\/(.+?)\s*$/.exec(head)?.[1] ?? null;
+  }
+
   private fileClass(cfg: StetConfig, path: string): FileClass {
     if (matchesAny(path, cfg.files.tex)) return "tex";
     if (matchesAny(path, cfg.files.bib)) return "bib";
@@ -501,7 +512,7 @@ export class Stet {
    * Null if the project folder has another branch checked out.
    */
   private async workingTree(cfg: StetConfig, head: string): Promise<string | null> {
-    if ((await this.repo.tryRun(["symbolic-ref", "--quiet", "HEAD"])) !== `refs/heads/${cfg.mainBranch}`) return null;
+    if ((await this.projectBranch()) !== cfg.mainBranch) return null;
     if ((await this.repo.revParse("HEAD")) !== head) return null;
     const dir = await mkdtemp(join(tmpdir(), "stet-share-"));
     const env = { GIT_INDEX_FILE: join(dir, "index") };
@@ -1266,7 +1277,7 @@ export class Stet {
   async commitAcceptedItems(opts: { subject?: string } = {}): Promise<{ commit: string | null; items: Item[] }> {
     return this.store.withLock(async () => {
       const cfg = await this.config();
-      const onBranch = await this.repo.tryRun(["symbolic-ref", "--short", "HEAD"]);
+      const onBranch = await this.projectBranch();
       if (onBranch !== cfg.mainBranch)
         throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back first.`);
       await this.ensureBase(); // marks items the user already committed
@@ -1327,7 +1338,7 @@ export class Stet {
       for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
       const bad = items.flatMap((i) => [i.file, ...(i.oldFile !== undefined ? [i.oldFile] : [])]).filter((f) => !isSafeRepoPath(f));
       if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
-      const onBranch = await this.repo.tryRun(["symbolic-ref", "--short", "HEAD"]);
+      const onBranch = await this.projectBranch();
       if (onBranch !== cfg.mainBranch)
         throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before accepting.`);
 
@@ -1345,8 +1356,9 @@ export class Stet {
 
       const view = this.workingView();
       const files = new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]));
+      const wantCommit = opts.commit ?? cfg.autoCommit === "when-clean";
       const dirtyBefore = new Set<string>();
-      for (const f of files) if ((await this.repo.status([f])).length) dirtyBefore.add(f);
+      if (wantCommit) for (const f of files) if ((await this.repo.status([f])).length) dirtyBefore.add(f);
 
       const overrides = new Map(Object.entries(opts.edited ?? {}).map(([k, v]) => [k.toUpperCase(), toLf(v)]));
       const res = await applyItems(items, view, { refText: this.refText, overrides });
@@ -1391,7 +1403,6 @@ export class Stet {
       for (const s of stale) await this.markStale(s, `overlaps accepted ${res.applied.find((a) => a.item.file === s.file)!.item.id}`);
 
       let committed: string | null = null;
-      const wantCommit = opts.commit ?? cfg.autoCommit === "when-clean";
       if (wantCommit) {
         if (dirtyBefore.size) warnings.push(`Not committed: ${[...dirtyBefore].join(", ")} had uncommitted edits of yours.`);
         else committed = await this.commitAccepted(res.applied.map((a) => a.item), [...res.changes.keys()]);

@@ -95,10 +95,11 @@ export class Project implements vscode.Disposable {
 
   /**
    * Whether agents are behind and whether the user has unshared edits. These rebuild the review
-   * base and snapshot the project (about a second after an accept), and they hold the store lock:
-   * they run in the background, once the user pauses, so a series of decisions isn't slowed down.
+   * base and snapshot the project (about a second after an accept on a large paper), holding the
+   * store lock: they run in the background after a 2-second pause, so they don't fall between two
+   * decisions and hold up the next accept.
    */
-  scheduleChecks(delay = 800): void {
+  scheduleChecks(delay = 2000): void {
     clearTimeout(this.checkTimer);
     this.checkTimer = setTimeout(() => void this.runChecks(), delay);
   }
