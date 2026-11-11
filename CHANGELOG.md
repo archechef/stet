@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: comments left behind.** After archiving an agent (or another change to the proposals), comment threads in the editor could remain although their proposals were gone, and a thread could appear twice. The extension now updates its threads one pass at a time. Leftover threads disappear when you reload the window.
+
 ## 0.5.0 — 2026-10-21
 
 - **Fix: accepted changes applied twice.** An accepted change whose new text contains its old text (`pk` → `\pk`, `H` → `\Hash`) was applied a second time when Stet built the agents' view of your text: after *Share my edits*, or after you committed accepted changes with git yourself. Agents then saw `\\pk` and `\\Hashash`, text that isn't in your document, and proposed "fixes" for it. Workspaces affected by this are repaired at the agent's next sync; their proposals for the broken text become stale. Accepting a proposal that is already in your text is now refused instead of applied twice.

@@ -21,6 +21,9 @@ export class Threads implements vscode.Disposable {
   /** item id → thread */
   private threads = new Map<string, { thread: vscode.CommentThread; sig: string; project: Project }>();
   private disposables: vscode.Disposable[] = [];
+  private syncing: Promise<void> | undefined;
+  private syncAgain = false;
+  private reset = false;
 
   constructor(
     private host: Host,
@@ -41,10 +44,9 @@ export class Threads implements vscode.Disposable {
   }
 
   /** Recreate all threads (their initial open/closed state depends on the setting). */
-  private async rebuild(): Promise<void> {
-    for (const t of this.threads.values()) t.thread.dispose();
-    this.threads.clear();
-    await this.sync();
+  private rebuild(): Promise<void> {
+    this.reset = true;
+    return this.sync();
   }
 
   /** How proposals too long for ghost text are shown (setting stet.longChanges). */
@@ -60,8 +62,32 @@ export class Threads implements vscode.Disposable {
     return itemDiff(item).inserted.some((i) => !fitsInline(i.text, max));
   }
 
-  /** Create or update threads for items that have a conversation or a proposal too long for ghost text. */
-  async sync(): Promise<void> {
+  /**
+   * Create or update threads for items that have a conversation or a proposal too long for ghost
+   * text, and drop the others. One pass at a time; calls during a pass coalesce into one more. Two
+   * passes at once would both create a thread for a new item, leaving one untracked, or an older
+   * pass would re-create threads of items a newer one had just dropped (e.g. an archived agent's).
+   */
+  sync(): Promise<void> {
+    if (this.syncing) {
+      this.syncAgain = true;
+      return this.syncing;
+    }
+    this.syncing = (async () => {
+      do {
+        this.syncAgain = false;
+        await this.syncOnce();
+      } while (this.syncAgain);
+    })().finally(() => (this.syncing = undefined));
+    return this.syncing;
+  }
+
+  private async syncOnce(): Promise<void> {
+    if (this.reset) {
+      this.reset = false;
+      for (const t of this.threads.values()) t.thread.dispose();
+      this.threads.clear();
+    }
     const seen = new Set<string>();
     for (const p of this.projects()) {
       const live = p.snapshot.items.filter((i) => i.status === "pending" || i.status === "needs_revision");
