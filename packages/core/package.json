@@ -1,6 +1,6 @@
 {
   "name": "@stet/core",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Stet core: review AI-proposed changes to LaTeX projects",
   "type": "module",
   "main": "dist/index.js",

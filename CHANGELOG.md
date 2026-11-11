@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-11-11
 
 - **Notes for an agent:** select a passage and choose *Stet: Note for agent…* (or click the gutter `+` on a line without a proposed change) to ask one agent for something, e.g. "shorten this paragraph". The agent receives it at its next sync, located in its own copy, and is told when one is waiting. Notes show as threads at their passage and under their agent in the panel; the agent can reply, and you resolve them when done. Command line: `stet note <agent> main.tex:42-47 -m "…"`, `stet notes`, `stet note resolve N3`.
 - **Parts of linked groups:** a long linked group can be split into parts that you accept or reject one at a time (*Part 1: …* in the panel, `G3.2` on the command line). A part is only kept if accepting it alone still compiles (warnings such as a missing reference are fine) and blocks no other part; Stet joins parts that make the same change, need each other's macro definitions, or touch the same text. Agents can declare parts in `stet_submit` and `stet_group`; a detected label rename is split into the label and its references. If some parts are accepted and others rejected, the agent is told so it can make the paper consistent.
