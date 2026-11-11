@@ -2,7 +2,7 @@
 
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, foldPath, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type ShareMode } from "@stet/core";
+import { doctor, foldPath, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type ShareMode } from "@stet/core";
 import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -13,6 +13,7 @@ import {
   isRef,
   itemLabel,
   oneLine,
+  partLabel,
   roundLabel,
   STATUS_TEXT,
   suggestAgentId,
@@ -247,9 +248,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const changeset = snap.changesets.find((c) => c.id === n.group.changeset);
         return changeset && { project: p, node: { type: "changeset", changeset } };
       }
+      case "part":
+        return { project: p, node: { type: "group", group: n.group } };
       case "item": {
-        const group = /^G/.test(n.parent) ? snap.groups.find((g) => g.id === n.parent) : undefined;
-        if (group) return { project: p, node: { type: "group", group } };
+        const pid = parsePartId(n.parent);
+        const owner = snap.groups.find((g) => g.id === (pid ? pid.group : n.parent));
+        if (owner && pid) return { project: p, node: { type: "part", group: owner, index: pid.index } };
+        if (owner) return { project: p, node: { type: "group", group: owner } };
         const changeset = snap.changesets.find((c) => c.id === (n.parent || n.item.changeset));
         return changeset && { project: p, node: { type: "changeset", changeset } };
       }
@@ -354,10 +359,28 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         t.tooltip = new vscode.MarkdownString(
           `**${g.id}** ${g.kind}${g.source === "auto" ? " (detected by Stet)" : ""}: ${esc(g.title)}` +
             (g.rationale ? `\n\n${esc(g.rationale)}` : "") +
-            (g.kind === "linked" ? "\n\nAccept or reject these together: accepting only some can break the document." : "") +
+            (g.kind === "linked"
+              ? g.parts
+                ? `\n\n${g.parts.length} parts: each can be accepted or rejected on its own; the changes within a part go together.`
+                : "\n\nAccept or reject these together: accepting only some can break the document."
+              : "") +
             (g.state === "broken" ? "\n\n⚠ Some members were resolved differently; the agent was asked to repair the document." : ""),
         );
         t.contextValue = members.some(isLive) ? `group.live.${g.kind}` : `group.done.${g.kind}`;
+        return t;
+      }
+      case "part": {
+        const g = n.group;
+        const members = model.partMembers(g, n.index);
+        const t = new vscode.TreeItem(partLabel(g, n.index), E);
+        t.description = history ? model.outcome((i) => members.includes(i)) : `${members.length}`;
+        t.iconPath = new vscode.ThemeIcon("symbol-field");
+        t.tooltip = new vscode.MarkdownString(
+          `**${partId(g.id, n.index)}** part ${n.index + 1} of ${g.parts?.length ?? 1} of ${g.id} “${esc(g.title)}”` +
+            "\n\nAccept or reject this part on its own: the document still compiles without the other parts, " +
+            "which stay acceptable. Its own changes go together.",
+        );
+        t.contextValue = members.some(isLive) ? "part.live" : "part.done";
         return t;
       }
       case "item": {
@@ -413,6 +436,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const p = this.projects.get(foldPath(arg.path));
       if (!p) return undefined;
       const model = this.model(p);
+      const pid = parsePartId(arg.id);
+      const owner = pid ? model.group(pid.group) : undefined;
+      if (owner && pid && owner.parts?.[pid.index]) return { project: p, node: { type: "part", group: owner, index: pid.index } };
       const group = /^G\d+$/i.test(arg.id) ? model.group(arg.id) : undefined;
       if (group) return { project: p, node: { type: "group", group } };
       const item = model.item(arg.id);
@@ -479,11 +505,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     let ids = [item.id];
     let overrideLinked = false;
     if (rest.length) {
-      const all = `Accept all ${rest.length + 1} linked changes`;
+      const unit = this.unitName(p, item);
+      const all = `Accept all ${rest.length + 1} changes of ${unit}`;
       const only = `Accept only ${item.id}`;
       const pick = await vscode.window.showQuickPick(
         [
-          { label: all, detail: `${[item, ...rest].map((i) => i.id).join(", ")} belong together (e.g. a label and its references).` },
+          { label: all, detail: `${[item, ...rest].map((i) => i.id).join(", ")} belong together.` },
           { label: only, detail: "Breaks the linked group; the agent is asked to repair the document." },
         ],
         { title: `${item.id} is linked with ${rest.map((r) => r.id).join(", ")}` },
@@ -493,6 +520,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       else overrideLinked = true;
     }
     await this.decide(p, item.id, !isRef(arg), () => this.doAccept(p, ids, { overrideLinked }));
+  }
+
+  /** What an item must be decided with: "the linked group" or "part 2 “Section 3”". */
+  private unitName(p: Project, item: Item): string {
+    const part = this.model(p).partOf(item);
+    return part ? `part ${part.index + 1} “${part.group.parts![part.index]!.title}”` : "the linked group";
   }
 
   private async doAccept(p: Project, ids: string[], opts: { overrideLinked?: boolean; edited?: Record<string, string> } = {}): Promise<void> {
@@ -526,6 +559,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const g = model.linkedGroup(it) ?? it.groups.map((x) => model.group(x)).find((x): x is Group => !!x && x.kind !== "atomic");
       if (!g) return void vscode.window.showInformationMessage(`${it.id} is not part of a group.`);
       n = { type: "group", group: g };
+    }
+    if (n.type === "part") {
+      const g = n.group;
+      const ids = model.partMembers(g, n.index).filter(isLive).map((i) => i.id);
+      const what = `${partId(g.id, n.index)} “${g.parts?.[n.index]?.title ?? ""}”`;
+      return ids.length ? { project: p, ids, what, changeset: false } : void vscode.window.showInformationMessage(`Nothing pending in ${what}.`);
     }
     if (n.type === "group") {
       const ids = model.members(n.group).filter(isLive).map((i) => i.id);
@@ -563,7 +602,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     let mode: "all" | "revise-rest" | "only" | undefined;
     if (rest.length) {
       const picks = [
-        { label: `Reject all ${rest.length + 1} linked changes`, mode: "all" as const },
+        { label: `Reject all ${rest.length + 1} changes of ${this.unitName(p, item)}`, mode: "all" as const },
         { label: `Reject ${item.id}, ask the agent to revise the rest`, mode: "revise-rest" as const },
         { label: `Reject only ${item.id}`, mode: "only" as const, detail: "Breaks the linked group; the agent is asked to repair the document." },
       ];
@@ -989,6 +1028,8 @@ function elId(el: El): string {
       return `${p}|cs|${n.changeset.id}`;
     case "group":
       return `${p}|group|${n.group.id}`;
+    case "part":
+      return `${p}|part|${partId(n.group.id, n.index)}`;
     case "item":
       return `${p}|${n.parent}|${n.item.id}`;
   }

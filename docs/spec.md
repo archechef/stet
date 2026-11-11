@@ -150,10 +150,14 @@ This is configurable. Stet also adopts worktrees that other tools created, such 
   "rationale": "…",
   "source": "agent",              // agent | commit | auto
   "items": ["S12", "S15", "S16"],
+  "parts": [                      // linked groups only, optional (§6.4.6)
+    { "title": "\\label{sec:intro} → \\label{sec:introduction}", "items": ["S12"] },
+    { "title": "\\ref{sec:intro} → \\ref{sec:introduction} (2×)", "items": ["S15", "S16"] }
+  ],
   "state": "open"                 // open | resolved | broken
 }
 ```
-A group is `resolved` once all its members are in final states, and `broken` when a `linked` group has members in mixed outcomes (§6.4.5).
+A group is `resolved` once all its members are in final states, and `broken` when a `linked` group (or one of its parts) has members in mixed outcomes (§6.4.5, §6.4.6). Part `k` of group `G7` is addressed as `G7.k` (1-based).
 
 ### 5.4 Item
 ```json
@@ -252,7 +256,7 @@ Splitting (§6.2) is purely mechanical. It doesn't know which items belong toget
 | Kind | Meaning | Effect |
 |---|---|---|
 | **atomic** | "These edits are one change." | The members are **merged into a single item** before review, so the reviewer sees one diff. |
-| **linked** | "Accept all of these or none; a partial accept breaks the document." | Members stay separate items but are resolved together (§6.4.5). |
+| **linked** | "Accept all of these or none; a partial accept breaks the document." | Members stay separate items but are resolved together (§6.4.5), or part by part when the group has parts (§6.4.6). |
 | **related** | "Same theme." | Grouped in the UI with a title and rationale, and can be accepted or rejected in one batch. Members stay independent. |
 
 Typical `linked` cases: a `\label` rename plus its references, a new or renamed macro plus its uses, a changed citation key in `.bib` plus its `\cite`s, a symbol renamed consistently across a proof.
@@ -263,9 +267,9 @@ Typical `linked` cases: a `\label` rename plus its references, a new or renamed 
 2. **Agent commits** (`source: "commit"`): if a submission contains more than one agent commit, each commit becomes a `related` group. The title is the commit subject and the rationale is the commit body. An item belongs to the last commit that touched its range. This source is **skipped when the submit has explicit `groups`**, since the agent has then chosen its own structure.
 3. **Automatic detection** (`source: "auto"`), always on:
    - **Repeated substitution:** 3 or more items (`autoRepeatMin`) in the changeset with the same normalized (`oldText`, `newText`) become a `related` group titled `Replace "X" → "Y" (n×)`.
-   - **Label rename:** an item changing `\label{a}` → `\label{b}`, together with the items changing `a` → `b` inside `\ref`, `\eqref`, `\pageref`, `\autoref`, `\cref`, `\Cref`, `\nameref`, becomes a `linked` group.
+   - **Label rename:** an item changing `\label{a}` → `\label{b}`, together with the items changing `a` → `b` inside `\ref`, `\eqref`, `\pageref`, `\autoref`, `\cref`, `\Cref`, `\nameref`, becomes a `linked` group. Each item is proposed as its own part (§6.4.6): a missing label is only a warning. Detection compares how often each key occurs in an item's old and new window, since the window's context is the original text and may contain an unchanged reference nearby.
    - **Macro definition and use:** an item that adds or renames a definition (`\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, `\def`, `\newenvironment`), together with items in the same changeset that introduce uses of it, becomes a `linked` group.
-   - **Citation key:** a changed or added `.bib` key, together with items changing that key inside `\cite`-family commands, becomes a `linked` group.
+   - **Citation key:** a changed or added `.bib` key, together with items changing that key inside `\cite`-family commands, becomes a `linked` group, again with one proposed part per item.
 
    An auto group with exactly the same members and kind as an agent group is dropped as a duplicate. The agent can remove auto groups with `stet_ungroup`, and the user can remove them from the UI.
 
@@ -296,6 +300,29 @@ An item matches when its new-side range overlaps a `where` range. For a pure del
 - **Reject:** rejecting a member offers either "reject all" or "reject this and ask for revision". The second option marks the other pending members `needs_revision`, with an automatic comment naming the rejected member.
 - **Stale:** if a member becomes `stale`, the group becomes `broken`. The remaining members stay `pending`, but *accept all* is disabled until the agent revises or withdraws.
 - **Broken groups** produce a `group_broken` feedback event listing each member and its status, so the agent can repair the document, for example by fixing now-dangling references.
+
+#### 6.4.6 Parts of linked groups
+Agents tend to link long lists of changes (notation changed across a paper, a label and dozens of references). All-or-nothing review of such a list is hard, so a linked group can be split into **parts** that are decided one at a time. Every part must satisfy two conditions:
+
+1. **Accepting it alone keeps the document compiling.** Warnings are fine (an undefined reference or citation prints `??`), errors are not (an undefined macro or environment).
+2. **Accepting it does not keep any other part from being accepted later.**
+
+Changes that can't be shown to meet them are not split. Parts come from:
+- the agent: `parts: [{title, where}]` in a `linked` hint of `stet_submit`, or `parts: [{title, itemIds}]` in `stet_group`. Changes of the group that no part names form one more part, "Other changes";
+- automatic label-rename and citation-key groups: one proposed part per item;
+- merging: when linked groups merge, their parts are kept (a group without parts counts as one part).
+
+Stet then joins proposed parts, and reports each join in the submit result:
+- **Same change:** items with the same old and new text (whitespace-normalized) always end up in one part. Forty copies of `\mathcal{A}` → `\mathsf{A}` are reviewed as one unit.
+- **Definitions and uses:** an item whose changed lines define a command (`\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, `\DeclareRobustCommand`, xparse forms, `\def`, `\let`, `\newif`, `\newlength`, …) or an environment (`\newenvironment`, `\newtheorem`, …) is joined with every item whose changed lines use it.
+- **Whole-file and global changes:** if any item adds, deletes, renames or replaces a whole file, or changes `\usepackage`, `\RequirePackage`, `\documentclass`, `\input`, `\include` or library loads, Stet can't tell what depends on it: the group stays one unit.
+- **Balance:** parts whose braces, environments, `\[ \]`, `\( \)` or `$` only balance together are joined.
+- **Independence:** on the review base the members were made against, Stet applies each part alone and checks every other part: if one of its items overlaps an applied change (accepting would make it stale) or can't be located afterwards, the two parts are joined. Repeated until nothing changes.
+- Parts with nothing pending are decided and stay as they are; only parts with pending items are joined (except when they share an item).
+
+If one part is left, the group has no parts. Parts are settled again when a member is superseded (the replacement takes its place) or merged into an atomic item.
+
+**Review:** each part is accepted or rejected on its own (`G7.2`), and the rules of §6.4.5 apply within it: accepting or rejecting a single item of a part asks for the rest of that part. A part with mixed outcomes makes the group `broken`. Parts decided differently from each other don't: once every part is decided and some were accepted while others were not, the group is `resolved` and the agent gets a `group_partial` event listing each part and its outcome, since the document compiles but may be inconsistent.
 
 ---
 
@@ -443,13 +470,13 @@ Known limitations:
 | Tool | Parameters | Returns |
 |---|---|---|
 | `stet_status` | — | agent id, main branch, `syncNeeded`, counts by status, `unreadFeedback` |
-| `stet_submit` | `title`, `rationale`, `groups?: [{kind, title, rationale?, where: string[]}]`, `notes?: [{where, note}]` | changeset id; items (`id`, `file`, `line`, short old→new preview, `groups`); ungrouped items; hint warnings |
-| `stet_group` | `itemIds`, `kind`, `title`, `rationale?` | the group; for `atomic`, the new merged item |
+| `stet_submit` | `title`, `rationale`, `groups?: [{kind, title, rationale?, where: string[], parts?: [{title, where}]}]`, `notes?: [{where, note}]` | changeset id; items (`id`, `file`, `line`, short old→new preview, `groups`); groups with their parts; ungrouped items; hint warnings, including joined parts |
+| `stet_group` | `itemIds`, `kind`, `title`, `rationale?`, `parts?: [{title, itemIds}]` | the group with its parts and warnings; for `atomic`, the new merged item |
 | `stet_ungroup` | `groupId` | ok. The agent may remove its own groups and `auto` groups in its changesets. |
 | `stet_sync` | — | new base sha, items that became stale |
-| `stet_get_feedback` | `ack?: bool` (default true) | events since the cursor: `accepted` (with the final text if edited), `rejected` (reason), `revision_requested`, `comment`, `stale` (with current context), `repeat_rejected`, `group_broken` (member statuses) |
+| `stet_get_feedback` | `ack?: bool` (default true) | events since the cursor: `accepted` (with the final text if edited), `rejected` (reason), `revision_requested`, `comment`, `stale` (with current context), `repeat_rejected`, `group_broken` (member statuses), `group_partial` (each part and its outcome) |
 | `stet_list` | `status?`, `file?` | items with status |
-| `stet_show` | `id` (item or group) | old/new text, note, groups, thread |
+| `stet_show` | `id` (item or group) | old/new text, note, groups, thread; for a group its parts and members |
 | `stet_reply` | `itemId`, `text` | ok |
 | `stet_withdraw` | `itemIds`, `reason?` | ok |
 
@@ -483,6 +510,10 @@ reaches the real document until a human accepts it.
   - `linked` — REQUIRED whenever accepting only some of the edits would break
     or corrupt the document: label/ref renames, macro definition + uses,
     citation keys, notation changed consistently across places.
+    Split a large linked group into `parts` when every part can be accepted
+    on its own: the document still compiles (warnings are fine) and no other
+    part is blocked. Stet keeps identical changes, a definition and its uses,
+    and changes touching the same text in one part.
   - `atomic` — edits within one sentence/paragraph that only read well together.
   - `related` — optional thematic batches with a title and rationale.
 - Check the submit result: fix wrong or missing groupings with `stet_group` /
@@ -496,6 +527,8 @@ reaches the real document until a human accepts it.
   - accepted with edited text: prefer the human's wording style from now on.
   - group_broken: some linked edits were applied without the others; propose
     whatever is needed to make the document consistent again.
+  - group_partial: some parts of a linked group were accepted, others not;
+    propose what makes the document consistent.
 - Use `stet_withdraw` for proposals you no longer believe in.
 ```
 
@@ -538,7 +571,7 @@ An optional **committed** `stet.json` in the repo root supplies team defaults (f
 ### 12.1 Service API (`@stet/core`), used by every frontend
 - `listItems(filter)`, `getItem(id)`, `listChangesets()`, `listGroups(filter)`, `listAgents()`
 - `accept(ids, {editedText?, overrideLinked?})`, `reject(ids, reason?)`, `requestRevision(id, text)`, `comment(id, text)`, `revertAccepted(id)`, `restore(id)`
-- `acceptGroup(id)` (all-or-nothing for linked groups), `rejectGroup(id, reason?)`, `rejectAndRevise(id, reason)` (§6.4.5), `ungroup(id)`
+- `acceptGroup(id)` (all-or-nothing for linked groups; `G7.2` accepts one part), `groupTarget(id)` (a group or part and its pending items), `rejectGroup(id, reason?)`, `rejectAndRevise(id, reason)` (§6.4.5), `ungroup(id)`
 - `preview(id) → {before: png, after: png, page}` (asynchronous, cached)
 - `subscribe(listener)`: a live event stream, backed by watching `events.jsonl`
 - `commitAccepted()`, `sync remote` (pull / push according to config)
@@ -547,7 +580,7 @@ The web UI will expose this API as REST plus Server-Sent Events on `localhost`, 
 
 ### 12.2 VS Code extension (M3)
 - **Stet panel** (a native VS Code tree view; see the M3 notes in §16 for why it is not a webview):
-  - Tree: agent → changeset → group → item. Ungrouped items sit directly under the changeset, and an item in several related groups appears in each.
+  - Tree: agent → changeset → group → item. Ungrouped items sit directly under the changeset, and an item in several related groups appears in each. A linked group with parts shows "Part n: title" nodes between the group and its items, each with its own *Accept all* / *Reject all*; a part disappears from the Review panel once decided.
   - Linked groups get a chain icon, broken groups a warning icon, and auto-detected groups an "auto" tag that can be dismissed.
   - Filters, plus keyboard review: `j`/`k` to move, `a` accept, `r` reject, `e` edit, `c` comment, `A` / `R` accept or reject the whole group.
 - **In the editor:**
@@ -694,6 +727,13 @@ A review pass for security, efficiency and duplication before publishing the ext
 - **Extension:** accept and move on measured 250–860 ms in the integration test, now 125–165 ms. The panel fires its tree change before setting context keys (in parallel); background checks (agent status ~0.6 s, share status ~0.3 s on the large paper, both under the store lock) wait for a 2-second pause instead of 0.8 s, so they don't fall between two decisions.
 - **Ordering:** decision commands (`accept`, `reject`, `edit`, `revise`, group variants, `next`/`previous`) run one after another. A second `a` before the panel moved on acted on the stale selection: one change stayed pending (integration check *two quick accepts accept two changes*, fails without the queue).
 - **Review of the code since the pre-release review:** shared-edit snapshots run git in the user's project with the user's own config (filters from the user's `.gitattributes`); fsmonitor is off for all of Stet's git calls, and agents can't change the project's config or attributes under a sandbox (on native Windows the guard is best effort, as before). Markdown from agents stays fenced and untrusted in panels and tooltips; the colour button only writes its two keys and restores the user's previous values. `npm audit`: runtime dependencies clean; a high-severity advisory in `vite` (dev only, via the test runner) fixed by updating the lockfile.
+
+### Parts of linked groups (2026-11-11)
+- **Why:** agents link long lists of changes, and linked groups could only be accepted whole or item by item (breaking the group). Parts (§6.4.6) are reviewable on their own, under two conditions from the user: accepting one part alone still compiles (warnings fine), and blocks no other part. Identical changes stay together.
+- **Where:** `parts.ts` (`settleParts`: union-find over proposed parts with the joining rules; `combineParts` for merges), `Stet.settleParts` / `interference` (simulated accepts on the review base), `linkedUnit` in `model.ts` (what an item must be decided with) used by accept/reject and the extension, `group_partial` in `updateGroups`. Auto label/cite groups propose one part per item.
+- **Fix found on the way:** label-rename detection missed references whose window (original-text context) contained another, unchanged reference to the old key nearby; it now compares key counts between the old and new window.
+- **Not covered:** the compile condition is checked by rules, not by compiling. A part relying on something only another part's changed line provides in a way the rules don't see (say, a counter or a `\makeatletter` block) is not detected.
+- Tests: `parts.test.ts` (rules, label rename review with `group_partial`, agent parts per section with and without a repeated change, `stet_group` parts), `workflow.test.ts` (auto label group parts; agent-linked groups without parts still all-or-nothing), extension `model.test.ts` (part nodes, `linkedRest` per part).
 
 ### Rounds and history (2026-10-21)
 - **Ids:** with hundreds of changes the global numbering (S412) got long and the panel crowded. A round is one submission (changeset `C12` → round 12); new items are `<round>.<n>` (`12.3`), numbered at submit; a merged (atomic) item gets the next free number of its round. Old `S` ids stay valid; `compareItemIds` sorts both (old first). Ids stay plain strings for the store, CLI and MCP (`SAFE_ID` already allows dots; the CLI and MCP tell groups and rounds apart by their `G`/`C` prefix).

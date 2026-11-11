@@ -47,7 +47,7 @@ claude-1                                       3 pending
    └─ 2  "problem" → "task"                                     main.tex:4
 ```
 
-- 🔗 **Linked** groups must be accepted together, such as a label and its references, because accepting only part would break the document.
+- 🔗 **Linked** groups must be accepted together, such as a macro and its uses, because accepting only part would break the document. Large linked groups come in parts that you accept or reject one at a time; each part alone still compiles and blocks no other part.
 - ▣ **Related** groups share a theme and can be accepted or rejected in one go.
 
 **In the editor**, each proposed change appears in place:

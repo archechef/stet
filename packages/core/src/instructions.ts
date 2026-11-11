@@ -39,6 +39,13 @@ here reaches the real document until a human accepts it.
   - \`linked\`: REQUIRED whenever accepting only some of the edits would break
     or corrupt the document: label/ref renames, macro definition + uses,
     citation keys, notation changed consistently across places.
+    A large linked group is hard to review. Split it into \`parts\` (each with
+    a title and its locations) when every part can be accepted on its own:
+    accepting one part alone must leave the document compiling (warnings such
+    as undefined references are fine; an undefined macro is not), and must not
+    stop any other part from being accepted later. Typically: a \`\\label\` and
+    its references, or a change per section. Stet keeps identical changes,
+    a definition and its uses, and changes touching the same text in one part.
   - \`atomic\`: edits within one sentence/paragraph that only read well together.
   - \`related\`: optional thematic batches with a title and rationale.
   Check the submit result and fix groupings with \`stet_group\` / \`stet_ungroup\`.
@@ -53,6 +60,9 @@ here reaches the real document until a human accepts it.
   - accepted with edited text: prefer the reviewer's wording from now on.
   - group_broken: some linked edits were applied without the others; propose
     whatever is needed to make the document consistent again.
+  - group_partial: the reviewer accepted some parts of a linked group and
+    rejected others. The document compiles but may be inconsistent (e.g.
+    references to a renamed label); propose what makes it consistent.
 - Use \`stet_withdraw\` for proposals you no longer believe in.
 `;
 }
@@ -62,7 +72,8 @@ export const MCP_INSTRUCTIONS = `Stet manages human review of your edits to a La
 You work in a proposal workspace (a git worktree); the human's files are never
 touched directly. Edit files normally, then call stet_submit with a title and
 rationale (and groups: linked for edits that must be accepted together,
-atomic for edits that only make sense as one, related for thematic batches).
+with parts for pieces that can each be accepted alone, atomic for edits that
+only make sense as one, related for thematic batches).
 Before new work call stet_status and stet_sync if needed. Poll
 stet_get_feedback and act on rejections, revision requests, comments and
 stale items. Never reflow text or touch files outside the workspace.`;

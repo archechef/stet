@@ -7,7 +7,7 @@ import type { Readable, Writable } from "node:stream";
 import type { GroupHint, NoteHint } from "./grouping.js";
 
 import { archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
-import type { GroupKind, Item, ItemStatus, StetEvent } from "./model.js";
+import { partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
 import { Stet, StetError } from "./service.js";
 import { oneLine } from "./text.js";
 import { pathExists } from "./paths.js";
@@ -64,6 +64,14 @@ export const TOOLS: ToolDef[] = [
               title: str("What the group does."),
               rationale: str("Optional explanation."),
               where: whereSchema,
+              parts: {
+                type: "array",
+                description:
+                  "Linked groups only: pieces the reviewer can accept or reject one at a time. Accepting a part alone must keep the " +
+                  "document compiling (undefined-reference warnings are fine) and must not block the other parts. Stet joins parts " +
+                  "that make the same change, need each other's definitions, or touch the same text.",
+                items: obj({ title: str("What this part changes, e.g. 'Section 3'."), where: whereSchema }, ["title", "where"]),
+              },
             },
             ["kind", "title", "where"],
           ),
@@ -88,7 +96,7 @@ export const TOOLS: ToolDef[] = [
     name: "stet_get_feedback",
     description:
       "New reviewer feedback since your last call: accepted (possibly with edited text), rejected (with reason), " +
-      "revision requests, comments, stale items (text changed underneath) and broken linked groups.",
+      "revision requests, comments, stale items (text changed underneath), broken linked groups and partly accepted ones.",
     inputSchema: obj({ ack: { type: "boolean", description: "Mark the feedback as read (default true)." } }),
   },
   {
@@ -101,7 +109,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "stet_show",
-    description: "Show one item (12.3: round 12, change 3) with its text, note, groups and discussion thread, or a group (G3) with its members.",
+    description: "Show one item (12.3: round 12, change 3) with its text, note, groups and discussion thread, or a group (G3) with its parts and members.",
     inputSchema: obj({ id: str("Item id like 12.3 or group id like G3.") }, ["id"]),
   },
   {
@@ -123,6 +131,11 @@ export const TOOLS: ToolDef[] = [
         kind: { type: "string", enum: ["linked", "atomic", "related"] },
         title: str("What the group does."),
         rationale: str("Optional explanation."),
+        parts: {
+          type: "array",
+          description: "Linked groups only: pieces that can each be accepted on their own (see stet_submit).",
+          items: obj({ title: str("What this part changes."), itemIds: { type: "array", items: { type: "string" } } }, ["title", "itemIds"]),
+        },
       },
       ["itemIds", "kind", "title"],
     ),
@@ -169,6 +182,14 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
       return `${label("AUTO-REJECTED", "bad")} ${it}: it repeats an earlier rejected change (${d.previous}).`;
     case "group_broken":
       return `${label("LINKED GROUP BROKEN", "bad")} ${e.group} "${d.title}": ${(d.members ?? []).map((m: any) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
+    case "group_partial": {
+      const ps = (d.parts ?? []) as { id: string; title: string; outcome: string; items: string[] }[];
+      const list = (xs: typeof ps) => xs.map((p) => `${p.id} "${p.title}" (${p.items.join(", ")}${p.outcome === "accepted" ? "" : `: ${p.outcome}`})`).join("; ");
+      return (
+        `${label("LINKED GROUP PARTLY ACCEPTED", "warn")} ${e.group} "${d.title}": accepted ${list(ps.filter((p) => p.outcome === "accepted"))}; ` +
+        `not accepted ${list(ps.filter((p) => p.outcome !== "accepted"))}. The document compiles but may be inconsistent: propose what makes it consistent again.`
+      );
+    }
     default:
       return `${e.type} ${it}`;
   }
@@ -280,14 +301,17 @@ export class StetMcpServer {
           });
           const lines: string[] = [];
           if (r.changeset) lines.push(`Submitted ${r.changeset.id} "${r.changeset.title}" with ${r.items.length} item(s):`, ...r.items.map((i) => "  " + itemLine(i)));
-          for (const g of r.groups) lines.push(`Group ${g.id} (${g.kind}${g.source === "auto" ? ", auto-detected" : ""}) "${g.title}": ${g.items.join(", ")}`);
+          for (const g of r.groups) {
+            lines.push(`Group ${g.id} (${g.kind}${g.source === "auto" ? ", auto-detected" : ""}) "${g.title}": ${g.items.join(", ")}`);
+            for (const [k, p] of (g.parts ?? []).entries()) lines.push(`  part ${partId(g.id, k)} "${p.title}": ${p.items.join(", ")}`);
+          }
           if (r.ungrouped.length > 1) lines.push(`Ungrouped: ${r.ungrouped.join(", ")}. If some of these must be accepted together, call stet_group.`);
           if (r.superseded.length) lines.push(`Superseded (replaced by your new version): ${r.superseded.join(", ")}`);
           if (r.withdrawn.length) lines.push(`Withdrawn (you removed the change): ${r.withdrawn.join(", ")}`);
           if (r.repeats.length) lines.push(`Auto-rejected because they repeat rejected changes: ${r.repeats.join(", ")}`);
           for (const w of r.warnings) lines.push(`Warning: ${w}`);
           if (r.sync) lines.push(`Your workspace was synced onto the latest document${r.sync.stale.length ? `; stale: ${r.sync.stale.map((s) => s.id).join(", ")}` : ""}.`);
-          return text(lines.join("\n"), { changeset: r.changeset?.id ?? null, items: r.items.map((i) => ({ id: i.id, file: i.file, status: i.status, groups: i.groups })), groups: r.groups.map((g) => ({ id: g.id, kind: g.kind, items: g.items })) });
+          return text(lines.join("\n"), { changeset: r.changeset?.id ?? null, items: r.items.map((i) => ({ id: i.id, file: i.file, status: i.status, groups: i.groups })), groups: r.groups.map((g) => ({ id: g.id, kind: g.kind, items: g.items, ...(g.parts ? { parts: g.parts } : {}) })) });
         }
         case "stet_sync": {
           const r = await stet.sync(agent);
@@ -312,7 +336,13 @@ export class StetMcpServer {
             const g = await stet.store.getGroup(id);
             if (!g || g.agent !== agent) throw new StetError(`Unknown group ${id}.`);
             const members = (await Promise.all(g.items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
-            return text([`${g.id} ${g.kind} "${g.title}" (${g.state})`, g.rationale ?? "", ...members.map(itemLine)].filter(Boolean).join("\n"));
+            const lines = [`${g.id} ${g.kind} "${g.title}" (${g.state})`, g.rationale ?? ""];
+            if (g.parts) {
+              for (const [k, p] of g.parts.entries()) {
+                lines.push(`Part ${partId(g.id, k)} "${p.title}":`, ...members.filter((m) => p.items.includes(m.id)).map((m) => "  " + itemLine(m)));
+              }
+            } else lines.push(...members.map(itemLine));
+            return text(lines.filter(Boolean).join("\n"));
           }
           const it = await stet.getItem(id);
           if (!it || it.agent !== agent) throw new StetError(`Unknown item ${id}.`);
@@ -340,8 +370,17 @@ export class StetMcpServer {
           return text(`Withdrawn: ${w.map((i) => i.id).join(", ")}. They disappear from your workspace at the next stet_sync.`);
         }
         case "stet_group": {
-          const r = await stet.group(agent, strings(args.itemIds ?? [], "itemIds"), groupKind(args.kind), String(args.title ?? ""), args.rationale ? String(args.rationale) : undefined);
-          return text(r.merged ? `Merged into ${itemLine(r.merged)}` : `Created group ${r.group!.id} (${r.group!.kind}): ${r.group!.items.join(", ")}`);
+          const parts = args.parts === undefined ? undefined : partHints(args.parts);
+          const r = await stet.group(agent, strings(args.itemIds ?? [], "itemIds"), groupKind(args.kind), String(args.title ?? ""), args.rationale ? String(args.rationale) : undefined, parts);
+          if (r.merged) return text(`Merged into ${itemLine(r.merged)}`);
+          const g = r.group!;
+          return text(
+            [
+              `Created group ${g.id} (${g.kind}): ${g.items.join(", ")}`,
+              ...(g.parts ?? []).map((p, k) => `  part ${partId(g.id, k)} "${p.title}": ${p.items.join(", ")}`),
+              ...r.warnings.map((w) => `Warning: ${w}`),
+            ].join("\n"),
+          );
         }
         case "stet_ungroup": {
           await stet.ungroup(String(args.groupId ?? ""), agent);
@@ -388,6 +427,28 @@ function groupHints(v: unknown): GroupHint[] {
       title: typeof g.title === "string" ? g.title : bad(`groups[${n}].title must be a string`),
       ...(g.rationale !== undefined ? { rationale: String(g.rationale) } : {}),
       where: strings(g.where, `groups[${n}].where`),
+      ...(g.parts !== undefined
+        ? {
+            parts: (Array.isArray(g.parts) ? g.parts : bad(`groups[${n}].parts must be a list`)).map((p: unknown, k: number) => {
+              if (!isObj(p)) return bad(`groups[${n}].parts[${k}] must be an object`);
+              return {
+                title: typeof p.title === "string" ? p.title : bad(`groups[${n}].parts[${k}].title must be a string`),
+                where: strings(p.where, `groups[${n}].parts[${k}].where`),
+              };
+            }),
+          }
+        : {}),
+    };
+  });
+}
+
+function partHints(v: unknown): { title: string; items: string[] }[] {
+  if (!Array.isArray(v)) bad("parts must be a list");
+  return (v as unknown[]).map((p, k) => {
+    if (!isObj(p)) return bad(`parts[${k}] must be an object`);
+    return {
+      title: typeof p.title === "string" ? p.title : bad(`parts[${k}].title must be a string`),
+      items: strings(p.itemIds, `parts[${k}].itemIds`),
     };
   });
 }

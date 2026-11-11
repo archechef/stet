@@ -21,7 +21,7 @@ claude-1                                       3 pending
 
 - **Reviewable changes:**
   - Agent edits are split into word- and sentence-level changes that understand LaTeX: math, labels and citations stay intact, and re-wrapped lines are ignored.
-  - Changes that belong together are grouped. *Linked* groups, such as a label and its references, are all-or-nothing.
+  - Changes that belong together are grouped. *Linked* groups, such as a macro and its uses, are all-or-nothing; large ones come in parts you can accept one at a time, as long as each part alone still compiles.
 - **A real conversation:**
   - Rejections with a reason, revision requests, comments and edited wording all go back to the agent automatically, through MCP tools. No copy-paste.
   - The agent learns from them.

@@ -22,17 +22,22 @@ import {
   compareItemIds,
   FEEDBACK_TYPES,
   itemId,
+  linkedUnit,
   numberInRound,
   isLive,
+  parsePartId,
+  partId,
   type Agent,
   type AgentKind,
   type Changeset,
   type Group,
   type GroupKind,
+  type GroupPart,
   type Item,
   type ItemStatus,
   type StetEvent,
 } from "./model.js";
+import { combineParts, settleParts, type PartDraft } from "./parts.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store, writeJsonAtomic } from "./store.js";
 import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
@@ -1062,7 +1067,20 @@ export class Stet {
     for (const h of effectiveHints) {
       const pool = [...live.map((i) => candOf.get(i)!), ...[...matched.entries()].filter(([, e]) => isLive(e.status)).map(([c]) => c)];
       const members = (await hintMatches(h.where, pool)).map(idOfCand).filter((x): x is string => !!x);
-      if (members.length) drafts.push({ kind: h.kind, title: h.title, rationale: h.rationale ?? null, source: "agent", items: members });
+      // Parts of a linked group (§6.4.6); their changes belong to the group too.
+      let parts: PartDraft[] | undefined;
+      if (h.parts?.length) {
+        if (h.kind !== "linked") result.warnings.push(`Group '${h.title}': only linked groups have parts; ignored them.`);
+        else {
+          parts = [];
+          for (const p of h.parts) {
+            const ids = (await hintMatches(p.where, pool)).map(idOfCand).filter((x): x is string => !!x);
+            for (const i of ids) if (!members.includes(i)) members.push(i);
+            if (ids.length) parts.push({ title: p.title, items: ids });
+          }
+        }
+      }
+      if (members.length) drafts.push({ kind: h.kind, title: h.title, rationale: h.rationale ?? null, source: "agent", items: members, ...(parts ? { parts } : {}) });
     }
     // Auto-detection also sees the agent's earlier pending items (a \label here, its \ref from before).
     const newIds = new Set(created.map((i) => i.id));
@@ -1072,23 +1090,32 @@ export class Stet {
     const gids = await this.store.allocate("group", finalDrafts.length);
     const byId = new Map<string, Item>([...created, ...matched.values(), ...earlier].map((i) => [i.id, i]));
     // A replacement takes over the groups of the item it supersedes.
+    const getItem = async (id: string) => byId.get(id) ?? (await this.store.getItem(id)) ?? undefined;
     for (const { from, to } of inherited) {
       for (const gid of from.groups) {
         const g = await this.store.getGroup(gid);
         if (!g || g.state === "resolved") continue;
-        g.items = g.items.map((i) => (i === from.id ? to.id : i)).filter((x, k, arr) => arr.indexOf(x) === k);
+        const swap = (ids: string[]) => ids.map((i) => (i === from.id ? to.id : i)).filter((x, k, arr) => arr.indexOf(x) === k);
+        g.items = swap(g.items);
+        if (g.parts) {
+          g.parts = g.parts.map((p) => ({ ...p, items: swap(p.items) }));
+          byId.set(to.id, to);
+          result.warnings.push(...(await this.settleParts(g, getItem)));
+        }
         await this.store.putGroup(g);
         if (!to.groups.includes(gid)) to.groups.push(gid);
       }
     }
     const groups: Group[] = finalDrafts.map((d, k) => ({
       id: gids[k]!, agent: agent.id, changeset: csId!, kind: d.kind, title: d.title, rationale: d.rationale,
-      source: d.source, items: d.items, state: "open",
+      source: d.source, items: d.items, ...(d.kind === "linked" && d.parts ? { parts: d.parts } : {}), state: "open",
     }));
     // Linked groups from earlier submissions that now share members get merged into the new one.
     const priorGroups = (await this.store.groups()).filter((g) => g.agent === agent.id && g.kind === "linked" && g.state === "open");
     for (const g of groups.filter((g) => g.kind === "linked")) {
       for (const pg of priorGroups.filter((pg) => pg.items.some((i) => g.items.includes(i)))) {
+        const parts = combineParts(pg, g);
+        if (parts) g.parts = parts;
         for (const i of pg.items) if (!g.items.includes(i)) g.items.push(i);
         g.title = joinTitles(pg.title, g.title);
         for (const i of pg.items) {
@@ -1109,6 +1136,7 @@ export class Stet {
           byId.set(it.id, it);
         }
       }
+      result.warnings.push(...(await this.settleParts(g, getItem)));
       await this.store.putGroup(g);
     }
     for (const it of byId.values()) if (!created.includes(it)) await this.store.putItem(it);
@@ -1207,6 +1235,56 @@ export class Stet {
     });
   }
 
+  /**
+   * Check the parts of a linked group (§6.4.6) and join the ones that break the rules. Accepting
+   * is simulated on the review base the members were made against. Returns notes for the agent.
+   */
+  private async settleParts(g: Group, get: (id: string) => Promise<Item | undefined>): Promise<string[]> {
+    if (g.kind !== "linked" || !g.parts) {
+      delete g.parts;
+      return [];
+    }
+    const members = (await Promise.all(g.items.map(get))).filter((x): x is Item => !!x && x.status !== "superseded");
+    const base = members.find((m) => isLive(m.status))?.baseCommit;
+    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined);
+    if (parts) g.parts = parts;
+    else delete g.parts;
+    // Joins of parts Stet proposed itself are no news to the agent.
+    return g.source === "auto" ? [] : notes.map((n) => `Group '${g.title}': ${n}`);
+  }
+
+  /**
+   * Pairs (a, b) of item lists where accepting all of a (onto `view`) would keep b from being
+   * accepted: b's changes overlap a's (accepting a makes them stale) or can't be located afterwards.
+   */
+  private async interference(lists: Item[][], view: FileView): Promise<[number, number][]> {
+    const opts = { refText: this.refText };
+    const out: [number, number][] = [];
+    const before = await Promise.all(lists.map((l) => locate(l, view, opts)));
+    for (let a = 0; a < lists.length; a++) {
+      const res = await applyItems(lists[a]!, view, opts);
+      if (res.failed.length) continue; // not applicable on its own here; accept will say why
+      const after: FileView = {
+        read: async (p) => {
+          if (!res.changes.has(p)) return view.read(p);
+          const c = res.changes.get(p);
+          return c && "text" in c ? c : null;
+        },
+        blobId: async (p) => (res.changes.has(p) ? (res.changes.get(p) === null ? null : "changed") : view.blobId(p)),
+      };
+      for (let b = 0; b < lists.length; b++) {
+        if (b === a) continue;
+        const located = before[b]!.located;
+        const clash = located.some((l) =>
+          res.applied.some((x) => x.item.file === l.item.file && (l.item.kind !== "modify" || x.item.kind !== "modify" || overlaps(l.span, x.span))),
+        );
+        const lost = clash ? [] : (await locate(located.map((l) => l.item), after, opts)).failed;
+        if (clash || lost.length) out.push([a, b]);
+      }
+    }
+    return out;
+  }
+
   /** Recompute group states after status changes; emits group_broken once per group. */
   private async updateGroups(changed: Item[]) {
     const gids = new Set(changed.flatMap((i) => i.groups));
@@ -1220,16 +1298,29 @@ export class Stet {
       if (!members.length) continue;
       const statuses = members.map((m) => m.status);
       let state: Group["state"] = statuses.every((s) => !isLive(s)) ? "resolved" : "open";
-      if (g.kind === "linked") {
-        const accepted = statuses.filter((s) => s === "accepted").length;
-        const dead = statuses.filter((s) => ["rejected", "stale", "withdrawn"].includes(s)).length;
-        if ((accepted && accepted < members.length) || (dead && statuses.some((s) => isLive(s)))) state = "broken";
+      // Each part of a linked group is resolved as one (§6.4.6); without parts, the whole group is.
+      const units = g.kind !== "linked" ? [] : g.parts ? g.parts.map((p) => members.filter((m) => p.items.includes(m.id))).filter((u) => u.length) : [members];
+      for (const u of units) {
+        const accepted = u.filter((m) => m.status === "accepted").length;
+        const dead = u.filter((m) => ["rejected", "stale", "withdrawn"].includes(m.status)).length;
+        if ((accepted && accepted < u.length) || (dead && u.some((m) => isLive(m.status)))) state = "broken";
       }
       if (state === "broken" && g.state !== "broken") {
         await this.store.appendEvent({
           type: "group_broken", agent: g.agent, group: g.id, items: g.items,
           data: { title: g.title, members: members.map((m) => ({ id: m.id, status: m.status, file: m.file })) },
         });
+      }
+      // Some parts accepted, others not: the document compiles but may be inconsistent.
+      if (state === "resolved" && g.state !== "resolved" && g.parts && units.length > 1) {
+        const outcome = (u: Item[]) => (u.every((m) => m.status === "accepted") ? "accepted" : u.find((m) => m.status !== "accepted")!.status);
+        const parts = g.parts.flatMap((p, k) => {
+          const u = members.filter((m) => p.items.includes(m.id));
+          return u.length ? [{ id: partId(g.id, k), title: p.title, outcome: outcome(u), items: u.map((m) => m.id) }] : [];
+        });
+        if (parts.some((p) => p.outcome === "accepted") && parts.some((p) => p.outcome !== "accepted")) {
+          await this.store.appendEvent({ type: "group_partial", agent: g.agent, group: g.id, items: g.items, data: { title: g.title, parts } });
+        }
       }
       if (state !== g.state) {
         g.state = state;
@@ -1304,13 +1395,14 @@ export class Stet {
     return out;
   }
 
+  /** Live items that must be accepted (or rejected) together with `items`: their linked groups' parts (§6.4.5–6). */
   private async linkedMembers(items: Item[]): Promise<Item[]> {
     const out = new Map<string, Item>();
     for (const it of items) {
       for (const gid of it.groups) {
         const g = await this.store.getGroup(gid);
         if (g?.kind !== "linked") continue;
-        for (const m of g.items) {
+        for (const m of linkedUnit(g, it.id)) {
           const mi = await this.store.getItem(m);
           if (mi && isLive(mi.status)) out.set(mi.id, mi);
         }
@@ -1319,16 +1411,26 @@ export class Stet {
     return [...out.values()];
   }
 
-  async acceptGroup(groupId: string, opts: { commit?: boolean } = {}): Promise<AcceptResult> {
-    const g = await this.store.getGroup(groupId.toUpperCase());
-    if (!g) throw new StetError(`Unknown group '${groupId}'.`);
-    const ids = [];
-    for (const id of g.items) {
-      const it = await this.store.getItem(id);
-      if (it && isLive(it.status)) ids.push(id);
+  /** A group (G3) or one of its parts (G3.2), with its pending items. */
+  async groupTarget(id: string): Promise<{ group: Group; part: GroupPart | null; pending: string[] }> {
+    const pid = parsePartId(id);
+    const g = await this.store.getGroup(pid ? pid.group : id.trim().toUpperCase());
+    if (!g) throw new StetError(`Unknown group '${id}'.`);
+    const part = pid ? (g.parts?.[pid.index] ?? null) : null;
+    if (pid && !part) throw new StetError(`${g.id} has ${g.parts?.length ? `only ${g.parts.length} parts` : "no parts"}.`);
+    const pending: string[] = [];
+    for (const i of part ? part.items : g.items) {
+      const it = await this.store.getItem(i);
+      if (it && isLive(it.status)) pending.push(i);
     }
-    if (!ids.length) throw new StetError(`Group ${g.id} has no pending items.`);
-    return this.accept(ids, opts);
+    return { group: g, part, pending };
+  }
+
+  /** Accept the pending items of a group (G3) or of one part (G3.2). */
+  async acceptGroup(groupId: string, opts: { commit?: boolean } = {}): Promise<AcceptResult> {
+    const { pending } = await this.groupTarget(groupId);
+    if (!pending.length) throw new StetError(`${groupId.toUpperCase()} has no pending items.`);
+    return this.accept(pending, opts);
   }
 
   async accept(
@@ -1539,8 +1641,18 @@ export class Stet {
   // -------------------------------------------------------------------------
   // Grouping after submit (§6.4)
 
-  async group(agentId: string | null, ids: string[], kind: GroupKind, title: string, rationale?: string): Promise<{ group: Group | null; merged: Item | null }> {
+  async group(
+    agentId: string | null,
+    ids: string[],
+    kind: GroupKind,
+    title: string,
+    rationale?: string,
+    parts?: { title: string; items: string[] }[],
+  ): Promise<{ group: Group | null; merged: Item | null; warnings: string[] }> {
     return this.store.withLock(async () => {
+      if (parts?.length && kind !== "linked") throw new StetError("Only linked groups have parts.");
+      const partList = (parts ?? []).map((p) => ({ title: p.title, items: p.items.map((i) => i.toUpperCase()) }));
+      for (const p of partList) for (const i of p.items) if (!ids.some((x) => x.toUpperCase() === i)) ids = [...ids, i];
       const items = await this.requireItems(ids);
       if (items.length < 2) throw new StetError("A group needs at least two items.");
       const agent = items[0]!.agent;
@@ -1549,14 +1661,17 @@ export class Stet {
         if (it.agent !== agent) throw new StetError("All items of a group must come from the same agent.");
         if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
       }
-      if (kind === "atomic") return { group: null, merged: await this.mergeAtomic(items, title, rationale) };
+      if (kind === "atomic") return { group: null, merged: await this.mergeAtomic(items, title, rationale), warnings: [] };
       const [gid] = await this.store.allocate("group");
       let group: Group = {
         id: gid!, agent, changeset: items[0]!.changeset, kind, title, rationale: rationale ?? null, source: "agent",
-        items: items.map((i) => i.id), state: "open",
+        items: items.map((i) => i.id), ...(partList.length ? { parts: partList } : {}), state: "open",
       };
+      const warnings: string[] = [];
       if (kind === "linked") {
         for (const pg of (await this.store.groups()).filter((g) => g.kind === "linked" && g.items.some((i) => group.items.includes(i)))) {
+          const merged = combineParts(pg, group);
+          if (merged) group.parts = merged;
           for (const i of pg.items) if (!group.items.includes(i)) group.items.push(i);
           group.title = joinTitles(pg.title, group.title);
           await this.store.deleteGroup(pg.id);
@@ -1576,13 +1691,14 @@ export class Stet {
           await this.store.putItem(it);
         }
       }
+      warnings.push(...(await this.settleParts(group, async (i) => (await this.store.getItem(i)) ?? undefined)));
       await this.store.putGroup(group);
       const cs = await this.store.getChangeset(group.changeset);
       if (cs && !cs.groups.includes(group.id)) {
         cs.groups.push(group.id);
         await this.store.putChangeset(cs);
       }
-      return { group, merged: null };
+      return { group, merged: null, warnings };
     });
   }
 
@@ -1625,13 +1741,18 @@ export class Stet {
       this.setStatus(it, "superseded", "agent", `merged into ${merged.id}`);
       await this.store.putItem(it);
     }
+    await this.store.putItem(merged);
     for (const gid of merged.groups) {
       const g = await this.store.getGroup(gid);
       if (!g) continue;
       g.items = [...g.items.filter((i) => !items.some((x) => x.id === i)), merged.id];
+      // The merged item replaces its originals in their parts; parts it now spans are joined.
+      if (g.parts) {
+        g.parts = g.parts.map((p) => ({ ...p, items: [...new Set(p.items.map((i) => (items.some((x) => x.id === i) ? merged.id : i)))] }));
+        await this.settleParts(g, async (i) => (await this.store.getItem(i)) ?? undefined);
+      }
       await this.store.putGroup(g);
     }
-    await this.store.putItem(merged);
     const cs = await this.store.getChangeset(merged.changeset);
     if (cs) {
       cs.items.push(merged.id);

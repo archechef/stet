@@ -2,7 +2,22 @@
  * View model for the Stet panel and editor integration. No `vscode` import here,
  * so it can be unit-tested with vitest.
  */
-import { compareItemIds, inlineDiff, numberInRound, oneLine, roundOf, type Agent, type Changeset, type Group, type InlineDiff, type Item, type ItemStatus } from "@stet/core";
+import {
+  compareItemIds,
+  inlineDiff,
+  linkedUnit,
+  numberInRound,
+  oneLine,
+  partId,
+  partIndexOf,
+  roundOf,
+  type Agent,
+  type Changeset,
+  type Group,
+  type InlineDiff,
+  type Item,
+  type ItemStatus,
+} from "@stet/core";
 
 export interface Snapshot {
   agents: Agent[];
@@ -21,6 +36,9 @@ export type Node =
   | { type: "agent"; agent: Agent }
   | { type: "changeset"; changeset: Changeset }
   | { type: "group"; group: Group }
+  /** A part of a linked group (spec §6.4.6), accepted or rejected on its own. */
+  | { type: "part"; group: Group; index: number }
+  /** `parent`: the changeset, group or part id the item is shown under. */
   | { type: "item"; item: Item; parent: string };
 
 /**
@@ -45,8 +63,8 @@ const byId = (a: { id: string }, b: { id: string }) => compareItemIds(a.id, b.id
 export type TreeMode = "review" | "history";
 
 /**
- * Tree structure: agent → round (changeset) → group → item, ungrouped items directly under the
- * round. The same round can appear in both trees: its open changes under Review, its decided
+ * Tree structure: agent → round (changeset) → group → (part →) item, ungrouped items directly
+ * under the round. The same round can appear in both trees: its open changes under Review, its decided
  * ones under History.
  */
 export class TreeModel {
@@ -69,6 +87,19 @@ export class TreeModel {
   members(g: Group): Item[] {
     if (g.kind === "atomic") return [];
     return g.items.map((id) => this.items.get(id)).filter((i): i is Item => !!i && this.visible(i)).sort(byId);
+  }
+
+  /** Visible members of the k-th part of a group. */
+  partMembers(g: Group, k: number): Item[] {
+    const ids = g.parts?.[k]?.items ?? [];
+    return this.members(g).filter((i) => ids.includes(i.id));
+  }
+
+  /** The linked group and part an item belongs to, if its group has parts. */
+  partOf(item: Item): { group: Group; index: number } | undefined {
+    const g = this.linkedGroup(item);
+    const index = g ? partIndexOf(g, item.id) : -1;
+    return g && index >= 0 ? { group: g, index } : undefined;
   }
 
   private groupsOf(cs: Changeset): Group[] {
@@ -107,8 +138,13 @@ export class TreeModel {
           ...this.groupsOf(node.changeset).map((group): Node => ({ type: "group", group })),
           ...this.ungrouped(node.changeset).map((item): Node => ({ type: "item", item, parent: node.changeset.id })),
         ];
-      case "group":
-        return this.members(node.group).map((item) => ({ type: "item", item, parent: node.group.id }));
+      case "group": {
+        const g = node.group;
+        if (g.parts) return g.parts.flatMap((_, index): Node[] => (this.partMembers(g, index).length ? [{ type: "part", group: g, index }] : []));
+        return this.members(g).map((item) => ({ type: "item", item, parent: g.id }));
+      }
+      case "part":
+        return this.partMembers(node.group, node.index).map((item) => ({ type: "item", item, parent: partId(node.group.id, node.index) }));
       case "item":
         return [];
     }
@@ -134,14 +170,14 @@ export class TreeModel {
     return this.groups.get(id.toUpperCase());
   }
 
-  /** Live members of linked groups containing any of `ids`, excluding `ids` themselves. */
+  /** Live items that must be accepted with `ids` (their linked group, or its part), excluding `ids` themselves. */
   linkedRest(ids: string[]): Item[] {
     const out = new Map<string, Item>();
     for (const id of ids) {
       for (const gid of this.item(id)?.groups ?? []) {
         const g = this.groups.get(gid);
         if (g?.kind !== "linked") continue;
-        for (const m of g.items) {
+        for (const m of linkedUnit(g, id.toUpperCase())) {
           const mi = this.items.get(m);
           if (mi && isLive(mi) && !ids.includes(mi.id)) out.set(mi.id, mi);
         }
@@ -201,10 +237,16 @@ export function groupLabel(g: Group): string {
 
 export function groupDescription(g: Group, shown: number): string {
   const parts = [g.kind === "linked" ? "linked" : g.kind];
+  if (g.parts) parts.push(`${g.parts.length} parts`);
   if (g.source === "auto") parts.push("auto");
   if (g.state === "broken") parts.push("broken");
   parts.push(`${shown}`);
   return parts.join(" · ");
+}
+
+/** Label of a part of a linked group: "Part 2: Section 3". */
+export function partLabel(g: Group, k: number): string {
+  return `Part ${k + 1}: ${g.parts?.[k]?.title ?? ""}`;
 }
 
 /** Short text for ghost-text decorations (no newlines, bounded length). */

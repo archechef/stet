@@ -91,7 +91,7 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
 
 - **Round:** one submission by the agent, with its title and rationale. Hover it to read the rationale.
 - **Group:**
-  - 🔗 **linked:** changes that must be accepted together, such as a label and its references. Accepting only some of them could break the document.
+  - 🔗 **linked:** changes that must be accepted together, such as a label and its references. Accepting only some of them could break the document. A large linked group can be split into **parts** (*Part 1: …*, *Part 2: …*). Each part has its own ✓/✗ buttons: accepting a part alone keeps the document compiling and leaves the other parts acceptable.
   - ▣ **related:** changes on the same theme, which you can accept or reject in one go.
   - The tag *auto* means Stet detected the group itself. *broken* means the group was resolved inconsistently, and the agent has been asked to repair the document.
 - **Change** (`S<n>`): a single edit, located at `file:line` in your current text.
@@ -128,7 +128,7 @@ Open a `.tex` file with pending changes:
 - **with word wrap on**, the new text is drawn so that it wraps with the line (as an inlay hint). VS Code draws those in your theme's inlay-hint colour, usually grey. The **colour button** in the Stet panel title (*Highlight proposed text in green*) makes them green: it sets the colour of parameter-name hints in your user settings, so other extensions' parameter hints turn green too (LaTeX files rarely have any). Click it again to undo; a value you had set before is restored. Inlay hints must be enabled (`editor.inlayHints.enabled`, on by default);
 - the setting `stet.newTextStyle` chooses explicitly: `highlighted` (always green, doesn't wrap) or `wrapping`. The default `auto` follows the word wrap setting. Toggling word wrap with Alt+Z doesn't change that setting, so if you toggle it that way, choose explicitly;
 - new text that doesn't fit there is shortened, and shown **in full in a panel directly below the change**. That is new text with several lines, or longer than 80 characters (400 with word wrap on). The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` opens these panels by default (`expanded`), keeps them closed until you click the gutter marker (`collapsed`), or leaves the full text to the hover (`hover`);
-- above each change is a row of actions: **2.2: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**;
+- above each change is a row of actions: **2.2: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**, or **✓ Accept part 2 of 3 (n changes)** when the group has parts;
 - **hovering** a change shows the agent, the round and its rationale, the groups, the diff, the latest thread messages, and the same actions.
 
 You can keep typing in the file while changes are pending. Stet finds each change again in your current text, including unsaved edits.
@@ -151,7 +151,7 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 After you accept, reject, edit or request a revision, Stet **moves on to the next pending change** and shows it, so reviewing takes one key per change. From the panel, the focus stays in the panel; from the actions in the editor, the editor moves to the next change. The setting `stet.autoAdvance` turns this off.
 
 **Linked changes:**
-- Accepting or rejecting one member of a linked group asks what to do with the rest:
+- Accepting or rejecting one member of a linked group asks what to do with the rest of the group, or of its part if the group has parts:
   - *Accept all linked changes*, or *Accept only this one*, which breaks the group.
   - *Reject all*, *Reject this one and ask the agent to revise the rest*, or *Reject only this one*.
 - Accepting a linked group is all-or-nothing: if any member can't be applied, nothing is applied.

@@ -72,7 +72,7 @@ The agent edits, then submits by itself. Some tips:
 | `stet_status` | Sees its item counts, unread feedback, and whether it must sync first. |
 | `stet_submit` | Submits its edits with a title, a rationale and optional groups. |
 | `stet_sync` | Moves onto your latest text. Accepted changes become part of it, rejected ones disappear. |
-| `stet_get_feedback` | Reads your decisions: accepted (possibly with your wording), rejected with reason, revision requests, comments, stale items and broken linked groups. |
+| `stet_get_feedback` | Reads your decisions: accepted (possibly with your wording), rejected with reason, revision requests, comments, stale items, broken linked groups and partly accepted ones. |
 | `stet_list`, `stet_show` | Looks at its own items and groups. |
 | `stet_reply` | Answers your comments. |
 | `stet_withdraw` | Withdraws proposals it no longer believes in. |
@@ -80,6 +80,7 @@ The agent edits, then submits by itself. Some tips:
 
 **Grouping:**
 - `linked` groups can only be accepted together. Agents are told to use them wherever accepting only part would break the document: label and reference renames, a macro and its uses, citation keys.
+- A large linked group can come in **parts**, which you accept or reject one at a time. A part is only kept if accepting it alone still compiles (warnings such as `??` for a missing reference are fine) and blocks no other part. Stet keeps identical changes, a macro and its uses, and changes to the same text in one part. A label rename it detects is split into the label and its references. If you accept some parts and reject others, the agent is told, so it can make the paper consistent again.
 - Stet also detects label/ref renames, citation keys and repeated substitutions by itself.
 
 ---

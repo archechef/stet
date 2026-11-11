@@ -64,14 +64,14 @@ Run these in your project folder. Changes have ids like `12.3`: change 3 of roun
 |---|---|
 | `stet review [--agent <a>] [--status <s>] [--all]` | Lists changes waiting for review (pending or revision requested), per agent → round → group. `--status` takes a comma-separated list (`pending,accepted,…`); `--all` shows everything. |
 | `stet show <12.3\|G3\|C12>` | Shows a change with its context, or a group or round with its members. |
-| `stet accept <12.3\|G3>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group anyway, which marks the group broken. |
-| `stet reject <12.3\|G3>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
+| `stet accept <12.3\|G3\|G3.2>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
+| `stet reject <12.3\|G3\|G3.2>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <12.3> -m <text>` | Sends a message about a change; the agent can reply. |
 | `stet commit [-m <summary>]` | **Finishes the review:** commits all accepted changes in one commit. The summary line defaults to the changeset titles; the body lists the accepted changes and a `Stet-Applied:` trailer. |
 | `stet share` | Lets agents see your saved edits (they pick them up at their next sync). See *What agents see* below. |
 | `stet share manual\|saved\|committed` | Sets when agents see your edits. |
-| `stet group <12.1> <12.2>… --kind atomic\|linked\|related -t <title> [-m <rationale>]` | Groups changes yourself. |
+| `stet group <12.1> <12.2>… --kind atomic\|linked\|related -t <title> [-m <rationale>] [--parts <file.json\|->]` | Groups changes yourself. `--parts` splits a linked group into parts: `[{"title": "Section 2", "items": ["12.1", "12.4"]}, …]`. |
 | `stet ungroup <G3>` | Dissolves a group; its changes stay. |
 
 **Linked groups** are all-or-nothing:

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Parts of linked groups:** a long linked group can be split into parts that you accept or reject one at a time (*Part 1: …* in the panel, `G3.2` on the command line). A part is only kept if accepting it alone still compiles (warnings such as a missing reference are fine) and blocks no other part; Stet joins parts that make the same change, need each other's macro definitions, or touch the same text. Agents can declare parts in `stet_submit` and `stet_group`; a detected label rename is split into the label and its references. If some parts are accepted and others rejected, the agent is told so it can make the paper consistent.
+- **Fix: label renames not linked.** A label rename was not detected when two references to it were close together (within about 80 characters).
+
 ## 0.5.1 — 2026-11-11
 
 - **Fix: comments left behind.** After archiving an agent (or another change to the proposals), comment threads in the editor could remain although their proposals were gone, and a thread could appear twice. The extension now updates its threads one pass at a time. Leftover threads disappear when you reload the window.

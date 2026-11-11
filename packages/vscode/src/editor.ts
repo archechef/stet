@@ -1,6 +1,6 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
-import type { Item } from "@stet/core";
+import { partId, partIndexOf, type Item } from "@stet/core";
 import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import type { Project } from "./project.js";
 
@@ -195,13 +195,21 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     for (const { item, range } of await this.locator.locate(doc)) {
       const at = new vscode.Range(range.start, range.start);
       const linked = model.linkedGroup(item);
+      const part = model.partOf(item);
       const rest = model.linkedRest([item.id]);
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
+      // Linked changes are accepted together: the whole group, or the item's part of it.
+      const unit = part ? partId(part.group.id, part.index) : linked?.id;
+      const accept = !rest.length
+        ? `${item.id}${tag}: ✓ Accept`
+        : part
+          ? `${item.id}${tag}: ✓ Accept part ${part.index + 1} of ${part.group.parts!.length} (${rest.length + 1} changes)`
+          : `${item.id}${tag}: ✓ Accept all ${rest.length + 1} linked`;
       lenses.push(
         new vscode.CodeLens(at, {
-          title: rest.length ? `${item.id}${tag}: ✓ Accept all ${rest.length + 1} linked` : `${item.id}${tag}: ✓ Accept`,
-          command: rest.length && linked ? "stet.acceptGroup" : "stet.accept",
-          arguments: [ref(rest.length && linked ? linked.id : item.id)],
+          title: accept,
+          command: rest.length && unit ? "stet.acceptGroup" : "stet.accept",
+          arguments: [ref(rest.length && unit ? unit : item.id)],
         }),
         new vscode.CodeLens(at, { title: "✗ Reject", command: "stet.reject", arguments: [ref(item.id)] }),
         new vscode.CodeLens(at, { title: "✎ Edit", command: "stet.edit", arguments: [ref(item.id)] }),
@@ -256,6 +264,8 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   for (const gid of item.groups) {
     const g = model.group(gid);
     if (g && g.kind !== "atomic") lines.push(`${g.kind === "linked" ? "🔗 linked" : "▣ related"}: ${esc(g.title)} (${g.items.join(", ")})${g.state === "broken" ? " ⚠ broken" : ""}`);
+    const k = g ? partIndexOf(g, item.id) : -1;
+    if (g && k >= 0) lines.push(`part ${k + 1} of ${g.parts!.length}: ${esc(g.parts![k]!.title)} (${g.parts![k]!.items.join(", ")})`);
   }
   if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
   else lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);

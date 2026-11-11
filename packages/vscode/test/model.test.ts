@@ -37,7 +37,7 @@ function snap(): Snapshot {
 }
 
 const ids = (nodes: Node[]) =>
-  nodes.map((n) => (n.type === "agent" ? n.agent.id : n.type === "changeset" ? n.changeset.id : n.type === "group" ? n.group.id : n.item.id));
+  nodes.map((n) => (n.type === "agent" ? n.agent.id : n.type === "changeset" ? n.changeset.id : n.type === "group" ? n.group.id : n.type === "part" ? `${n.group.id}.${n.index + 1}` : n.item.id));
 
 describe("tree model", () => {
   it("shows live items as agent → changeset → group → item", () => {
@@ -87,6 +87,25 @@ describe("tree model", () => {
     expect(m.linkedRest(["S1", "S2", "S5"])).toEqual([]);
     expect(m.linkedGroup(m.item("s2")!)?.id).toBe("G1");
     expect(m.liveCount(() => true)).toBe(3);
+  });
+
+  it("shows the parts of a linked group, and links an item only with its part", () => {
+    const s = snap();
+    s.groups[0] = group("G1", "C1", "linked", ["S1", "S2", "S5"], { parts: [{ title: "Label", items: ["S1"] }, { title: "References", items: ["S2", "S5"] }] });
+    const m = new TreeModel(s, "review");
+    const g = m.children(m.children(m.children()[0])[0])[0]!;
+    const parts = m.children(g);
+    expect(parts.map((n) => (n.type === "part" ? n.index : -1))).toEqual([0, 1]);
+    expect(ids(m.children(parts[1]))).toEqual(["S2", "S5"]);
+    expect(m.children(parts[1]).map((n) => (n.type === "item" ? n.parent : ""))).toEqual(["G1.2", "G1.2"]);
+    expect(m.linkedRest(["S1"])).toEqual([]);
+    expect(m.linkedRest(["S2"]).map((i) => i.id)).toEqual(["S5"]);
+    expect(m.partOf(m.item("S5")!)).toMatchObject({ index: 1 });
+    // A part whose changes are all decided disappears from the Review panel.
+    s.items[0] = item("S1", "C1", { groups: ["G1"], status: "accepted" });
+    const after = new TreeModel(s, "review");
+    const g2 = after.children(after.children(after.children()[0])[0])[0]!;
+    expect(after.children(g2).map((n) => (n.type === "part" ? n.index : -1))).toEqual([1]);
   });
 
   it("hides atomic groups (their members are merged)", () => {

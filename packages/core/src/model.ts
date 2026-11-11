@@ -32,7 +32,40 @@ export interface Group {
   rationale: string | null;
   source: GroupSource;
   items: string[];
+  /**
+   * Linked groups only: pieces that can each be accepted or rejected on their own (spec §6.4.6).
+   * They partition `items`. Absent when the group is one unit.
+   */
+  parts?: GroupPart[];
   state: "open" | "resolved" | "broken";
+}
+
+/** Part of a linked group: accepting it alone keeps the document compiling and blocks no other part. */
+export interface GroupPart {
+  title: string;
+  items: string[];
+}
+
+/** Id of the k-th part (0-based) of a group: G3.2 is part 2 of G3. */
+export const partId = (groupId: string, k: number): string => `${groupId}.${k + 1}`;
+
+/** G3.2 → { group: "G3", index: 1 }; null for anything else. */
+export function parsePartId(id: string): { group: string; index: number } | null {
+  const m = /^(G\d+)\.(\d+)$/i.exec(id.trim());
+  return m && Number(m[2]) >= 1 ? { group: m[1]!.toUpperCase(), index: Number(m[2]) - 1 } : null;
+}
+
+/** Index of the part of `g` that holds `itemId`, or -1. */
+export const partIndexOf = (g: Group, itemId: string): number => g.parts?.findIndex((p) => p.items.includes(itemId)) ?? -1;
+
+/**
+ * The items `itemId` must be accepted with in group `g`: its part, the whole group for a linked
+ * group without parts, or just itself for other kinds.
+ */
+export function linkedUnit(g: Group, itemId: string): string[] {
+  if (g.kind !== "linked") return [itemId];
+  const k = partIndexOf(g, itemId);
+  return k >= 0 ? g.parts![k]!.items : g.items;
 }
 
 export interface Changeset {
@@ -102,6 +135,7 @@ export type EventType =
   | "stale"
   | "repeat_rejected"
   | "group_broken"
+  | "group_partial"
   | "withdrawn"
   | "superseded"
   | "synced"
@@ -126,6 +160,7 @@ export const FEEDBACK_TYPES: readonly EventType[] = [
   "stale",
   "repeat_rejected",
   "group_broken",
+  "group_partial",
 ];
 
 export interface StoreState {

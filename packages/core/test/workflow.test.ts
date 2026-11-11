@@ -187,7 +187,7 @@ describe("revisions, withdrawals and repeats", () => {
 });
 
 describe("grouping", () => {
-  it("auto-links a label rename with its references and enforces linked accepts", async () => {
+  it("auto-links a label rename with its references, each its own part", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
@@ -197,12 +197,25 @@ describe("grouping", () => {
     expect(g.kind).toBe("linked");
     expect(g.source).toBe("auto");
     expect(g.items).toHaveLength(2);
+    // A missing label only warns, so the label and its reference can be accepted separately.
+    expect(g.parts?.map((p) => p.items)).toEqual([[g.items[0]], [g.items[1]]]);
 
-    await expect(stet.accept([g.items[0]!])).rejects.toThrow(/linked/);
-    await expect(stet.reject([g.items[0]!])).rejects.toThrow(/linked/);
+    await stet.accept([g.items[0]!]);
+    expect((await stet.listGroups())[0]!.state).toBe("open");
     await stet.acceptGroup(g.id);
     expect(read(repo, "main.tex")).not.toContain("sec:intro}");
     expect((await stet.listGroups())[0]!.state).toBe("resolved");
+  });
+
+  it("enforces linked accepts when the agent links changes without parts", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
+    const r = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", title: "Rename", where: ["main.tex"] }] });
+    const g = r.groups.find((x) => x.kind === "linked")!;
+    expect(g.parts).toBeUndefined();
+    await expect(stet.accept([g.items[0]!])).rejects.toThrow(/linked/);
+    await expect(stet.reject([g.items[0]!])).rejects.toThrow(/linked/);
   });
 
   it("links a label and its references across submissions, and keeps the link through revisions", async () => {
@@ -246,7 +259,7 @@ describe("grouping", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
-    const { groups } = await stet.submit("a", { title: "rename" });
+    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", title: "Rename", where: ["main.tex"] }] });
     const res = await stet.accept([groups[0]!.items[0]!], { overrideLinked: true });
     expect(res.warnings.join()).toMatch(/broken/);
     expect((await stet.listGroups())[0]!.state).toBe("broken");
@@ -257,7 +270,7 @@ describe("grouping", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
-    const { groups } = await stet.submit("a", { title: "rename" });
+    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", title: "Rename", where: ["main.tex"] }] });
     const [first, second] = groups[0]!.items;
     await stet.reject([first!], { reason: "keep the old label", mode: "revise-rest" });
     expect((await statuses(stet))[second!]).toBe("needs_revision");

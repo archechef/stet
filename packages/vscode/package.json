@@ -335,22 +335,22 @@
         },
         {
           "command": "stet.acceptGroup",
-          "when": "view == stet.review && viewItem =~ /^group\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part)\\.live/",
           "group": "inline@1"
         },
         {
           "command": "stet.rejectGroup",
-          "when": "view == stet.review && viewItem =~ /^group\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part)\\.live/",
           "group": "inline@2"
         },
         {
           "command": "stet.acceptGroup",
-          "when": "view == stet.review && viewItem =~ /^(group|changeset)\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part|changeset)\\.live/",
           "group": "1_review@1"
         },
         {
           "command": "stet.rejectGroup",
-          "when": "view == stet.review && viewItem =~ /^(group|changeset)\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part|changeset)\\.live/",
           "group": "1_review@2"
         },
         {

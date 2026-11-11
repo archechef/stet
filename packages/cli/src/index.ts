@@ -21,6 +21,7 @@ import {
   StetError,
   SHARE_MODES,
   roundOf,
+  partId,
   type ShareMode,
   type AcceptResult,
   type Agent,
@@ -49,14 +50,14 @@ Project (run in your project folder):
 Review:
   stet review [--agent <a>] [--status <s>] [--all]
                                         list items (default: pending)
-  stet show <12.3|G3|C12>               show a change (round 12, change 3), group or round
-  stet accept <12.3|G3>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
-  stet reject <12.3|G3>... [-m <reason>] [--all | --revise-rest | --only]
+  stet show <12.3|G3|G3.2|C12>          show a change (round 12, change 3), group, part of a group or round
+  stet accept <12.3|G3|G3.2>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
+  stet reject <12.3|G3|G3.2>... [-m <reason>] [--all | --revise-rest | --only]
   stet revise <12.3> -m <what to change>
   stet comment <12.3> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
   stet share [manual|saved|committed]   share your saved edits with agents now, or set when agents see them
-  stet group <12.1> <12.2>... --kind atomic|linked|related -t <title> [-m <rationale>]
+  stet group <12.1> <12.2>... --kind atomic|linked|related -t <title> [-m <rationale>] [--parts <file.json|->]
   stet ungroup <G3>
 
 Agent side (run inside an agent workspace, or pass --agent <name>):
@@ -97,6 +98,7 @@ const { values: opt, positionals: pos } = parseArgs({
     "revise-rest": { type: "boolean" },
     only: { type: "boolean" },
     groups: { type: "string" },
+    parts: { type: "string" },
     notes: { type: "string" },
     peek: { type: "boolean" },
     print: { type: "boolean" },
@@ -163,7 +165,8 @@ function need(v: string | undefined, what: string): string {
   return v;
 }
 
-const isGroupId = (s: string) => /^G\d+$/i.test(s);
+/** A group (G3) or a part of one (G3.2). */
+const isGroupId = (s: string) => /^G\d+(\.\d+)?$/i.test(s);
 
 /** How other tools should invoke this CLI: absolute node + script paths. */
 const SELF: CliCommand = {
@@ -411,10 +414,17 @@ async function main() {
         for (const g of groups.filter((g) => g.items.some((i) => csItems.some((x) => x.id === i)))) {
           const icon = g.kind === "linked" ? "⛓" : g.kind === "related" ? "≡" : "◆";
           lines.push(`  ${icon} ${bold(g.id)} ${g.kind} ${g.title}${g.source === "auto" ? dim(" [auto]") : ""}${g.state === "broken" ? red(" [broken]") : ""}`);
-          for (const i of csItems.filter((x) => g.items.includes(x.id))) {
-            const { line } = await stet.locateInWorkingCopy(i);
-            lines.push(`      ${itemSummary(i, line)}`);
-            shown.add(i.id);
+          // Parts of a linked group are accepted one at a time: list them with their own ids.
+          const units = g.parts ? g.parts.map((p, k) => ({ head: `${bold(partId(g.id, k))} ${p.title}`, items: p.items })) : [{ head: "", items: g.items }];
+          for (const u of units) {
+            const its = csItems.filter((x) => u.items.includes(x.id));
+            if (!its.length) continue;
+            if (u.head) lines.push(`      ${u.head}`);
+            for (const i of its) {
+              const { line } = await stet.locateInWorkingCopy(i);
+              lines.push(`${u.head ? "        " : "      "}${itemSummary(i, line)}`);
+              shown.add(i.id);
+            }
           }
         }
         for (const i of csItems.filter((x) => !shown.has(x.id))) {
@@ -428,10 +438,14 @@ async function main() {
     case "show": {
       const id = need(args[0], "id").toUpperCase();
       if (id.startsWith("G")) {
-        const g = (await stet.listGroups()).find((x) => x.id === id);
-        if (!g) throw new StetError(`Unknown group ${id}.`);
-        const items = (await Promise.all(g.items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
-        return out(() => [`${bold(g.id)} ${g.kind} ${g.title} (${g.state})`, g.rationale ?? "", ...items.map((i) => itemSummary(i))].filter(Boolean).join("\n"), { group: g, items });
+        const { group: g, part } = await stet.groupTarget(id);
+        const items = (await Promise.all((part ?? g).items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
+        if (part) return out(() => [`${bold(id)} part of ${g.id} (${g.title}): ${part.title}`, ...items.map((i) => itemSummary(i))].join("\n"), { group: g, part, items });
+        const lines = [`${bold(g.id)} ${g.kind} ${g.title} (${g.state})`, g.rationale ?? ""];
+        if (g.parts) {
+          for (const [k, p] of g.parts.entries()) lines.push(`${bold(partId(g.id, k))} ${p.title}`, ...items.filter((i) => p.items.includes(i.id)).map((i) => "  " + itemSummary(i)));
+        } else lines.push(...items.map((i) => itemSummary(i)));
+        return out(() => lines.filter(Boolean).join("\n"), { group: g, items });
       }
       if (id.startsWith("C")) {
         const cs = (await stet.listChangesets()).find((x) => x.id === id);
@@ -487,14 +501,7 @@ async function main() {
       let ids: string[] = [];
       for (const a of args) {
         if (!isGroupId(a)) ids.push(a);
-        else {
-          const g = (await stet.listGroups()).find((x) => x.id === a.toUpperCase());
-          if (!g) throw new StetError(`Unknown group ${a}.`);
-          for (const i of g.items) {
-            const it = await stet.getItem(i);
-            if (it && (it.status === "pending" || it.status === "needs_revision")) ids.push(i);
-          }
-        }
+        else ids.push(...(await stet.groupTarget(a)).pending);
       }
       ids = [...new Set(ids.map((i) => i.toUpperCase()))];
       try {
@@ -542,8 +549,17 @@ async function main() {
       const kind = need(opt.kind, "--kind") as GroupKind;
       if (!["atomic", "linked", "related"].includes(kind)) throw new StetError(`Unknown group kind '${kind}'.`);
       const onlyAgent = opt.agent ?? (await stet.agentForCwd(cwd).then((a) => a.id).catch(() => null));
-      const r = await stet.group(onlyAgent, args, kind, need(opt.title, "-t <title>"), opt.message);
-      return out(() => (r.merged ? `Merged into ${bold(r.merged.id)}.` : `Created ${bold(r.group!.id)} (${kind}).`), r);
+      const parts = await readJsonArg<{ title: string; items: string[] }[]>(opt.parts);
+      const r = await stet.group(onlyAgent, args, kind, need(opt.title, "-t <title>"), opt.message, parts ?? undefined);
+      return out(() => {
+        if (r.merged) return `Merged into ${bold(r.merged.id)}.`;
+        const g = r.group!;
+        return [
+          `Created ${bold(g.id)} (${kind}).`,
+          ...(g.parts ?? []).map((p, k) => `  part ${bold(partId(g.id, k))} "${p.title}": ${p.items.join(", ")}`),
+          ...r.warnings.map((w) => yellow("! ") + w),
+        ].join("\n");
+      }, r);
     }
 
     case "ungroup": {
@@ -581,7 +597,10 @@ async function main() {
         const lines: string[] = [];
         if (r.changeset) lines.push(`Submitted ${bold(r.changeset.id)} "${r.changeset.title}" with ${r.items.length} item(s):`);
         for (const i of r.items) lines.push(`  ${itemSummary(i)}${i.groups.length ? dim(` [${i.groups.join(",")}]`) : ""}`);
-        for (const g of r.groups) lines.push(`  group ${bold(g.id)} ${g.kind} "${g.title}"${g.source === "auto" ? dim(" (auto-detected)") : ""}: ${g.items.join(", ")}`);
+        for (const g of r.groups) {
+          lines.push(`  group ${bold(g.id)} ${g.kind} "${g.title}"${g.source === "auto" ? dim(" (auto-detected)") : ""}: ${g.items.join(", ")}`);
+          for (const [k, p] of (g.parts ?? []).entries()) lines.push(`    part ${bold(partId(g.id, k))} "${p.title}": ${p.items.join(", ")}`);
+        }
         if (r.ungrouped.length && r.items.length > 1) lines.push(dim(`  ungrouped: ${r.ungrouped.join(", ")} (use \`stet group\` if some belong together)`));
         if (r.superseded.length) lines.push(`  superseded: ${r.superseded.join(", ")}`);
         if (r.withdrawn.length) lines.push(`  withdrawn (change removed): ${r.withdrawn.join(", ")}`);
