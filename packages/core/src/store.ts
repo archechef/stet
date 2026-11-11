@@ -5,7 +5,7 @@ import { hostname } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 import { configDelta, defaultConfig, mergeConfig, validateConfig, type StetConfig } from "./config.js";
-import type { Agent, Changeset, Group, Item, StetEvent, StoreState } from "./model.js";
+import type { Agent, Changeset, Group, Item, Note, StetEvent, StoreState } from "./model.js";
 import { StetError } from "./errors.js";
 import { pathExists } from "./paths.js";
 
@@ -57,7 +57,7 @@ async function readJson<T>(path: string): Promise<T | null> {
 
 const lockContext = new AsyncLocalStorage<Store>();
 
-type Kind = "agents" | "changesets" | "groups" | "items";
+type Kind = "agents" | "changesets" | "groups" | "items" | "notes";
 
 /** Item, group, changeset and agent ids: a name, never a path. */
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -80,7 +80,7 @@ export class Store {
   }
 
   async init(mainBranch: string): Promise<void> {
-    for (const d of ["agents", "changesets", "groups", "items"] as const) await mkdir(this.dir(d), { recursive: true });
+    for (const d of ["agents", "changesets", "groups", "items", "notes"] as const) await mkdir(this.dir(d), { recursive: true });
     if (!(await pathExists(join(this.root, "config.json")))) await writeJsonAtomic(join(this.root, "config.json"), configDelta(defaultConfig(mainBranch)));
     if (!(await pathExists(join(this.root, "state.json")))) {
       const state: StoreState = { schema: 1, nextItem: 1, nextChangeset: 1, nextGroup: 1, nextEvent: 1, base: null };
@@ -200,12 +200,13 @@ export class Store {
   }
 
   /** Allocate sequential ids. Call while holding the lock. */
-  async allocate(kind: "item" | "changeset" | "group", n = 1): Promise<string[]> {
+  async allocate(kind: "item" | "changeset" | "group" | "note", n = 1): Promise<string[]> {
     const s = await this.state();
-    const key = kind === "item" ? "nextItem" : kind === "changeset" ? "nextChangeset" : "nextGroup";
-    const prefix = kind === "item" ? "S" : kind === "changeset" ? "C" : "G";
-    const ids = Array.from({ length: n }, (_, i) => `${prefix}${s[key] + i}`);
-    s[key] += n;
+    const key = kind === "item" ? "nextItem" : kind === "changeset" ? "nextChangeset" : kind === "group" ? "nextGroup" : "nextNote";
+    const prefix = kind === "item" ? "S" : kind === "changeset" ? "C" : kind === "group" ? "G" : "N";
+    const next = s[key] ?? 1;
+    const ids = Array.from({ length: n }, (_, i) => `${prefix}${next + i}`);
+    s[key] = next + n;
     await this.saveState(s);
     return ids;
   }
@@ -263,6 +264,8 @@ export class Store {
   private async put(kind: Kind, v: { id: string }) {
     if (!SAFE_ID.test(v.id)) throw new Error(`Invalid id '${v.id}'.`);
     await this.fence();
+    // Stores made before a kind existed (notes) get its folder on first write.
+    if (kind === "notes") await mkdir(this.dir(kind), { recursive: true });
     await writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
     this.cached(kind)?.set(v.id, structuredClone(v));
   }
@@ -275,6 +278,9 @@ export class Store {
   items = () => this.list<Item>("items");
   changesets = () => this.list<Changeset>("changesets");
   groups = () => this.list<Group>("groups");
+  getNote = (id: string) => this.getOne<Note>("notes", id);
+  notes = () => this.list<Note>("notes");
+  putNote = (v: Note) => this.put("notes", v);
   putAgent = (v: Agent) => this.put("agents", v);
   putItem = (v: Item) => this.put("items", v);
   putChangeset = (v: Changeset) => this.put("changesets", v);

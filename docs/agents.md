@@ -69,12 +69,12 @@ The agent edits, then submits by itself. Some tips:
 
 | Tool | What the agent does with it |
 |---|---|
-| `stet_status` | Sees its item counts, unread feedback, and whether it must sync first. |
+| `stet_status` | Sees its item counts, unread feedback, notes from you waiting for it, and whether it must sync first. |
 | `stet_submit` | Submits its edits with a title, a rationale and optional groups. |
-| `stet_sync` | Moves onto your latest text. Accepted changes become part of it, rejected ones disappear. |
+| `stet_sync` | Moves onto your latest text. Accepted changes become part of it, rejected ones disappear. Delivers your notes on passages. |
 | `stet_get_feedback` | Reads your decisions: accepted (possibly with your wording), rejected with reason, revision requests, comments, stale items, broken linked groups and partly accepted ones. |
 | `stet_list`, `stet_show` | Looks at its own items and groups. |
-| `stet_reply` | Answers your comments. |
+| `stet_reply` | Answers your comments and notes. |
 | `stet_withdraw` | Withdraws proposals it no longer believes in. |
 | `stet_group`, `stet_ungroup` | Fixes how its changes are grouped. |
 

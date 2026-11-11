@@ -237,6 +237,23 @@
         "command": "stet.replyThread",
         "title": "Send to agent",
         "category": "Stet"
+      },
+      {
+        "command": "stet.noteForAgent",
+        "title": "Note for agent…",
+        "category": "Stet",
+        "icon": "$(note)"
+      },
+      {
+        "command": "stet.resolveNote",
+        "title": "Resolve note",
+        "category": "Stet",
+        "icon": "$(check)"
+      },
+      {
+        "command": "stet.showNote",
+        "title": "Go to note",
+        "category": "Stet"
       }
     ],
     "menus": {
@@ -397,6 +414,16 @@
           "command": "stet.comment",
           "when": "view == stet.history && viewItem =~ /^item/",
           "group": "2_talk@1"
+        },
+        {
+          "command": "stet.resolveNote",
+          "when": "view == stet.review && viewItem == note.open",
+          "group": "inline@1"
+        },
+        {
+          "command": "stet.resolveNote",
+          "when": "view == stet.review && viewItem == note.open",
+          "group": "1_review@1"
         }
       ],
       "comments/commentThread/context": [
@@ -430,6 +457,32 @@
         {
           "command": "stet.highlightOff",
           "when": "stet.highlighted"
+        },
+        {
+          "command": "stet.noteForAgent",
+          "when": "stet.active && editorIsOpen"
+        },
+        {
+          "command": "stet.resolveNote",
+          "when": "false"
+        },
+        {
+          "command": "stet.showNote",
+          "when": "false"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "stet.resolveNote",
+          "group": "inline",
+          "when": "commentController == stet && commentThread =~ /^N\\d+$/"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "stet.noteForAgent",
+          "group": "stet@1",
+          "when": "stet.active && resourceScheme == file"
         }
       ]
     },

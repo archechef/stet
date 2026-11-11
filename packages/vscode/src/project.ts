@@ -6,7 +6,7 @@ import { foldPath, isSafeRepoPath, Stet } from "@stet/core";
 import type { Snapshot } from "./model.js";
 
 export class Project implements vscode.Disposable {
-  snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], syncNeeded: new Set(), uncommitted: [], unshared: false };
+  snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], notes: [], syncNeeded: new Set(), uncommitted: [], unshared: false };
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
   private watcher: FSWatcher | undefined;
@@ -81,14 +81,15 @@ export class Project implements vscode.Disposable {
   }
 
   private async load(): Promise<void> {
-    const [agents, changesets, groups, items] = await Promise.all([
+    const [agents, changesets, groups, items, notes] = await Promise.all([
       this.stet.listAgents(),
       this.stet.listChangesets(),
       this.stet.listGroups(),
       this.stet.listItems(),
+      this.stet.listNotes(),
     ]);
     const uncommitted = items.filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
-    this.snapshot = { ...this.snapshot, agents, changesets, groups, items, uncommitted };
+    this.snapshot = { ...this.snapshot, agents, changesets, groups, items, notes, uncommitted };
     this.changed.fire();
     this.scheduleChecks();
   }

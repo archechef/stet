@@ -2,16 +2,18 @@
 
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, foldPath, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type ShareMode } from "@stet/core";
+import { doctor, foldPath, isNoteId, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type ShareMode } from "@stet/core";
 import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
   AGENT_ID,
+  fence,
   groupDescription,
   groupLabel,
   isLive,
   isRef,
   itemLabel,
+  LineIndex,
   oneLine,
   partLabel,
   roundLabel,
@@ -240,6 +242,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     switch (n.type) {
       case "agent":
         return this.allProjects().length > 1 ? { project: p } : undefined;
+      case "note": {
+        const agent = snap.agents.find((a) => a.id === n.note.agent);
+        return agent && { project: p, node: { type: "agent", agent } };
+      }
       case "changeset": {
         const agent = snap.agents.find((a) => a.id === n.changeset.agent);
         return agent && { project: p, node: { type: "agent", agent } };
@@ -334,6 +340,20 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
             (snap.syncNeeded.has(n.agent.id) ? "\n\nThe agent works on an older version of your text; it catches up when it calls `stet_sync`." : ""),
         );
         t.contextValue = n.agent.state === "active" ? "agent" : "agent.archived";
+        return t;
+      }
+      case "note": {
+        const nt = n.note;
+        const t = new vscode.TreeItem(`${nt.id}  ${oneLine(nt.body, 50)}`, vscode.TreeItemCollapsibleState.None);
+        const replies = nt.thread.length ? ` · ${nt.thread.length} repl${nt.thread.length === 1 ? "y" : "ies"}` : "";
+        t.description = `${nt.file}${nt.deliveredAt ? "" : " · not delivered yet"}${replies}`;
+        t.iconPath = new vscode.ThemeIcon("note");
+        t.tooltip = new vscode.MarkdownString(
+          `**${nt.id}** note for ${esc(nt.agent)} on ${esc(nt.file)}${nt.deliveredAt ? "" : " (the agent receives it at its next sync)"}\n\n${esc(nt.body)}\n\n${fence(nt.text, "latex")}` +
+            nt.thread.slice(-3).map((r) => `\n\n> **${r.author === "user" ? "You" : esc(nt.agent)}:** ${esc(r.text)}`).join(""),
+        );
+        t.contextValue = "note.open";
+        t.command = { command: "stet.showNote", title: "Go to note", arguments: [el] };
         return t;
       }
       case "changeset": {
@@ -671,6 +691,103 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     await this.decide(t.project, t.item.id, !isRef(arg), () => this.run(t.project, () => t.project.stet.requestRevision(t.item.id, text)).then(() => undefined));
   }
 
+  // -------------------------------------------------------------------------
+  // Reviewer notes (spec §7.8)
+
+  /** An agent of `p` to address, asked for when there is more than one. */
+  private async pickNoteAgent(p: Project): Promise<string | undefined> {
+    const agents = p.snapshot.agents.filter((a) => a.state === "active");
+    if (!agents.length) return void vscode.window.showInformationMessage("Notes go to an agent: create an agent workspace first (Stet: New agent workspace).");
+    if (agents.length === 1) return agents[0]!.id;
+    const pick = await vscode.window.showQuickPick(agents.map((a) => ({ label: a.id, description: a.kind })), { title: "Note for which agent?" });
+    return pick?.label;
+  }
+
+  /** Leave a note for an agent on the selected passage (or the current line). */
+  async noteForAgent(): Promise<void> {
+    const ed = vscode.window.activeTextEditor;
+    const p = ed && this.projectFor(ed.document.uri);
+    const file = p && ed ? p.relPath(ed.document.uri) : null;
+    if (!ed || !p || !file) return void vscode.window.showInformationMessage("Open a file of your Stet project and select the passage the note is about.");
+    const agent = await this.pickNoteAgent(p);
+    if (!agent) return;
+    const body = await vscode.window.showInputBox({
+      title: `Note for ${agent}`,
+      prompt: "What should the agent do with this passage? It receives the note at its next sync.",
+      placeHolder: "e.g. shorten this paragraph, and keep the citation",
+    });
+    if (!body) return;
+    await this.addNote(p, file, ed.document, ed.selection.isEmpty ? new vscode.Range(ed.selection.active.line, 0, ed.selection.active.line, Number.MAX_SAFE_INTEGER) : ed.selection, agent, body);
+  }
+
+  /** Leave a note on `range` of `doc` (as shown, unsaved edits included). */
+  private async addNote(p: Project, file: string, doc: vscode.TextDocument, range: vscode.Range, agent: string, body: string): Promise<void> {
+    const text = toLf(doc.getText());
+    const idx = new LineIndex(text);
+    const r = doc.validateRange(range);
+    const start = idx.offset(r.start.line, r.start.character);
+    const end = idx.offset(r.end.line, r.end.character);
+    await this.run(p, async () => {
+      const n = await p.stet.addNote(agent, { file, start, end, text }, body);
+      vscode.window.setStatusBarMessage(`$(note) ${n.id} for ${agent}: it arrives at the agent's next sync.`, 5000);
+    });
+  }
+
+  /** The note a command is about: a tree element, a comment thread, or an id. */
+  private noteTarget(arg: unknown): { project: Project; note: Note } | undefined {
+    if (arg && typeof arg === "object" && "project" in arg && (arg as El).node?.type === "note") {
+      const el = arg as El & { node: { type: "note"; note: Note } };
+      return { project: el.project, note: el.node.note };
+    }
+    const id = typeof arg === "string" ? arg : (arg as vscode.CommentThread | undefined)?.contextValue;
+    if (!id || !isNoteId(id)) return undefined;
+    const uri = (arg as vscode.CommentThread | undefined)?.uri;
+    const ps = uri && typeof arg !== "string" ? [this.projectFor(uri)].filter((x): x is Project => !!x) : this.allProjects();
+    for (const project of ps) {
+      const note = project.snapshot.notes.find((n) => n.id === id.toUpperCase());
+      if (note) return { project, note };
+    }
+    return undefined;
+  }
+
+  async resolveNote(arg: unknown): Promise<void> {
+    const t = this.noteTarget(arg);
+    if (!t) return;
+    await this.run(t.project, () => t.project.stet.resolveNote(t.note.id).then(() => undefined));
+  }
+
+  /** Reply in a note's thread (from the editor). */
+  async replyNote(p: Project, note: Note, text: string): Promise<void> {
+    await this.run(p, () => p.stet.replyNote(note.id, text, "user").then(() => undefined));
+  }
+
+  /** Create a note from a comment thread the user started on a line without a proposed change. */
+  async noteFromThread(thread: vscode.CommentThread, text: string): Promise<boolean> {
+    const p = this.projectFor(thread.uri);
+    const file = p?.relPath(thread.uri);
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === thread.uri.toString());
+    if (!p || !file || !doc || !thread.range) return false;
+    const agent = await this.pickNoteAgent(p);
+    if (!agent) return false;
+    const r = thread.range;
+    await this.addNote(p, file, doc, new vscode.Range(r.start.line, 0, r.end.line, Number.MAX_SAFE_INTEGER), agent, text);
+    return true;
+  }
+
+  async showNote(arg: unknown): Promise<void> {
+    const t = this.noteTarget(arg);
+    if (!t) return;
+    const doc = await vscode.workspace.openTextDocument(t.project.fileUri(t.note.file));
+    const text = toLf(doc.getText());
+    const span = t.project.stet.locateNoteInText(t.note, text);
+    const idx = new LineIndex(text);
+    const range = span ? new vscode.Range(idx.position(span.start).line, idx.position(span.start).character, idx.position(span.end).line, idx.position(span.end).character) : new vscode.Range(0, 0, 0, 0);
+    const ed = await vscode.window.showTextDocument(doc, { preserveFocus: true, preview: true });
+    ed.selection = new vscode.Selection(range.start, range.end);
+    ed.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    if (!span) void vscode.window.showInformationMessage(`The passage of ${t.note.id} is no longer in ${t.note.file}.`);
+  }
+
   async ungroup(arg: unknown): Promise<void> {
     const t = await this.target(arg);
     if (t?.node?.type !== "group") return;
@@ -679,10 +796,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   }
 
   async replyThread(reply: vscode.CommentReply, threads: Threads): Promise<void> {
+    const note = threads.noteForThread(reply.thread);
+    if (note) return this.replyNote(note.project, note.note, reply.text);
     const hit = await threads.itemForThread(reply.thread);
     if (!hit) {
-      void vscode.window.showWarningMessage("Comments go on proposed changes: start the thread on a line with a pending change.");
-      if (!threads.isOwn(reply.thread)) reply.thread.dispose();
+      // A new thread away from proposed changes: a note for an agent on those lines.
+      const own = threads.isOwn(reply.thread);
+      const made = !own && (await this.noteFromThread(reply.thread, reply.text));
+      if (!made && !own) void vscode.window.showWarningMessage("Comments go on a proposed change, or become a note for an agent: open a Stet project file.");
+      if (!own) reply.thread.dispose();
       return;
     }
     if (!threads.isOwn(reply.thread)) reply.thread.dispose();
@@ -1024,6 +1146,8 @@ function elId(el: El): string {
   switch (n.type) {
     case "agent":
       return `${p}|agent|${n.agent.id}`;
+    case "note":
+      return `${p}|note|${n.note.id}`;
     case "changeset":
       return `${p}|cs|${n.changeset.id}`;
     case "group":
@@ -1093,6 +1217,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.next", inOrder(() => ext.step(1)));
   reg("stet.previous", inOrder(() => ext.step(-1)));
   reg("stet.replyThread", (r: vscode.CommentReply) => ext.replyThread(r, threads));
+  reg("stet.noteForAgent", () => ext.noteForAgent());
+  reg("stet.resolveNote", (a) => ext.resolveNote(a));
+  reg("stet.showNote", (a) => ext.showNote(a));
   await ext.updateHighlightContext();
   await ext.discover();
 }

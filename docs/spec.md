@@ -91,6 +91,7 @@ The store lives in the git *common* dir (`git rev-parse --git-common-dir`). That
   changesets/C<n>.json
   groups/G<n>.json
   items/S<n>.json
+  notes/N<n>.json        # reviewer notes to agents (§7.8)
   events.jsonl           # append-only event log (feedback + UI live updates)
   previews/              # PDF preview cache
   lock                   # advisory lock file
@@ -406,6 +407,12 @@ Stet **never replays an agent's worktree on its own initiative**, because the ag
 ### 7.7 Withdraw (agent)
 Status → `withdrawn`. The change disappears from the branch at the next replay.
 
+### 7.8 Reviewer notes (user → one agent)
+A **note** asks one agent for something about a passage that has no proposed change yet ("shorten this paragraph", "check this proof"). Record `notes/N<n>.json`: `agent`, `file`, the passage `text` with its `range` and `context` (as for items, so it can be found again; taken from the reviewer's view, unsaved editor text included), `body`, `state` (`open` | `resolved`), `deliveredAt`, and a `thread`.
+- **Leaving one:** `addNote(agent, {file, start/end or fromLine/toLine, text?}, body)`. Only active agents; paths inside the project; a `note_added` event (not feedback).
+- **Delivery at the next sync:** `stet_sync` delivers every open, undelivered note of the agent, located (§8, without a reference text) in the agent's workspace as it is after the sync, with its `file:line` range, the quoted passage, and any replies written before delivery. A passage that can't be found is delivered with its quote and a remark. A note is delivered once (`deliveredAt`). Notes don't change the base, so `stet_status` reports `notesWaiting` and the instructions tell agents to sync then. Sync still refuses a workspace with unsubmitted edits, but delivers the waiting notes in its refusal: a note should not wait until the agent's current work is done.
+- **Afterwards:** a conversation like an item's. The agent answers with `stet_reply N3` (`note_reply`); the reviewer's replies are `note_comment` feedback, and *Resolve* gives `note_resolved` feedback. Note events from before the delivery are not repeated as feedback, since the delivery included them. Resolved notes are never delivered. Archiving an agent resolves its open notes.
+
 ---
 
 ## 8. Anchoring (relocating an item in changed text)
@@ -473,11 +480,11 @@ Known limitations:
 | `stet_submit` | `title`, `rationale`, `groups?: [{kind, title, rationale?, where: string[], parts?: [{title, where}]}]`, `notes?: [{where, note}]` | changeset id; items (`id`, `file`, `line`, short old→new preview, `groups`); groups with their parts; ungrouped items; hint warnings, including joined parts |
 | `stet_group` | `itemIds`, `kind`, `title`, `rationale?`, `parts?: [{title, itemIds}]` | the group with its parts and warnings; for `atomic`, the new merged item |
 | `stet_ungroup` | `groupId` | ok. The agent may remove its own groups and `auto` groups in its changesets. |
-| `stet_sync` | — | new base sha, items that became stale |
-| `stet_get_feedback` | `ack?: bool` (default true) | events since the cursor: `accepted` (with the final text if edited), `rejected` (reason), `revision_requested`, `comment`, `stale` (with current context), `repeat_rejected`, `group_broken` (member statuses), `group_partial` (each part and its outcome) |
+| `stet_sync` | — | new base sha, items that became stale, reviewer notes delivered (§7.8) |
+| `stet_get_feedback` | `ack?: bool` (default true) | events since the cursor: `accepted` (with the final text if edited), `rejected` (reason), `revision_requested`, `comment`, `stale` (with current context), `repeat_rejected`, `group_broken` (member statuses), `group_partial` (each part and its outcome), `note_comment`, `note_resolved` |
 | `stet_list` | `status?`, `file?` | items with status |
-| `stet_show` | `id` (item or group) | old/new text, note, groups, thread; for a group its parts and members |
-| `stet_reply` | `itemId`, `text` | ok |
+| `stet_show` | `id` (item, group or delivered note) | old/new text, note, groups, thread; for a group its parts and members; for a note its passage and thread |
+| `stet_reply` | `itemId` (an item, or a delivered note `N3`), `text` | ok |
 | `stet_withdraw` | `itemIds`, `reason?` | ok |
 
 `where` uses the syntax in §6.4.3. A `note` is attached to every item that its `where` matches.
@@ -518,7 +525,10 @@ reaches the real document until a human accepts it.
   - `related` — optional thematic batches with a title and rationale.
 - Check the submit result: fix wrong or missing groupings with `stet_group` /
   `stet_ungroup`.
-- Before starting new work: call `stet_status`; if `syncNeeded`, call `stet_sync`.
+- Before starting new work: call `stet_status`; if `syncNeeded` or notes are
+  waiting, call `stet_sync` (waiting notes arrive even when it refuses).
+- Notes from the reviewer (N3) point at a passage and ask for something. Act
+  on them like a request; answer with `stet_reply` if unclear or when done.
 - Call `stet_get_feedback` regularly. For each event:
   - rejected: do not propose the same change again; learn from the reason.
   - revision_requested: revise that passage, then submit.
@@ -527,6 +537,8 @@ reaches the real document until a human accepts it.
   - accepted with edited text: prefer the human's wording style from now on.
   - group_broken: some linked edits were applied without the others; propose
     whatever is needed to make the document consistent again.
+  - note_comment / note_resolved: the reviewer wrote in a note's thread, or
+    closed the note.
   - group_partial: some parts of a linked group were accepted, others not;
     propose what makes the document consistent.
 - Use `stet_withdraw` for proposals you no longer believe in.
@@ -587,7 +599,7 @@ The web UI will expose this API as REST plus Server-Sent Events on `localhost`, 
   - pending items are highlighted inline (old text struck through, new text shown as ghost text)
   - CodeLens above each item: `✓ Accept · ✗ Reject · ✎ Edit · 💬`
   - hover shows the rationale
-- **Threads:** item threads appear through the VS Code Comments API.
+- **Threads:** item threads appear through the VS Code Comments API. Any line of a project file can take a thread: on a proposed change it is a comment, elsewhere it becomes a note for an agent (§7.8; the agent is asked for when there are several). Open notes show as threads at their passage and under their agent in the panel, with *Resolve*; *Stet: Note for agent…* (editor context menu) notes the selection.
 - **Commands:** `Stet: Set up project`, `New agent workspace`, `Open agent workspace in…`, `Finish review (commit)`, `Preview S<n> in PDF`.
 - **Status bar:** number of pending items, with a warning when agents need a sync.
 - **Setup without a command line:** `Set up project` runs the equivalent of `stet init`. MCP configs point at the extension's bundled `stet` entry point.
@@ -727,6 +739,11 @@ A review pass for security, efficiency and duplication before publishing the ext
 - **Extension:** accept and move on measured 250–860 ms in the integration test, now 125–165 ms. The panel fires its tree change before setting context keys (in parallel); background checks (agent status ~0.6 s, share status ~0.3 s on the large paper, both under the store lock) wait for a 2-second pause instead of 0.8 s, so they don't fall between two decisions.
 - **Ordering:** decision commands (`accept`, `reject`, `edit`, `revise`, group variants, `next`/`previous`) run one after another. A second `a` before the panel moved on acted on the stale selection: one change stayed pending (integration check *two quick accepts accept two changes*, fails without the queue).
 - **Review of the code since the pre-release review:** shared-edit snapshots run git in the user's project with the user's own config (filters from the user's `.gitattributes`); fsmonitor is off for all of Stet's git calls, and agents can't change the project's config or attributes under a sandbox (on native Windows the guard is best effort, as before). Markdown from agents stays fenced and untrusted in panels and tooltips; the colour button only writes its two keys and restores the user's previous values. `npm audit`: runtime dependencies clean; a high-severity advisory in `vite` (dev only, via the test runner) fixed by updating the lockfile.
+
+### Reviewer notes (2026-11-11)
+- **Why:** the reviewer wanted to ask one agent for something about a passage without a proposed change, and have it arrive through sync (§7.8).
+- **Where:** `notes.ts` (`describeNote`, shared by MCP and CLI), `Stet.addNote` / `deliverNotes` / `replyNote` / `resolveNote` / `locateNoteInText`, `notesWaiting` in agent status, `notes/` in the store (created on first write for older stores; `nextNote` defaults to 1). Sync refusals carry waiting notes. Extension: note threads in `comments.ts`, note nodes under agents (`TreeModel.openNotes`), commands *Note for agent…*, *Resolve note*, *Go to note*; CLI `stet note`, `stet note resolve`, `stet notes`, `N3` in `show`, `comment`, `reply`.
+- Tests: `notes.test.ts` (delivery once and per agent, delivery with a refused sync and moved text, unfound passage, early and late replies, resolve and archive, path checks), extension `model.test.ts` (note nodes).
 
 ### Parts of linked groups (2026-11-11)
 - **Why:** agents link long lists of changes, and linked groups could only be accepted whole or item by item (breaking the group). Parts (§6.4.6) are reviewable on their own, under two conditions from the user: accepting one part alone still compiles (warnings fine), and blocks no other part. Identical changes stay together.

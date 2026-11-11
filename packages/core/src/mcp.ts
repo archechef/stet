@@ -7,7 +7,8 @@ import type { Readable, Writable } from "node:stream";
 import type { GroupHint, NoteHint } from "./grouping.js";
 
 import { archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
-import { partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
+import { isNoteId, partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
+import { describeNote } from "./notes.js";
 import { Stet, StetError } from "./service.js";
 import { oneLine } from "./text.js";
 import { pathExists } from "./paths.js";
@@ -43,7 +44,8 @@ const whereSchema = {
 export const TOOLS: ToolDef[] = [
   {
     name: "stet_status",
-    description: "Your agent status: item counts, unread feedback, and whether the document changed so that you must call stet_sync before new work.",
+    description:
+      "Your agent status: item counts, unread feedback, reviewer notes waiting for you, and whether the document changed so that you must call stet_sync before new work.",
     inputSchema: obj({}),
   },
   {
@@ -89,14 +91,16 @@ export const TOOLS: ToolDef[] = [
     name: "stet_sync",
     description:
       "Move your workspace onto the latest document: accepted changes become part of it, rejected/withdrawn ones disappear, " +
-      "pending ones stay on top. Requires all edits to be submitted (or discarded) first.",
+      "pending ones stay on top. Also delivers the reviewer's notes on passages (N3). Requires all edits to be submitted (or discarded) first; " +
+      "waiting notes are delivered even when it refuses.",
     inputSchema: obj({}),
   },
   {
     name: "stet_get_feedback",
     description:
       "New reviewer feedback since your last call: accepted (possibly with edited text), rejected (with reason), " +
-      "revision requests, comments, stale items (text changed underneath), broken linked groups and partly accepted ones.",
+      "revision requests, comments, stale items (text changed underneath), broken linked groups and partly accepted ones, " +
+      "and the reviewer's replies on notes you received.",
     inputSchema: obj({ ack: { type: "boolean", description: "Mark the feedback as read (default true)." } }),
   },
   {
@@ -109,13 +113,15 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "stet_show",
-    description: "Show one item (12.3: round 12, change 3) with its text, note, groups and discussion thread, or a group (G3) with its parts and members.",
-    inputSchema: obj({ id: str("Item id like 12.3 or group id like G3.") }, ["id"]),
+    description:
+      "Show one item (12.3: round 12, change 3) with its text, note, groups and discussion thread, a group (G3) with its parts and members, " +
+      "or a reviewer note (N3) with its thread.",
+    inputSchema: obj({ id: str("Item id like 12.3, group id like G3 or note id like N3.") }, ["id"]),
   },
   {
     name: "stet_reply",
-    description: "Reply to the reviewer's comment on one of your items.",
-    inputSchema: obj({ itemId: str("Item id, e.g. 12.3."), text: str("Your reply.") }, ["itemId", "text"]),
+    description: "Reply to the reviewer's comment on one of your items, or to a reviewer note (N3).",
+    inputSchema: obj({ itemId: str("Item id (e.g. 12.3) or note id (e.g. N3)."), text: str("Your reply.") }, ["itemId", "text"]),
   },
   {
     name: "stet_withdraw",
@@ -182,6 +188,10 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
       return `${label("AUTO-REJECTED", "bad")} ${it}: it repeats an earlier rejected change (${d.previous}).`;
     case "group_broken":
       return `${label("LINKED GROUP BROKEN", "bad")} ${e.group} "${d.title}": ${(d.members ?? []).map((m: any) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
+    case "note_comment":
+      return `${label("REVIEWER ON NOTE", "info")} ${d.note} (${d.file}): ${d.text} (answer with ${reply(String(d.note ?? ""))})`;
+    case "note_resolved":
+      return `${label("NOTE RESOLVED", "good")} ${d.note} (${d.file}): the reviewer closed it.`;
     case "group_partial": {
       const ps = (d.parts ?? []) as { id: string; title: string; outcome: string; items: string[] }[];
       const list = (xs: typeof ps) => xs.map((p) => `${p.id} "${p.title}" (${p.items.join(", ")}${p.outcome === "accepted" ? "" : `: ${p.outcome}`})`).join("; ");
@@ -288,6 +298,7 @@ export class StetMcpServer {
               `Agent ${agent} on branch ${s.agent.branch}, workspace ${s.agent.worktree}.`,
               `Items: ${Object.entries(s.counts).map(([k, v]) => `${v} ${k}`).join(", ") || "none"}.`,
               s.unreadFeedback ? `${s.unreadFeedback} unread feedback event(s): call stet_get_feedback.` : "No unread feedback.",
+              ...(s.notesWaiting ? [`${s.notesWaiting} note(s) from the reviewer waiting for you: call stet_sync to receive them.`] : []),
               s.syncNeeded ? "The document changed since your last sync: call stet_sync before starting new work." : "Your workspace is up to date with the document.",
             ].join("\n"),
           );
@@ -310,12 +321,20 @@ export class StetMcpServer {
           if (r.withdrawn.length) lines.push(`Withdrawn (you removed the change): ${r.withdrawn.join(", ")}`);
           if (r.repeats.length) lines.push(`Auto-rejected because they repeat rejected changes: ${r.repeats.join(", ")}`);
           for (const w of r.warnings) lines.push(`Warning: ${w}`);
-          if (r.sync) lines.push(`Your workspace was synced onto the latest document${r.sync.stale.length ? `; stale: ${r.sync.stale.map((s) => s.id).join(", ")}` : ""}.`);
+          if (r.sync) {
+            lines.push(`Your workspace was synced onto the latest document${r.sync.stale.length ? `; stale: ${r.sync.stale.map((s) => s.id).join(", ")}` : ""}.`);
+            lines.push(...r.sync.notes.map((d) => describeNote(d)));
+          }
           return text(lines.join("\n"), { changeset: r.changeset?.id ?? null, items: r.items.map((i) => ({ id: i.id, file: i.file, status: i.status, groups: i.groups })), groups: r.groups.map((g) => ({ id: g.id, kind: g.kind, items: g.items, ...(g.parts ? { parts: g.parts } : {}) })) });
         }
         case "stet_sync": {
           const r = await stet.sync(agent);
-          return text(`Synced onto the latest document. ${r.kept} pending item(s) kept.${r.stale.length ? ` Stale (text changed underneath): ${r.stale.map(itemLine).join("; ")}` : ""}`);
+          return text(
+            [
+              `Synced onto the latest document. ${r.kept} pending item(s) kept.${r.stale.length ? ` Stale (text changed underneath): ${r.stale.map(itemLine).join("; ")}` : ""}`,
+              ...r.notes.map((d) => describeNote(d)),
+            ].join("\n"),
+          );
         }
         case "stet_get_feedback": {
           const ev = await stet.feedback(agent, { ack: args.ack !== false });
@@ -332,6 +351,17 @@ export class StetMcpServer {
         case "stet_show": {
           // Agents see their own items and groups only (other agents' proposals are not theirs to read).
           const id = String(args.id ?? "").toUpperCase();
+          if (isNoteId(id)) {
+            const n = await stet.getNote(id);
+            if (n.agent !== agent || !n.deliveredAt) throw new StetError(`Unknown note ${id}.`);
+            return text(
+              [
+                `${n.id} [${n.state}] ${n.file}: ${n.body}`,
+                `Passage: ${JSON.stringify(n.text)}`,
+                ...n.thread.map((t) => `${t.author === "user" ? "reviewer" : "you"}: ${t.text}`),
+              ].join("\n"),
+            );
+          }
           if (id.startsWith("G")) {
             const g = await stet.store.getGroup(id);
             if (!g || g.agent !== agent) throw new StetError(`Unknown group ${id}.`);
@@ -359,6 +389,12 @@ export class StetMcpServer {
           );
         }
         case "stet_reply": {
+          if (isNoteId(String(args.itemId ?? ""))) {
+            const n = await stet.getNote(String(args.itemId));
+            if (n.agent !== agent || !n.deliveredAt) throw new StetError(`Unknown note ${args.itemId}.`);
+            await stet.replyNote(n.id, String(args.text ?? ""), "agent");
+            return text(`Replied on ${n.id}.`);
+          }
           const it = await stet.getItem(String(args.itemId ?? "").toUpperCase());
           if (!it) throw new StetError(`Unknown item ${args.itemId}.`);
           if (it.agent !== agent) throw new StetError(`${it.id} belongs to ${it.agent}.`);

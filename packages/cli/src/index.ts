@@ -32,6 +32,9 @@ import {
   type ItemStatus,
   type NoteHint,
   type StetEvent,
+  describeNote,
+  isNoteId,
+  type Note,
 } from "@stet/core";
 
 const HELP = `stet — review AI-proposed changes to LaTeX projects
@@ -50,15 +53,19 @@ Project (run in your project folder):
 Review:
   stet review [--agent <a>] [--status <s>] [--all]
                                         list items (default: pending)
-  stet show <12.3|G3|G3.2|C12>          show a change (round 12, change 3), group, part of a group or round
+  stet show <12.3|G3|G3.2|C12|N3>       show a change (round 12, change 3), group, part of a group, round or note
   stet accept <12.3|G3|G3.2>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
   stet reject <12.3|G3|G3.2>... [-m <reason>] [--all | --revise-rest | --only]
   stet revise <12.3> -m <what to change>
-  stet comment <12.3> -m <text>
+  stet comment <12.3|N3> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
   stet share [manual|saved|committed]   share your saved edits with agents now, or set when agents see them
   stet group <12.1> <12.2>... --kind atomic|linked|related -t <title> [-m <rationale>] [--parts <file.json|->]
   stet ungroup <G3>
+  stet note <agent> <file[:line[-line]]> -m <text>
+                                        leave a note for one agent on a passage; it arrives at the agent's next sync
+  stet note resolve <N3>                close a note
+  stet notes [--agent <a>] [--all]      list open notes (--all: resolved ones too)
 
 Agent side (run inside an agent workspace, or pass --agent <name>):
   stet status
@@ -66,7 +73,7 @@ Agent side (run inside an agent workspace, or pass --agent <name>):
   stet sync
   stet feedback [--peek]
   stet list [--status <s>]
-  stet reply <12.3> -m <text>
+  stet reply <12.3|N3> -m <text>
   stet withdraw <12.3>... [-m <reason>]
 
 Internal (called by agents' tools):
@@ -245,6 +252,13 @@ const describeEvent = (e: StetEvent) =>
     label: (t, tone) => ({ good: green, bad: red, warn: yellow, info: cyan })[tone](t.toLowerCase()),
     reply: (id) => `stet reply ${id} -m "..."`,
   });
+
+const noteReply = (id: string) => `stet reply ${id} -m "..."`;
+
+function noteSummary(n: Note): string {
+  const tag = n.state === "resolved" ? dim(" [resolved]") : n.deliveredAt ? "" : dim(" [not delivered yet]");
+  return `${bold(n.id)} for ${n.agent} on ${n.file}${tag}: ${oneLine(n.body, 80)}${n.thread.length ? dim(` (${n.thread.length} repl${n.thread.length === 1 ? "y" : "ies"})`) : ""}`;
+}
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -437,6 +451,18 @@ async function main() {
 
     case "show": {
       const id = need(args[0], "id").toUpperCase();
+      if (isNoteId(id)) {
+        const n = await stet.getNote(id);
+        return out(
+          () =>
+            [
+              noteSummary(n),
+              dim(`passage: ${oneLine(n.text, 200)}`),
+              ...n.thread.map((t) => `${t.author === "user" ? "you" : n.agent}: ${t.text}`),
+            ].join("\n"),
+          n,
+        );
+      }
       if (id.startsWith("G")) {
         const { group: g, part } = await stet.groupTarget(id);
         const items = (await Promise.all((part ?? g).items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
@@ -541,8 +567,33 @@ async function main() {
     }
 
     case "comment": {
+      if (isNoteId(need(args[0], "item or note id"))) {
+        const n = await stet.replyNote(args[0]!, need(opt.message, "-m <text>"), "user");
+        return out(() => `Replied on ${n.id}${n.deliveredAt ? "" : " (the agent gets it with the note at its next sync)"}.`, n);
+      }
       const it = await stet.comment(need(args[0], "item id"), need(opt.message, "-m <text>"), "user");
       return out(() => `Commented on ${it.id}.`, it);
+    }
+
+    case "note": {
+      if (args[0] === "resolve") {
+        const n = await stet.resolveNote(need(args[1], "note id"));
+        return out(() => `Resolved ${n.id}.`, n);
+      }
+      const agent = need(args[0], "agent");
+      const where = need(args[1], "file[:line[-line]]");
+      const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(where);
+      const n = await stet.addNote(
+        agent,
+        m ? { file: m[1]!, fromLine: Number(m[2]), toLine: Number(m[3] ?? m[2]) } : { file: where, fromLine: 1, toLine: Number.MAX_SAFE_INTEGER },
+        need(opt.message, "-m <text>"),
+      );
+      return out(() => `Left ${bold(n.id)} for ${n.agent}; it arrives at the agent's next sync.`, n);
+    }
+
+    case "notes": {
+      const notes = await stet.listNotes({ ...(opt.agent ? { agent: opt.agent } : {}), ...(opt.all ? {} : { state: "open" as const }) });
+      return out(() => (notes.length ? notes.map(noteSummary).join("\n") : "No open notes."), notes);
     }
 
     case "group": {
@@ -578,6 +629,7 @@ async function main() {
             `Items: ${Object.entries(s.counts).map(([k, v]) => `${v} ${k}`).join(", ") || "none"}`,
             s.unreadFeedback ? yellow(`${s.unreadFeedback} unread feedback event(s): run \`stet feedback\``) : "No unread feedback.",
             s.syncNeeded ? yellow("The document changed: run `stet sync` before starting new work.") : "Up to date with the document.",
+            ...(s.notesWaiting ? [yellow(`${s.notesWaiting} note(s) from the reviewer waiting: run \`stet sync\` to receive them.`)] : []),
           ].join("\n"),
         s,
       );
@@ -613,7 +665,14 @@ async function main() {
 
     case "sync": {
       const r = await stet.sync(await agentId(stet));
-      return out(() => `Synced onto ${r.base.slice(0, 8)}: ${r.kept} pending item(s) kept${r.stale.length ? `, stale: ${r.stale.map((s) => s.id).join(", ")}` : ""}.`, r);
+      return out(
+        () =>
+          [
+            `Synced onto ${r.base.slice(0, 8)}: ${r.kept} pending item(s) kept${r.stale.length ? `, stale: ${r.stale.map((s) => s.id).join(", ")}` : ""}.`,
+            ...r.notes.map((d) => describeNote(d, noteReply)),
+          ].join("\n"),
+        r,
+      );
     }
 
     case "feedback": {
@@ -629,6 +688,12 @@ async function main() {
 
     case "reply": {
       const id = await agentId(stet);
+      if (isNoteId(need(args[0], "item or note id"))) {
+        const n = await stet.getNote(args[0]!);
+        if (n.agent !== id || !n.deliveredAt) throw new StetError(`Unknown note ${args[0]}.`);
+        await stet.replyNote(n.id, need(opt.message, "-m <text>"), "agent");
+        return out(() => `Replied on ${n.id}.`, { ok: true });
+      }
       const it = await stet.getItem(need(args[0], "item id").toUpperCase());
       if (it && it.agent !== id) throw new StetError(`${it.id} belongs to ${it.agent}.`);
       await stet.comment(args[0]!, need(opt.message, "-m <text>"), "agent");

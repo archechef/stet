@@ -17,6 +17,7 @@ import {
   type InlineDiff,
   type Item,
   type ItemStatus,
+  type Note,
 } from "@stet/core";
 
 export interface Snapshot {
@@ -24,6 +25,8 @@ export interface Snapshot {
   changesets: Changeset[];
   groups: Group[];
   items: Item[];
+  /** Reviewer notes to agents (spec §7.8). */
+  notes: Note[];
   /** Agents whose workspace is behind the review base. */
   syncNeeded: Set<string>;
   /** Accepted items not committed yet. */
@@ -34,6 +37,8 @@ export interface Snapshot {
 
 export type Node =
   | { type: "agent"; agent: Agent }
+  /** An open reviewer note, under its agent (Review panel only). */
+  | { type: "note"; note: Note }
   | { type: "changeset"; changeset: Changeset }
   | { type: "group"; group: Group }
   /** A part of a linked group (spec §6.4.6), accepted or rejected on its own. */
@@ -129,10 +134,15 @@ export class TreeModel {
     }
     switch (node.type) {
       case "agent":
-        return this.snap.changesets
-          .filter((c) => c.agent === node.agent.id && this.csVisible(c))
-          .sort((a, b) => num(b.id) - num(a.id))
-          .map((changeset) => ({ type: "changeset", changeset }));
+        return [
+          ...this.openNotes(node.agent.id).map((note): Node => ({ type: "note", note })),
+          ...this.snap.changesets
+            .filter((c) => c.agent === node.agent.id && this.csVisible(c))
+            .sort((a, b) => num(b.id) - num(a.id))
+            .map((changeset): Node => ({ type: "changeset", changeset })),
+        ];
+      case "note":
+        return [];
       case "changeset":
         return [
           ...this.groupsOf(node.changeset).map((group): Node => ({ type: "group", group })),
@@ -148,6 +158,11 @@ export class TreeModel {
       case "item":
         return [];
     }
+  }
+
+  /** Open notes for an agent, shown in the Review panel only. */
+  openNotes(agent: string): Note[] {
+    return this.mode === "review" ? this.snap.notes.filter((n) => n.agent === agent && n.state === "open").sort(byNum) : [];
   }
 
   liveCount(pred: (i: Item) => boolean): number {
@@ -309,6 +324,12 @@ export class LineIndex {
   constructor(readonly text: string) {
     for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) this.starts.push(i + 1);
   }
+  /** Offset of a line/character position (clamped to the text). */
+  offset(line: number, character: number): number {
+    const start = this.starts[Math.max(0, Math.min(line, this.starts.length - 1))]!;
+    return Math.min(start + character, this.text.length);
+  }
+
   position(offset: number): { line: number; character: number } {
     let lo = 0;
     let hi = this.starts.length - 1;

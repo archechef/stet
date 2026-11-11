@@ -125,6 +125,30 @@ export interface Item {
   thread: ThreadEntry[];
 }
 
+/**
+ * A reviewer's note to one agent about a passage of the document (spec §7.8), e.g. "shorten this
+ * paragraph". Delivered at the agent's next sync; afterwards a conversation like an item's.
+ */
+export interface Note {
+  id: string;
+  agent: string;
+  file: string;
+  /** The passage as the reviewer saw it (LF), with its surroundings, to find it again. */
+  text: string;
+  range: { start: number; end: number };
+  context: { before: string; after: string };
+  /** What the reviewer wrote. */
+  body: string;
+  createdAt: string;
+  state: "open" | "resolved";
+  /** When the agent received it (at a sync); null until then. */
+  deliveredAt: string | null;
+  /** Replies after the note itself. */
+  thread: ThreadEntry[];
+}
+
+export const isNoteId = (id: string): boolean => /^N\d+$/i.test(id.trim());
+
 export type EventType =
   | "items_submitted"
   | "accepted"
@@ -139,7 +163,13 @@ export type EventType =
   | "withdrawn"
   | "superseded"
   | "synced"
-  | "archived";
+  | "archived"
+  | "note_added"
+  /** The reviewer wrote in a delivered note's thread. */
+  | "note_comment"
+  /** The agent replied to a note. */
+  | "note_reply"
+  | "note_resolved";
 
 export interface StetEvent {
   seq: number;
@@ -161,6 +191,8 @@ export const FEEDBACK_TYPES: readonly EventType[] = [
   "repeat_rejected",
   "group_broken",
   "group_partial",
+  "note_comment",
+  "note_resolved",
 ];
 
 export interface StoreState {
@@ -168,6 +200,8 @@ export interface StoreState {
   nextItem: number;
   nextChangeset: number;
   nextGroup: number;
+  /** Absent in stores made before reviewer notes (2026-11-11): starts at 1. */
+  nextNote?: number;
   nextEvent: number;
   /** Cached review base: key identifies HEAD + uncommitted accepted items. */
   base: { key: string; commit: string } | null;

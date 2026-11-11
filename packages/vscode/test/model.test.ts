@@ -30,6 +30,7 @@ function snap(): Snapshot {
       // A revision in a later changeset that inherited the linked group.
       item("S5", "C2", { groups: ["G1"], status: "needs_revision" }),
     ],
+    notes: [],
     syncNeeded: new Set(),
     uncommitted: [],
     unshared: false,
@@ -37,7 +38,7 @@ function snap(): Snapshot {
 }
 
 const ids = (nodes: Node[]) =>
-  nodes.map((n) => (n.type === "agent" ? n.agent.id : n.type === "changeset" ? n.changeset.id : n.type === "group" ? n.group.id : n.type === "part" ? `${n.group.id}.${n.index + 1}` : n.item.id));
+  nodes.map((n) => (n.type === "agent" ? n.agent.id : n.type === "changeset" ? n.changeset.id : n.type === "group" ? n.group.id : n.type === "part" ? `${n.group.id}.${n.index + 1}` : n.type === "note" ? n.note.id : n.item.id));
 
 describe("tree model", () => {
   it("shows live items as agent → changeset → group → item", () => {
@@ -106,6 +107,19 @@ describe("tree model", () => {
     const after = new TreeModel(s, "review");
     const g2 = after.children(after.children(after.children()[0])[0])[0]!;
     expect(after.children(g2).map((n) => (n.type === "part" ? n.index : -1))).toEqual([1]);
+  });
+
+  it("lists an agent's open notes before its rounds, in the Review panel only", () => {
+    const s = snap();
+    const note = (id: string, state: "open" | "resolved", agentId = "claude-1") => ({
+      id, agent: agentId, file: "main.tex", text: "x", range: { start: 0, end: 1 }, context: { before: "", after: "" },
+      body: "b", createdAt: "", state, deliveredAt: null, thread: [],
+    });
+    s.notes = [note("N2", "open"), note("N1", "resolved"), note("N3", "open", "old"), note("N10", "open")];
+    const m = new TreeModel(s, "review");
+    expect(ids(m.children(m.children()[0]))).toEqual(["N2", "N10", "C1"]);
+    const h = new TreeModel(s, "history");
+    expect(ids(h.children(h.children()[0])).filter((x) => x.startsWith("N"))).toEqual([]);
   });
 
   it("hides atomic groups (their members are merged)", () => {

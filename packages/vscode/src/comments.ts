@@ -1,8 +1,8 @@
 /** Item threads through the VS Code Comments API (spec §12.2). */
 import * as vscode from "vscode";
-import type { Item } from "@stet/core";
+import type { Item, Note } from "@stet/core";
 import { inlineMax, type Host, type Locator } from "./editor.js";
-import { fitsInline, itemDiff, proposalMarkdown } from "./model.js";
+import { fitsInline, itemDiff, LineIndex, proposalMarkdown, toLf } from "./model.js";
 import type { Project } from "./project.js";
 
 export type LongMode = "expanded" | "collapsed" | "hover";
@@ -20,6 +20,8 @@ export class Threads implements vscode.Disposable {
   private readonly controller = vscode.comments.createCommentController("stet", "Stet");
   /** item id → thread */
   private threads = new Map<string, { thread: vscode.CommentThread; sig: string; project: Project }>();
+  /** note id@project → thread of an open reviewer note (spec §7.8) */
+  private notes = new Map<string, { thread: vscode.CommentThread; sig: string; project: Project; note: Note }>();
   private disposables: vscode.Disposable[] = [];
   private syncing: Promise<void> | undefined;
   private syncAgain = false;
@@ -30,9 +32,10 @@ export class Threads implements vscode.Disposable {
     private locator: Locator,
     private projects: () => Project[],
   ) {
-    this.controller.options = { placeHolder: "Message to the agent…", prompt: "Comment on this proposed change" };
+    this.controller.options = { placeHolder: "Message to the agent…", prompt: "Comment on a proposed change, or leave a note for an agent" };
+    // Any line of a project file: on a proposed change it's a comment, elsewhere a note for an agent.
     this.controller.commentingRangeProvider = {
-      provideCommentingRanges: async (doc) => (await this.locator.locate(doc)).map((l) => new vscode.Range(l.range.start.line, 0, l.range.end.line, 0)),
+      provideCommentingRanges: (doc) => (this.host.projectFor(doc.uri) && doc.lineCount ? [new vscode.Range(0, 0, doc.lineCount - 1, 0)] : []),
     };
     this.disposables.push(
       this.controller,
@@ -85,9 +88,11 @@ export class Threads implements vscode.Disposable {
   private async syncOnce(): Promise<void> {
     if (this.reset) {
       this.reset = false;
-      for (const t of this.threads.values()) t.thread.dispose();
+      for (const t of [...this.threads.values(), ...this.notes.values()]) t.thread.dispose();
       this.threads.clear();
+      this.notes.clear();
     }
+    await this.syncNotes();
     const seen = new Set<string>();
     for (const p of this.projects()) {
       const live = p.snapshot.items.filter((i) => i.status === "pending" || i.status === "needs_revision");
@@ -123,6 +128,74 @@ export class Threads implements vscode.Disposable {
         this.threads.delete(key);
       }
     }
+  }
+
+  /** Threads for open reviewer notes, at their passage as it is now (in the editor if open, else on disk). */
+  private async syncNotes(): Promise<void> {
+    const seen = new Set<string>();
+    for (const p of this.projects()) {
+      for (const note of p.snapshot.notes.filter((n) => n.state === "open")) {
+        const key = note.id + "@" + p.mainPath;
+        seen.add(key);
+        const range = await this.noteRange(p, note);
+        const sig = `${note.thread.length}|${note.deliveredAt ?? ""}`;
+        const existing = this.notes.get(key);
+        if (existing) {
+          existing.note = note;
+          if (existing.sig !== sig) {
+            existing.thread.comments = this.noteComments(note);
+            existing.thread.label = this.noteLabel(note);
+            existing.sig = sig;
+          }
+          if (range && !existing.thread.range?.isEqual(range)) existing.thread.range = range;
+          continue;
+        }
+        const thread = this.controller.createCommentThread(p.fileUri(note.file), range ?? new vscode.Range(0, 0, 0, 0), this.noteComments(note));
+        thread.label = this.noteLabel(note);
+        thread.canReply = true;
+        thread.contextValue = note.id;
+        thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
+        this.notes.set(key, { thread, sig, project: p, note });
+      }
+    }
+    for (const [key, t] of this.notes) {
+      if (!seen.has(key)) {
+        t.thread.dispose();
+        this.notes.delete(key);
+      }
+    }
+  }
+
+  private noteLabel(n: Note): string {
+    return `${n.id} · note for ${n.agent}${n.deliveredAt ? "" : " (arrives at its next sync)"}`;
+  }
+
+  private noteComments(n: Note): vscode.Comment[] {
+    const text = (s: string) => new vscode.MarkdownString().appendText(s);
+    return [
+      new StetComment(text(n.body), { name: "You" }, new Date(n.createdAt)),
+      ...n.thread.map((t) => new StetComment(text(t.text), { name: t.author === "user" ? "You" : n.agent }, new Date(t.at))),
+    ];
+  }
+
+  private async noteRange(p: Project, note: Note): Promise<vscode.Range | null> {
+    const doc = vscode.workspace.textDocuments.find((d) => p.relPath(d.uri) === note.file);
+    let text: string;
+    try {
+      text = toLf(doc ? doc.getText() : new TextDecoder().decode(await vscode.workspace.fs.readFile(p.fileUri(note.file))));
+    } catch {
+      return null;
+    }
+    const span = p.stet.locateNoteInText(note, text);
+    if (!span) return null;
+    const idx = new LineIndex(text);
+    return new vscode.Range(idx.position(span.start).line, 0, idx.position(Math.max(span.start, span.end - 1)).line, 0);
+  }
+
+  /** The note a thread shows, if it is one of ours. */
+  noteForThread(thread: vscode.CommentThread): { project: Project; note: Note } | undefined {
+    for (const t of this.notes.values()) if (t.thread === thread) return { project: t.project, note: t.note };
+    return undefined;
   }
 
   private async rangeOf(p: Project, item: Item): Promise<vscode.Range | null> {
@@ -168,11 +241,11 @@ export class Threads implements vscode.Disposable {
 
   /** Threads the user created (not ours) are replaced by the item's own thread after refresh. */
   isOwn(thread: vscode.CommentThread): boolean {
-    return [...this.threads.values()].some((t) => t.thread === thread);
+    return [...this.threads.values(), ...this.notes.values()].some((t) => t.thread === thread);
   }
 
   dispose(): void {
-    for (const t of this.threads.values()) t.thread.dispose();
+    for (const t of [...this.threads.values(), ...this.notes.values()]) t.thread.dispose();
     for (const d of this.disposables) d.dispose();
   }
 }

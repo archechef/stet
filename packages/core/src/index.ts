@@ -11,6 +11,7 @@ export { anchor } from "./anchor.js";
 export { doctor, type DoctorCheck } from "./doctor.js";
 export { isSafeRepoPath, lineOf, oneLine } from "./text.js";
 export { StetMcpServer, serveStdio, TOOLS, describeFeedback } from "./mcp.js";
+export { describeNote, type DeliveredNote } from "./notes.js";
 export { checkToolUse, type GuardContext, type HookInput } from "./guard.js";
 export { installHooks, uninstallHooks, hookStatus, HOOK_NAMES, type HookStatus } from "./hooks.js";
 export { writeWorkspaceFiles, WORKSPACE_FILES, isWorkspaceFile, type CliCommand, type WorkspaceResult } from "./workspace.js";

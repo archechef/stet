@@ -35,8 +35,10 @@ import {
   type GroupPart,
   type Item,
   type ItemStatus,
+  type Note,
   type StetEvent,
 } from "./model.js";
+import { describeNote, type DeliveredNote } from "./notes.js";
 import { combineParts, settleParts, type PartDraft } from "./parts.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store, writeJsonAtomic } from "./store.js";
@@ -75,6 +77,8 @@ export interface SyncResult {
   base: string;
   stale: Item[];
   kept: number;
+  /** Reviewer notes delivered with this sync (§7.8). */
+  notes: DeliveredNote[];
 }
 
 export interface AcceptResult {
@@ -91,6 +95,8 @@ export interface AgentStatus {
   syncNeeded: boolean;
   counts: Partial<Record<ItemStatus, number>>;
   unreadFeedback: number;
+  /** Reviewer notes waiting for the agent's next sync (§7.8). */
+  notesWaiting: number;
 }
 
 export interface ItemFilter {
@@ -680,6 +686,11 @@ export class Stet {
         await this.store.putItem(it);
         withdrawn.push(it.id);
       }
+      // Its open notes are closed too: nobody will act on them any more.
+      for (const n of (await this.store.notes()).filter((n) => n.agent === id && n.state === "open")) {
+        n.state = "resolved";
+        await this.store.putNote(n);
+      }
       let worktreeRemoved = false;
       if (opts.removeWorktree) {
         await this.repo.tryRun(["worktree", "remove", "--force", agent.worktree]);
@@ -749,6 +760,7 @@ export class Stet {
     const base = await this.ensureBase();
     const cfg = await this.config();
     const items = await this.store.items();
+    const notes = await this.store.notes();
     const events = await this.store.events(Math.min(...agents.map((a) => a.feedbackCursor)));
     // Same content under a different commit (e.g. the user committed accepted changes) needs no sync.
     const trees = new Map<string, Promise<string | null>>();
@@ -762,7 +774,8 @@ export class Stet {
       for (const it of items) if (it.agent === agent.id) counts[it.status] = (counts[it.status] ?? 0) + 1;
       const unread = events.filter((e) => e.seq > agent.feedbackCursor && e.agent === agent.id && FEEDBACK_TYPES.includes(e.type)).length;
       const syncNeeded = agent.baseCommit !== base && (await tree(agent.baseCommit)) !== (await tree(base));
-      out.push({ agent, mainBranch: cfg.mainBranch, base, syncNeeded, counts, unreadFeedback: unread });
+      const notesWaiting = notes.filter((n) => n.agent === agent.id && n.state === "open" && !n.deliveredAt).length;
+      out.push({ agent, mainBranch: cfg.mainBranch, base, syncNeeded, counts, unreadFeedback: unread, notesWaiting });
     }
     return out;
   }
@@ -1171,14 +1184,17 @@ export class Stet {
       if (agent.state !== "active") throw new StetError(archivedMessage(agent));
       const files = await this.agentFiles(agent);
       const dirty = await files.uncommitted();
-      if (dirty.length) {
-        throw new StetError(
-          `The agent workspace has uncommitted changes (${dirty.join(", ")}). ` +
-            `Submit them (stet submit) or discard them before syncing.`,
-        );
-      }
       const tip = await files.tip();
-      if (tip !== agent.lastTip) throw new StetError("The agent workspace has unsubmitted commits. Submit them before syncing.");
+      const refused = dirty.length
+        ? `The agent workspace has uncommitted changes (${dirty.join(", ")}). Submit them (stet submit) or discard them before syncing.`
+        : tip !== agent.lastTip
+          ? "The agent workspace has unsubmitted commits. Submit them before syncing."
+          : null;
+      if (refused) {
+        // Notes don't wait for a clean workspace: they arrive with the refusal (§7.8).
+        const notes = await this.deliverNotes(agent);
+        throw new StetError([refused, ...notes.map((d) => describeNote(d))].join("\n"));
+      }
       const base = await this.ensureBase();
       const live = (await this.store.items()).filter((i) => i.agent === agentId && isLive(i.status));
       const res = await applyItems(live, this.treeView(base), { refText: this.refText });
@@ -1214,7 +1230,8 @@ export class Stet {
       await this.refreshWorkspace(agent);
       await this.store.appendEvent({ type: "synced", agent: agentId, data: { base, stale: stale.map((s) => s.id) } });
       await this.updateGroups(stale);
-      return { base, stale, kept: res.applied.length };
+      const notes = await this.deliverNotes(agent);
+      return { base, stale, kept: res.applied.length, notes };
     });
   }
 
@@ -1783,13 +1800,112 @@ export class Stet {
   }
 
   // -------------------------------------------------------------------------
+  // Reviewer notes (§7.8)
+
+  /**
+   * Leave a note for an agent on a passage of `file`: an offset range, or 1-based lines. `text`
+   * is the file as the reviewer sees it (e.g. an editor with unsaved edits); default: the file on disk.
+   */
+  async addNote(
+    agentId: string,
+    where: { file: string; start?: number; end?: number; fromLine?: number; toLine?: number; text?: string },
+    body: string,
+  ): Promise<Note> {
+    return this.store.withLock(async () => {
+      const agent = await this.requireAgent(agentId);
+      if (agent.state !== "active") throw new StetError(`Agent ${agent.id} is archived.`);
+      if (!body.trim()) throw new StetError("The note is empty.");
+      const file = where.file.replace(/\\/g, "/");
+      if (!isSafeRepoPath(file)) throw new StetError(`'${where.file}' is not a file in the project.`);
+      const text = where.text !== undefined ? toLf(where.text) : (await this.workingView().read(file))?.text;
+      if (text === undefined) throw new StetError(`${file} does not exist.`);
+      let { start, end } = where;
+      if (start === undefined || end === undefined) {
+        const from = where.fromLine ?? 1;
+        const to = Math.max(from, where.toLine ?? from);
+        ({ start, end } = lineRange(text, from, to));
+        if (end > start && text[end - 1] === "\n") end--;
+      }
+      if (start < 0 || end > text.length || start > end) throw new StetError("The passage is outside the file.");
+      const [id] = await this.store.allocate("note");
+      const note: Note = {
+        id: id!, agent: agent.id, file, text: text.slice(start, end), range: { start, end }, context: captureContext(text, start, end),
+        body: body.trim(), createdAt: now(), state: "open", deliveredAt: null, thread: [],
+      };
+      await this.store.putNote(note);
+      await this.store.appendEvent({ type: "note_added", agent: agent.id, data: { note: note.id, file } });
+      return note;
+    });
+  }
+
+  listNotes = (filter: { agent?: string; state?: Note["state"] } = {}) =>
+    this.store.notes().then((ns) => ns.filter((n) => (!filter.agent || n.agent === filter.agent) && (!filter.state || n.state === filter.state)));
+
+  async getNote(id: string): Promise<Note> {
+    const n = await this.store.getNote(id.trim().toUpperCase());
+    if (!n) throw new StetError(`Unknown note '${id}'.`);
+    return n;
+  }
+
+  /** Where a note's passage is in `text` (LF), e.g. an editor buffer. */
+  locateNoteInText(note: Note, text: string): Span | null {
+    return anchor({ oldText: note.text, range: note.range, context: note.context }, text);
+  }
+
+  /** A reply in a note's thread: the reviewer's reaches the agent as feedback once the note was delivered. */
+  async replyNote(id: string, text: string, author: "user" | "agent"): Promise<Note> {
+    return this.store.withLock(async () => {
+      const n = await this.getNote(id);
+      if (!text.trim()) throw new StetError("The reply is empty.");
+      n.thread.push({ at: now(), author, text: text.trim() });
+      await this.store.putNote(n);
+      await this.store.appendEvent({ type: author === "user" ? "note_comment" : "note_reply", agent: n.agent, data: { note: n.id, file: n.file, text: text.trim() } });
+      return n;
+    });
+  }
+
+  async resolveNote(id: string): Promise<Note> {
+    return this.store.withLock(async () => {
+      const n = await this.getNote(id);
+      if (n.state === "resolved") return n;
+      n.state = "resolved";
+      await this.store.putNote(n);
+      await this.store.appendEvent({ type: "note_resolved", agent: n.agent, data: { note: n.id, file: n.file } });
+      return n;
+    });
+  }
+
+  /** Hand the agent its open, undelivered notes, located in its workspace as it is now. Under the lock. */
+  private async deliverNotes(agent: Agent): Promise<DeliveredNote[]> {
+    const waiting = (await this.store.notes()).filter((n) => n.agent === agent.id && n.state === "open" && !n.deliveredAt);
+    const out: DeliveredNote[] = [];
+    for (const n of waiting) {
+      const buf = isSafeRepoPath(n.file) ? await readInside(agent.worktree, n.file).catch(() => null) : null;
+      const text = buf ? toLf(buf.toString("utf8")) : null;
+      const span = text !== null ? this.locateNoteInText(n, text) : null;
+      const lines = span && text !== null ? { from: lineOf(text, span.start), to: lineOf(text, Math.max(span.start, span.end - 1)) } : null;
+      n.deliveredAt = now();
+      await this.store.putNote(n);
+      out.push({ note: n, lines });
+    }
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
   // Feedback (§10)
 
   async feedback(agentId: string, opts: { ack?: boolean } = {}): Promise<StetEvent[]> {
     return this.store.withLock(async () => {
       const agent = await this.requireAgent(agentId);
       const all = await this.store.events(agent.feedbackCursor);
-      const mine = all.filter((e) => e.agent === agentId && FEEDBACK_TYPES.includes(e.type));
+      const notes = new Map((await this.store.notes()).map((n) => [n.id, n]));
+      // Note events before the note was delivered are part of the delivery itself (§7.8).
+      const early = (e: StetEvent) => {
+        if (e.type !== "note_comment" && e.type !== "note_resolved") return false;
+        const n = notes.get(String(e.data?.note ?? ""));
+        return !n?.deliveredAt || e.at <= n.deliveredAt;
+      };
+      const mine = all.filter((e) => e.agent === agentId && FEEDBACK_TYPES.includes(e.type) && !early(e));
       if (opts.ack !== false && all.length) {
         agent.feedbackCursor = all[all.length - 1]!.seq;
         await this.store.putAgent(agent);

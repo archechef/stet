@@ -181,6 +181,11 @@ Comments and revision requests appear as threads on the change, in the editor an
 - To answer, type in the thread and click **Send to agent**.
 - To start a new thread, use **💬 Comment**, or the `+` in the gutter on a line that has a pending change.
 
+**Notes for an agent.** To ask an agent for something about a passage it hasn't changed ("shorten this paragraph", "check this proof"), select the passage and choose **Stet: Note for agent…** from the editor's context menu, or click the gutter `+` on a line without a pending change and type. With several agents, Stet asks which one.
+- The agent receives the note at its next sync, at the passage as it is in its copy. It is told when a note is waiting, and gets it even if it is in the middle of other work.
+- The note shows as a thread at its passage (labelled *arrives at its next sync* until then) and under its agent in the panel. Replies go both ways, as with comments.
+- When it's done, click **Resolve** (✓) on the thread or the note in the panel. Archiving an agent resolves its notes.
+
 ---
 
 ## 5. Keeping in sync

@@ -49,8 +49,13 @@ here reaches the real document until a human accepts it.
   - \`atomic\`: edits within one sentence/paragraph that only read well together.
   - \`related\`: optional thematic batches with a title and rationale.
   Check the submit result and fix groupings with \`stet_group\` / \`stet_ungroup\`.
-- Before starting new work, call \`stet_status\`; if it says a sync is needed,
-  call \`stet_sync\` first (it needs a clean folder: submit or discard edits).
+- Before starting new work, call \`stet_status\`; if it says a sync is needed
+  or notes are waiting, call \`stet_sync\` first (it needs a clean folder:
+  submit or discard edits; waiting notes arrive even when it refuses).
+- Notes from the reviewer (N3) point at a passage and ask for something
+  ("shorten this", "check this proof"). Act on them like a request: change
+  the passage and submit. Answer with \`stet_reply\` (e.g. \`N3\`) if something
+  is unclear or to say what you did.
 - Call \`stet_get_feedback\` regularly and act on each event:
   - rejected: do not propose the same change again; learn from the reason.
   - revision_requested: revise that passage, then submit.
@@ -60,6 +65,8 @@ here reaches the real document until a human accepts it.
   - accepted with edited text: prefer the reviewer's wording from now on.
   - group_broken: some linked edits were applied without the others; propose
     whatever is needed to make the document consistent again.
+  - note_comment: the reviewer wrote in a note's thread; answer or act on it.
+  - note_resolved: the reviewer closed a note; nothing more to do for it.
   - group_partial: the reviewer accepted some parts of a linked group and
     rejected others. The document compiles but may be inconsistent (e.g.
     references to a renamed label); propose what makes it consistent.
@@ -74,6 +81,7 @@ touched directly. Edit files normally, then call stet_submit with a title and
 rationale (and groups: linked for edits that must be accepted together,
 with parts for pieces that can each be accepted alone, atomic for edits that
 only make sense as one, related for thematic batches).
-Before new work call stet_status and stet_sync if needed. Poll
+Before new work call stet_status and stet_sync if needed (sync also
+delivers the reviewer's notes on passages). Poll
 stet_get_feedback and act on rejections, revision requests, comments and
 stale items. Never reflow text or touch files outside the workspace.`;

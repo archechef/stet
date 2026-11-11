@@ -63,11 +63,14 @@ Run these in your project folder. Changes have ids like `12.3`: change 3 of roun
 | Command | What it does |
 |---|---|
 | `stet review [--agent <a>] [--status <s>] [--all]` | Lists changes waiting for review (pending or revision requested), per agent → round → group. `--status` takes a comma-separated list (`pending,accepted,…`); `--all` shows everything. |
-| `stet show <12.3\|G3\|C12>` | Shows a change with its context, or a group or round with its members. |
+| `stet show <12.3\|G3\|C12\|N3>` | Shows a change with its context, a group or round with its members, or a note with its thread. |
 | `stet accept <12.3\|G3\|G3.2>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
 | `stet reject <12.3\|G3\|G3.2>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
-| `stet comment <12.3> -m <text>` | Sends a message about a change; the agent can reply. |
+| `stet comment <12.3\|N3> -m <text>` | Sends a message about a change, or in a note's thread; the agent can reply. |
+| `stet note <agent> <file[:line[-line]]> -m <text>` | Leaves a note for one agent on a passage (a line range, or the whole file). The agent receives it at its next sync. |
+| `stet note resolve <N3>` | Closes a note. |
+| `stet notes [--agent <a>] [--all]` | Lists open notes (`--all`: resolved ones too). |
 | `stet commit [-m <summary>]` | **Finishes the review:** commits all accepted changes in one commit. The summary line defaults to the changeset titles; the body lists the accepted changes and a `Stet-Applied:` trailer. |
 | `stet share` | Lets agents see your saved edits (they pick them up at their next sync). See *What agents see* below. |
 | `stet share manual\|saved\|committed` | Sets when agents see your edits. |
@@ -110,10 +113,10 @@ Agents normally use the Stet tools through MCP (see [agents.md](agents.md)). The
 |---|---|
 | `stet status` | Item counts, unread feedback, and whether the agent must sync before new work. |
 | `stet submit -t <title> [-m <rationale>] [--groups <file.json\|->] [--notes <file.json>]` | Submits the workspace's edits for review (Stet commits them). |
-| `stet sync` | Moves the workspace onto your latest text: accepted changes become part of it, rejected ones disappear, pending ones stay. |
+| `stet sync` | Moves the workspace onto your latest text: accepted changes become part of it, rejected ones disappear, pending ones stay. Also prints the reviewer's notes waiting for this agent. |
 | `stet feedback [--peek]` | New decisions and comments since the last call; `--peek` leaves them unread. |
 | `stet list [--status <s>]` | The agent's own items. |
-| `stet reply <12.3> -m <text>` | Answers a reviewer comment. |
+| `stet reply <12.3\|N3> -m <text>` | Answers a reviewer comment or note. |
 | `stet withdraw <12.3>… [-m <reason>]` | Withdraws the agent's own pending items. |
 
 **Grouping hints for `submit --groups`:** a JSON list, from a file or `-` for standard input. Locations are `file`, `file:line` or `file:from-to`, in the workspace after the edits:
