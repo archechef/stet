@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 — 2026-11-11
 
 - **Fix: comments left behind.** After archiving an agent (or another change to the proposals), comment threads in the editor could remain although their proposals were gone, and a thread could appear twice. The extension now updates its threads one pass at a time. Leftover threads disappear when you reload the window.
 - Development tools updated for security advisories (`npm audit` is clean): `vitest`, `@vscode/vsce` and its dependencies; vsce's `minimatch` is pinned to a fixed version until vsce adopts one. The extension and CLI were not affected.
