@@ -118,7 +118,17 @@ export interface Item {
   note: string | null;
   groups: string[];
   status: ItemStatus;
-  resolution: { appliedText: string; edited: boolean; committed: string | null } | null;
+  resolution: {
+    appliedText: string;
+    edited: boolean;
+    committed: string | null;
+    /**
+     * The file's blob in main HEAD when the item was accepted (null: absent). Once HEAD's file
+     * differs, the user has committed it, with this change or their later edits of it.
+     * Missing for items accepted before 0.6.1 (and after an interrupted accept).
+     */
+    headBlob?: string | null;
+  } | null;
   supersedes: string | null;
   conflictsWith: string[];
   history: { at: string; status: ItemStatus; by: "user" | "agent" | "stet"; note?: string }[];
@@ -206,7 +216,8 @@ export interface StoreState {
   /** Cached review base: key identifies HEAD + uncommitted accepted items. */
   base: { key: string; commit: string } | null;
   /** The user's saved files as of their last *Share my edits*, on top of main at `head`. */
-  shared?: { head: string; tree: string } | null;
+  /** The last *Share my edits*; `at` (since 0.6.1) tells which accepted items it already holds. */
+  shared?: { head: string; tree: string; at?: string } | null;
 }
 
 // ---------------------------------------------------------------------------

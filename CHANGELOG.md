@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fix: accepted changes duplicated in agents' copies.** If you edited, moved or removed text after accepting it (especially an inserted paragraph or environment), agents could see it twice, or see it again after you had removed it. Stet now treats an accepted change as yours once you commit its file, and takes your saved text as it is when sharing it. Agents' copies are corrected at their next sync.
 - **Smaller parts:** agents are told to make parts of linked groups as small as possible (a sentence, a formula, a label with its references) instead of one per paragraph or section. They are also told that their instruction file is rewritten at every sync, so they no longer suggest adding your wishes to it.
 
 ## 0.6.0 — 2026-11-11

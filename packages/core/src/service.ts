@@ -57,6 +57,8 @@ export { StetError };
 export const BASE_REF = "refs/stet/base";
 const now = () => new Date().toISOString();
 const hashOf = (b: Buffer | null) => (b === null ? null : createHash("sha256").update(b).digest("hex"));
+/** When the user (last) accepted an item; "" if unknown. */
+const acceptedAt = (it: Item) => [...it.history].reverse().find((h) => h.status === "accepted")?.at ?? "";
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -437,6 +439,7 @@ export class Stet {
     const pending = (await this.store.items()).filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
     const view = this.treeView(head);
     const stillOpen: Item[] = [];
+    const headBlobs = new Map<string, string | null>();
     for (const it of pending) {
       const applied = it.resolution!.appliedText;
       if (it.kind !== "modify") {
@@ -449,26 +452,28 @@ export class Stet {
         }
         continue;
       }
-      const f = await view.read(it.file);
-      const ref = await this.refText(it);
-      // Still open if the old text is there, and not just as part of the applied text.
-      if (f && anchor({ ...it, newText: applied }, f.text, ref)) {
-        stillOpen.push(it);
-        continue;
-      }
-      // Either committed by the user, or overwritten; both mean "no longer ours to carry".
-      const probe = { ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } };
-      it.resolution!.committed = f && anchor(probe, f.text) ? head : `external:${head}`;
-      await this.store.putItem(it);
+      // Still open while HEAD's file is what it was at the accept: the change went into the working
+      // copy only. Once the user commits the file, it holds the change, or what they made of it
+      // since (edited, moved, removed). Looking for the old text instead re-applied changes the
+      // user had edited: a pure insertion's empty old text is found anywhere (bug report 2026-11-12).
+      if (await this.committedSinceAccept(it, head, headBlobs)) {
+        const f = await view.read(it.file);
+        const probe = { ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } };
+        it.resolution!.committed = f && anchor(probe, f.text) ? head : `external:${head}`;
+        await this.store.putItem(it);
+      } else stillOpen.push(it);
     }
-    // The user's shared edits replace HEAD as the starting point; accepted items already in them
-    // (accepting writes the working copy) are not applied twice.
-    const shared = await this.sharedTree(cfg, head);
+    // The user's shared edits replace HEAD as the starting point. They already hold every item
+    // accepted before they were taken (accepting writes the working copy), or what the user made
+    // of it since; only items accepted after a manual share are applied on top.
+    const share = await this.sharedTree(cfg, head);
+    const shared = share && share.tree !== (await this.repo.run(["rev-parse", `${head}^{tree}`])) ? share.tree : null;
     let toApply = stillOpen;
-    if (shared) {
-      const sview = this.treeView(shared);
+    if (share) {
+      const sview = this.treeView(share.tree);
       toApply = [];
       for (const it of stillOpen) {
+        if (share.at === null || acceptedAt(it) <= share.at) continue;
         if (it.kind !== "modify") {
           if ((await this.wholeFileState(it, sview)) === "open") toApply.push(it);
           continue;
@@ -508,15 +513,38 @@ export class Stet {
   }
 
   /** The tree of the user's edits that agents see per `shareEdits`, or null for "HEAD only". */
-  private async sharedTree(cfg: StetConfig, head: string): Promise<string | null> {
-    let tree: string | null = null;
-    if (cfg.shareEdits === "saved") tree = await this.workingTree(cfg, head);
-    else if (cfg.shareEdits === "manual") {
+  /**
+   * The user's edits agents see instead of HEAD, and when they were taken: `at` null = now (they
+   * hold every accepted item), "" = a share from before 0.6.1 (time unknown).
+   */
+  private async sharedTree(cfg: StetConfig, head: string): Promise<{ tree: string; at: string | null } | null> {
+    if (cfg.shareEdits === "saved") {
+      const tree = await this.workingTree(cfg, head);
+      return tree ? { tree, at: null } : null;
+    }
+    if (cfg.shareEdits === "manual") {
       const s = (await this.store.state()).shared;
       // A share is based on a commit; once main moves on, agents see the new commit instead.
-      if (s && s.head === head) tree = s.tree;
+      if (s && s.head === head) return { tree: s.tree, at: s.at ?? "" };
     }
-    return tree && tree !== (await this.repo.run(["rev-parse", `${head}^{tree}`])) ? tree : null;
+    return null;
+  }
+
+  /**
+   * Whether the user has committed an accepted item's file since the accept (HEAD's file differs
+   * from then). Items accepted before 0.6.1 don't record HEAD's file: for them, any commit since
+   * the accept that touched the file counts; otherwise HEAD's file is recorded now.
+   */
+  private async committedSinceAccept(it: Item, head: string, blobs: Map<string, string | null>): Promise<boolean> {
+    if (!blobs.has(it.file)) blobs.set(it.file, await this.repo.blobId(head, it.file));
+    const blob = blobs.get(it.file) ?? null;
+    const r = it.resolution!;
+    if (r.headBlob !== undefined) return blob !== r.headBlob;
+    const since = await this.repo.tryRun(["rev-list", "-1", `--since=${acceptedAt(it)}`, head, "--", it.file]);
+    if (since) return true;
+    r.headBlob = blob;
+    await this.store.putItem(it);
+    return false;
   }
 
   /**
@@ -559,7 +587,7 @@ export class Stet {
       if (!tree) throw new StetError(`Your project folder isn't on '${cfg.mainBranch}'. Switch back to it to share your edits with agents.`);
       const s = await this.store.state();
       if (s.shared?.head === head && s.shared.tree === tree) return false;
-      s.shared = { head, tree };
+      s.shared = { head, tree, at: now() };
       await this.store.saveState(s);
       const before = await this.repo.revParse(BASE_REF);
       return (await this.ensureBase()) !== before;
@@ -1507,6 +1535,10 @@ export class Stet {
 
       const appliedText = (a: (typeof res.applied)[number]) => (a.item.kind === "binary" || a.item.kind === "delete-file" ? a.item.newText : a.text);
       const editedOf = (a: (typeof res.applied)[number]) => overrides.has(a.item.id) && overrides.get(a.item.id) !== a.item.newText;
+      // What HEAD holds now, to tell later when the user has committed these files (ensureBase).
+      const head = await this.mainHead(cfg);
+      const headBlobs = new Map<string, string | null>();
+      for (const f of new Set(res.applied.map((a) => a.item.file))) headBlobs.set(f, await this.repo.blobId(head, f));
       await this.writeWorking(
         res.changes,
         res.applied.map((a) => ({ id: a.item.id, appliedText: appliedText(a), edited: editedOf(a) })),
@@ -1515,7 +1547,7 @@ export class Stet {
       for (const a of res.applied) {
         const edited = editedOf(a);
         this.setStatus(a.item, "accepted", "user");
-        a.item.resolution = { appliedText: appliedText(a), edited, committed: null };
+        a.item.resolution = { appliedText: appliedText(a), edited, committed: null, headBlob: headBlobs.get(a.item.file) ?? null };
         await this.store.putItem(a.item);
         await this.store.appendEvent({
           type: "accepted", agent: a.item.agent, items: [a.item.id],

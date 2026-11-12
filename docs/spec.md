@@ -177,7 +177,7 @@ A group is `resolved` once all its members are in final states, and `broken` whe
   "note": null,                   // optional per-item rationale from the agent
   "groups": ["G7"],               // groups this item belongs to (§6.4)
   "status": "pending",
-  "resolution": null,             // on accept: { "appliedText": "…", "edited": bool, "committed": "<sha>|null" }
+  "resolution": null,             // on accept: { "appliedText": "…", "edited": bool, "committed": "<sha>|null", "headBlob": "<blob of the file in HEAD at the accept>|null" }
   "supersedes": null,             // item id this revises
   "conflictsWith": [],            // other pending items overlapping the same base range
   "history": [ { "at": "…", "status": "pending", "by": "stet" } ],
@@ -375,7 +375,11 @@ Uncommitted agent edits count as **drafts** and are never shown for review until
 | `saved` | The saved project files whenever an agent syncs or submits. |
 | `committed` | `HEAD` only (the behaviour before 2026-10-15). |
 
-The snapshot of "saved project files" is taken with a temporary index (a copy of the user's, so git re-reads only changed files; the user's index is never touched): tracked files and files staged with `git add`, as on disk, plus new **TeX/BibTeX** files that `.gitignore` doesn't exclude. Other new files (build output such as `.aux` or `.pdf`) stay out; staging one shares it. Unsaved editor buffers are not included (the extension saves the project's files before sharing). The snapshot requires the project folder to have the main branch checked out. The share is stored in `state.json` as `shared: {head, tree}`.
+The snapshot of "saved project files" is taken with a temporary index (a copy of the user's, so git re-reads only changed files; the user's index is never touched): tracked files and files staged with `git add`, as on disk, plus new **TeX/BibTeX** files that `.gitignore` doesn't exclude. Other new files (build output such as `.aux` or `.pdf`) stay out; staging one shares it. Unsaved editor buffers are not included (the extension saves the project's files before sharing). The snapshot requires the project folder to have the main branch checked out. The share is stored in `state.json` as `shared: {head, tree, at}`.
+
+Which accepted items are added on top (fixed 2026-11-12):
+- **Not yet committed** means `HEAD`'s file is still what it was at the accept (`resolution.headBlob`): accepting writes only the working copy. Once the user commits the file, it holds the change or whatever they made of it since (edited, moved, removed), and the item is marked committed. Items accepted before 0.6.1 have no `headBlob`: a commit touching the file after the accept counts; without one, `HEAD`'s file is recorded then.
+- **On top of shared edits:** the shared edits already hold every item accepted before they were taken, or the user's later version of it, so those items are not added again. With `saved` that is every item; with `manual`, items accepted after the share (`at`) are added. A share from before 0.6.1 has no `at`; its items are added if their old text is found, as before.
 
 `manual` is the default because sharing everything automatically shows agents half-written drafts, which they may "fix" or build proposals on that later go stale. The UI shows when saved edits exist that agents don't see.
 
@@ -737,6 +741,11 @@ A review pass for security, efficiency and duplication before publishing the ext
 - **Report:** after `stet_sync`, the review base contained `\\Hashash` and `\\pk` where the document had `\Hash` and `\pk`. Accepted, uncommitted items are applied on top of the shared edits (or `HEAD`) only if their old text is still there. For items whose new text contains the old text (`pk` → `\pk`), the old text is still found inside the applied new text, so the item was applied again. Affected: shared edits (§7.3, since 2026-10-15) and `HEAD` after the user committed accepted items with git. Not affected: `HEAD` with the items uncommitted (the usual case before sharing existed).
 - **Fix:** `anchor` returns null when the old text it finds is part of an occurrence of the item's new text (`insideNewText`); for accepted items the new text is the applied text. This covers building the review base, the editor's locating of pending items, and accept (a pending item whose change is already in the text is refused instead of applied twice). Already corrupted review bases are rebuilt on the next `ensureBase` (the set of items to apply changes), and the agent's proposals against the corrupted text become stale at its next sync.
 - Tests: `review-base.test.ts` (the reported macros outside math, shared edits, git commit by hand, saved mode, accept of an already-made change; `insideNewText` cases). Four of them fail without the fix.
+
+### Fix: edited accepted changes applied again (2026-11-12)
+- **Report:** agents' copies contained an accepted remark and a corollary twice; the user's file had them once. The items were accepted, then edited or moved by the user (and committed with git, or only saved). Building the review base decided "still open" by finding the item's old text: a pure insertion's old text is empty and a newline is found anywhere, and the applied text was no longer there verbatim (`insideNewText` only catches the exact text). So the item was applied again, on `HEAD` and on the shared edits. The same kept accepted changes the user had undone visible to agents.
+- **Fix:** `resolution.headBlob` (HEAD's file at the accept, `committedSinceAccept`) decides whether an item is committed; shared edits get only items accepted after they were taken (`shared.at`; `saved`: none). The old-text search remains only for items accepted after a manual share and for legacy shares.
+- Tests: `accepted-base.test.ts` (edited insertion with `saved`, `committed` and `manual`, undone accept, commit of another file, items without `headBlob`). Five of the six fail without the fix.
 
 ### Accept performance and review (2026-10-21)
 - **Accept:** on a 3,000-line paper with 300 proposals, `accept` took ~95 ms, mostly git processes: a `git status` per file (only needed for `autoCommit: "when-clean"`, now only then) and `git symbolic-ref` for the branch check (now read from the main worktree's `HEAD` file, `projectBranch`). Now ~42 ms.
