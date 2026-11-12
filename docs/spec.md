@@ -505,6 +505,8 @@ Written into each worktree as `CLAUDE.local.md` (Claude Code) and `AGENTS.overri
 You are in a *proposal workspace* for a LaTeX project. Nothing you change here
 reaches the real document until a human accepts it.
 
+- This file is written by Stet and rewritten at every sync: don't edit it or
+  suggest that the reviewer add instructions to it.
 - Edit files in this folder normally. Never touch files outside this folder,
   and never run git merge/push/checkout of other branches.
 - Keep changes minimal and local. Do NOT reflow or rewrap lines, reorder
@@ -519,8 +521,10 @@ reaches the real document until a human accepts it.
     citation keys, notation changed consistently across places.
     Split a large linked group into `parts` when every part can be accepted
     on its own: the document still compiles (warnings are fine) and no other
-    part is blocked. Stet keeps identical changes, a definition and its uses,
-    and changes touching the same text in one part.
+    part is blocked. Make parts as small as that allows (a sentence, a
+    formula, a label with its references), not one per paragraph or section.
+    Stet keeps identical changes, a definition and its uses, and changes
+    touching the same text in one part.
   - `atomic` — edits within one sentence/paragraph that only read well together.
   - `related` — optional thematic batches with a title and rationale.
 - Check the submit result: fix wrong or missing groupings with `stet_group` /

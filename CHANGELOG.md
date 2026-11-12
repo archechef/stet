@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Smaller parts:** agents are told to make parts of linked groups as small as possible (a sentence, a formula, a label with its references) instead of one per paragraph or section. They are also told that their instruction file is rewritten at every sync, so they no longer suggest adding your wishes to it.
+
 ## 0.6.0 — 2026-11-11
 
 - **Notes for an agent:** select a passage and choose *Stet: Note for agent…* (or click the gutter `+` on a line without a proposed change) to ask one agent for something, e.g. "shorten this paragraph". The agent receives it at its next sync, located in its own copy, and is told when one is waiting. Notes show as threads at their passage and under their agent in the panel; the agent can reply, and you resolve them when done. Command line: `stet note <agent> main.tex:42-47 -m "…"`, `stet notes`, `stet note resolve N3`.

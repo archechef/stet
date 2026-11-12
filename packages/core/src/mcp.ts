@@ -70,9 +70,10 @@ export const TOOLS: ToolDef[] = [
                 type: "array",
                 description:
                   "Linked groups only: pieces the reviewer can accept or reject one at a time. Accepting a part alone must keep the " +
-                  "document compiling (undefined-reference warnings are fine) and must not block the other parts. Stet joins parts " +
-                  "that make the same change, need each other's definitions, or touch the same text.",
-                items: obj({ title: str("What this part changes, e.g. 'Section 3'."), where: whereSchema }, ["title", "where"]),
+                  "document compiling (undefined-reference warnings are fine) and must not block the other parts. Make parts as " +
+                  "small as that allows (a sentence, a formula, a label with its references), not one per paragraph or section. " +
+                  "Stet joins parts that make the same change, need each other's definitions, or touch the same text.",
+                items: obj({ title: str("What this part changes, e.g. 'Rename lem:a to lem:b'."), where: whereSchema }, ["title", "where"]),
               },
             },
             ["kind", "title", "where"],

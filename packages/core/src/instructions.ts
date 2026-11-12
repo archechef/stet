@@ -25,6 +25,8 @@ export function agentInstructions(agentId: string): string {
 This folder is a *proposal workspace* for a LaTeX project. Nothing you change
 here reaches the real document until a human accepts it.
 
+- This file is written by Stet and rewritten at every sync: don't edit it, and
+  don't suggest that the reviewer add instructions to it (they would be lost).
 - Edit files in this folder normally. Never touch files outside this folder,
   and never run git merge/push/rebase/switch or modify other branches.
 - Keep changes minimal and local. Do NOT reflow or rewrap lines, reorder
@@ -43,9 +45,13 @@ here reaches the real document until a human accepts it.
     a title and its locations) when every part can be accepted on its own:
     accepting one part alone must leave the document compiling (warnings such
     as undefined references are fine; an undefined macro is not), and must not
-    stop any other part from being accepted later. Typically: a \`\\label\` and
-    its references, or a change per section. Stet keeps identical changes,
-    a definition and its uses, and changes touching the same text in one part.
+    stop any other part from being accepted later. Make parts as SMALL as
+    these two conditions allow: one sentence, one formula, one wording change,
+    or a \`\\label\` with its references. Never put changes in one part just
+    because they are in the same paragraph or section, or serve the same goal;
+    say what they are for in the group's rationale instead. Stet keeps
+    identical changes, a definition and its uses, and changes touching the
+    same text in one part.
   - \`atomic\`: edits within one sentence/paragraph that only read well together.
   - \`related\`: optional thematic batches with a title and rationale.
   Check the submit result and fix groupings with \`stet_group\` / \`stet_ungroup\`.
