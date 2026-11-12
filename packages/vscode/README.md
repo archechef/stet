@@ -105,7 +105,7 @@ When a task is done, right-click the agent → **Archive agent**. Its pending pr
 | Setting | Default | Meaning |
 |---|---|---|
 | `stet.shareEdits` | `manual` | Which of your own edits agents see: `manual` (when you click *Share my edits*), `saved` (every save), `committed` (only commits). |
-| `stet.longChanges` | `expanded` | How long proposals are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only on hover (`hover`). |
+| `stet.longChanges` | `collapsed` | How long proposals are shown: in full in a panel under the change that you open from the gutter (`collapsed`), the same panel open (`expanded`), or only on hover (`hover`). |
 | `stet.newTextStyle` | `auto` | How new text is drawn: `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line), or `auto` (by the word wrap setting). |
 | `stet.inlineChanges` | `true` | Strike-through and grey new text in the editor (shown as inlay hints: keep `editor.inlayHints.enabled` on). |
 | `stet.codeLens` | `true` | Actions above each proposed change. |

@@ -108,7 +108,7 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
 - **Finish review** (only shown when there is something to commit)
 - **New agent workspace**
 - **Highlight proposed text in green** / **Show proposed text in theme colours** (for word-wrapped editors, see 4.2)
-- **Refresh**
+- **Refresh**: reloads the panel and rewrites the active agents' instructions, tool configuration and guardrails, e.g. after you updated Stet. Agent sessions read them when they start, so restart running ones.
 - `…` menu: **Check setup**, **Set up project**
 
 #### The History view
@@ -127,7 +127,7 @@ Open a `.tex` file with pending changes:
 - the **old text is struck through in red**, and the **new text follows in green**;
 - **with word wrap on**, the new text is drawn so that it wraps with the line (as an inlay hint). VS Code draws those in your theme's inlay-hint colour, usually grey. The **colour button** in the Stet panel title (*Highlight proposed text in green*) makes them green: it sets the colour of parameter-name hints in your user settings, so other extensions' parameter hints turn green too (LaTeX files rarely have any). Click it again to undo; a value you had set before is restored. Inlay hints must be enabled (`editor.inlayHints.enabled`, on by default);
 - the setting `stet.newTextStyle` chooses explicitly: `highlighted` (always green, doesn't wrap) or `wrapping`. The default `auto` follows the word wrap setting. Toggling word wrap with Alt+Z doesn't change that setting, so if you toggle it that way, choose explicitly;
-- new text that doesn't fit there is shortened, and shown **in full in a panel directly below the change**. That is new text with several lines, or longer than 80 characters (400 with word wrap on). The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` opens these panels by default (`expanded`), keeps them closed until you click the gutter marker (`collapsed`), or leaves the full text to the hover (`hover`);
+- new text that doesn't fit there is shortened, and shown **in full in a panel directly below the change**, closed until you click its marker in the gutter. That is new text with several lines, or longer than 80 characters (400 with word wrap on). The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` keeps these panels closed until you click the gutter marker (`collapsed`, default), opens them (`expanded`), or leaves the full text to the hover (`hover`);
 - above each change is a row of actions: **2.2: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**, or **✓ Accept part 2 of 3 (n changes)** when the group has parts;
 - **hovering** a change shows the agent, the round and its rationale, the groups, the diff, the latest thread messages, and the same actions.
 
@@ -236,7 +236,7 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
 | `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. |
-| `stet.longChanges` | `expanded` | How changes too long for one line of grey text are shown: in full in an open panel under the change (`expanded`), the same panel closed (`collapsed`), or only in the hover (`hover`). |
+| `stet.longChanges` | `collapsed` | How changes too long for one line of grey text are shown: in full in a panel under the change that you open from the gutter (`collapsed`), the same panel open (`expanded`), or only in the hover (`hover`). |
 | `stet.newTextStyle` | `auto` | How new text is drawn: `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line, in the inlay-hint colour), or `auto` (by the word wrap setting). |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |
 | `stet.shareEdits` | `manual` | Which of your own edits agents see: `manual` (when you click *Share my edits*), `saved` (every save), `committed` (only commits). Accepted changes always reach agents. Stored in the project, so the command line follows it too. |

@@ -501,7 +501,7 @@ All tools return concise text meant for the model, followed by a JSON block for 
 
 ### 10.3 Agent instructions (draft)
 
-Written into each worktree as `CLAUDE.local.md` (Claude Code) and `AGENTS.override.md` (Codex). Codex reads `AGENTS.override.md` *instead of* `AGENTS.md` in the same folder, so Stet prepends the project's own `AGENTS.md`. The files are refreshed after every sync and with `stet agent refresh`.
+Written into each worktree as `CLAUDE.local.md` (Claude Code) and `AGENTS.override.md` (Codex). Codex reads `AGENTS.override.md` *instead of* `AGENTS.md` in the same folder, so Stet prepends the project's own `AGENTS.md`. The files are refreshed after every sync, with `stet agent refresh`, and for all active agents with the extension's **Refresh** (`refreshWorkspaces`; one agent's failure, e.g. a deleted folder, doesn't stop the others).
 
 ```markdown
 # You are working under Stet review
@@ -729,7 +729,7 @@ A review pass for security, efficiency and duplication before publishing the ext
 - Tests: `share.test.ts` (modes, the user's index untouched, build output excluded, accepted items not applied twice, proposals on shared text acceptable, a commit replacing an older share, another branch checked out); the integration suite checks the command.
 
 ### Long proposals in the editor (2026-10-15)
-- Ghost text is a single-line decoration, so multi-line or long new text was cut to 80 characters (⏎ for line breaks), and the full text needed the hover or *Show diff*. Such items now get a comment thread whose first entry is the full new text (fenced, never rendered as Markdown), opened by default directly under the change. VS Code offers no other way to show multi-line content between editor lines. Setting `stet.longChanges`: `expanded` (default), `collapsed`, `hover` (old behaviour).
+- Ghost text is a single-line decoration, so multi-line or long new text was cut to 80 characters (⏎ for line breaks), and the full text needed the hover or *Show diff*. Such items now get a comment thread whose first entry is the full new text (fenced, never rendered as Markdown), opened by default directly under the change. VS Code offers no other way to show multi-line content between editor lines. Setting `stet.longChanges`: `expanded`, `collapsed`, `hover` (old behaviour). The default was `expanded` until 2026-11-12 and is now `collapsed`: open panels for every long change crowded the editor.
 
 ### Review flow fixes (2026-10-19)
 - **Auto-advance:** after a decision (accept, reject, edit, revise, also for whole groups) the panel selects the next pending change in panel order and the editor shows it; from the panel the focus stays there, from CodeLens/hover only the editor moves (a closed panel stays closed). Nothing moves after a cancel or failure. Setting `stet.autoAdvance`.

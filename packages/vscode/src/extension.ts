@@ -1120,7 +1120,37 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   async refresh(): Promise<void> {
     await this.discover();
     await this.applyRuntime();
+    await this.refreshWorkspaces();
     await Promise.all(this.allProjects().map((p) => p.refresh()));
+  }
+
+  /**
+   * Rewrite the active agents' instructions, MCP config and guardrail files, e.g. after an update.
+   * Agent sessions read them when they start; running sessions need a restart.
+   */
+  private async refreshWorkspaces(): Promise<void> {
+    const done: string[] = [];
+    const failed: string[] = [];
+    for (const p of this.allProjects()) {
+      const results = await p.stet.refreshWorkspaces().catch((e) => {
+        failed.push(`${p.name}: ${e?.message ?? e}`);
+        return [];
+      });
+      for (const r of results) {
+        if (r.error) failed.push(`${r.agent}: ${r.error}`);
+        else if (r.result) {
+          done.push(r.agent);
+          const skipped = r.result.skipped.map((s) => `${s.file} (${s.reason})`);
+          this.output.appendLine(`Refreshed workspace of ${r.agent}: ${r.result.written.join(", ")}${skipped.length ? `; skipped ${skipped.join(", ")}` : ""}`);
+        }
+      }
+    }
+    if (failed.length) {
+      for (const f of failed) this.output.appendLine(`Could not refresh agent workspace ${f}`);
+      void vscode.window.showWarningMessage(`Stet: could not refresh ${failed.length} agent workspace(s). See the Stet output for details.`);
+    } else if (done.length) {
+      vscode.window.setStatusBarMessage(`$(check) Stet: refreshed ${done.join(", ")}. Restart running agent sessions to load the new instructions.`, 6000);
+    }
   }
 
   /** Re-check how agents run `stet` (after a Refresh or a change of `stet.runtime`). */

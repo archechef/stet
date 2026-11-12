@@ -32,7 +32,7 @@ Create a workspace with **Stet: New agent workspace** in VS Code, or `stet agent
 - to sync before new work;
 - to read feedback regularly and act on it.
 
-The rules, the tool configuration and the guardrails are rewritten after every sync, and with `stet agent refresh <name>`.
+The rules, the tool configuration and the guardrails are rewritten after every sync, with **Refresh** in the Stet panel (all active agents), and with `stet agent refresh <name>`.
 
 ---
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Refresh updates agents:** the *Refresh* button in the Stet panel also rewrites the active agents' instructions, tool configuration and guardrails, so after an update new agent sessions get the new instructions without a sync first. Restart running agent sessions to load them.
+- **Long changes closed by default:** the panel with a long change's full new text (several lines, or over 80 characters) now starts closed; click the change's marker in the gutter to open it. The setting `stet.longChanges` set to `expanded` brings back the open panels.
+
 ## 0.6.2 — 2026-11-12
 
 - **Fix: timing case for older accepted changes.** The release build of 0.6.1 could fail on a test that depended on machine speed; 0.6.2 contains all changes of 0.6.1. For changes accepted before 0.6.1, a commit made in the same second, just before the accept, no longer counts as committing it.

@@ -664,6 +664,25 @@ export class Stet {
     return writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, gitDir, cli: cfg.cli });
   }
 
+  /**
+   * Rewrite every active agent's workspace files (after an update brings new instructions).
+   * One agent's failure (e.g. its folder was deleted) doesn't stop the others.
+   */
+  async refreshWorkspaces(): Promise<{ agent: string; result?: WorkspaceResult | null; error?: string }[]> {
+    return this.store.withLock(async () => {
+      const out: { agent: string; result?: WorkspaceResult | null; error?: string }[] = [];
+      for (const a of await this.store.agents()) {
+        if (a.state !== "active") continue;
+        try {
+          out.push({ agent: a.id, result: await this.refreshWorkspace(a) });
+        } catch (e) {
+          out.push({ agent: a.id, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      return out;
+    });
+  }
+
   /** The agent whose worktree contains `cwd`; adopts matching worktrees made by other tools. */
   async agentForCwd(cwd: string): Promise<Agent> {
     const wt = new Repo(cwd, this.untrustedConfig);

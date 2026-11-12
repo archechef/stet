@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/doctor.js";
@@ -46,6 +46,22 @@ describe("workspace files", () => {
     expect(JSON.parse(read(a.worktree, ".claude/settings.local.json")).hooks).toBeDefined();
     const r = await stet.refreshWorkspace("a");
     expect(r!.skipped.map((s) => s.file).sort()).toEqual([".claude/settings.json", ".mcp.json"]);
+  });
+
+  it("refreshes all active agents at once (the panel's Refresh), past one that fails", async () => {
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    const b = await stet.newAgent("b");
+    await stet.newAgent("c");
+    await stet.archiveAgent("c");
+    writeFileSync(join(a.worktree, "CLAUDE.local.md"), "old instructions\n");
+    rmSync(b.worktree, { recursive: true, force: true });
+
+    const r = await stet.refreshWorkspaces();
+    expect(r.map((x) => x.agent)).toEqual(["a", "b"]);
+    expect(r[0]!.result!.written).toContain("CLAUDE.local.md");
+    expect(r[1]!.error).toBeTruthy();
+    expect(read(a.worktree, "CLAUDE.local.md")).toMatch(/Stet review/);
   });
 });
 

@@ -563,7 +563,7 @@
             "collapsed",
             "hover"
           ],
-          "default": "expanded",
+          "default": "collapsed",
           "enumDescriptions": [
             "Show the full new text in a panel under the change, open.",
             "The same panel, closed: click the change's marker in the gutter to open it.",

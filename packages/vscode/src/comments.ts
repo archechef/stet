@@ -54,7 +54,7 @@ export class Threads implements vscode.Disposable {
 
   /** How proposals too long for ghost text are shown (setting stet.longChanges). */
   private longMode(): LongMode {
-    return vscode.workspace.getConfiguration("stet").get<LongMode>("longChanges", "expanded");
+    return vscode.workspace.getConfiguration("stet").get<LongMode>("longChanges", "collapsed");
   }
 
   /** Whether the item's full new text goes into its thread (ghost text can't show it). */
