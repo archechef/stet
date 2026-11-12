@@ -540,8 +540,10 @@ export class Stet {
     const blob = blobs.get(it.file) ?? null;
     const r = it.resolution!;
     if (r.headBlob !== undefined) return blob !== r.headBlob;
-    const since = await this.repo.tryRun(["rev-list", "-1", `--since=${acceptedAt(it)}`, head, "--", it.file]);
-    if (since) return true;
+    // Commit times have whole seconds: only a later second counts, or a commit made just before
+    // the accept (in the same second) would count as committing it.
+    const last = Number(await this.repo.tryRun(["log", "-1", "--format=%ct", head, "--", it.file]));
+    if (last > Math.floor(Date.parse(acceptedAt(it)) / 1000)) return true;
     r.headBlob = blob;
     await this.store.putItem(it);
     return false;

@@ -94,6 +94,9 @@ describe("accepted changes the user edits afterwards", () => {
     const store2 = (b.stet as any).store;
     const it2 = await store2.getItem(b.item.id);
     delete it2.resolution.headBlob;
+    // Accepted in the same second as the last commit (CI is that fast): that commit came before.
+    const committedAt = Number(git(b.repo, "log", "-1", "--format=%ct").trim());
+    it2.history.at(-1).at = new Date(committedAt * 1000 + 500).toISOString();
     await store2.putItem(it2);
     await b.stet.sync("a");
     expect(read(b.wt, "main.tex")).toBe(read(b.repo, "main.tex"));
