@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 — 2026-11-12
+
+- **Fix: timing case for older accepted changes.** The release build of 0.6.1 could fail on a test that depended on machine speed; 0.6.2 contains all changes of 0.6.1. For changes accepted before 0.6.1, a commit made in the same second, just before the accept, no longer counts as committing it.
+
 ## 0.6.1 — 2026-11-12
 
 - **Fix: accepted changes duplicated in agents' copies.** If you edited, moved or removed text after accepting it (especially an inserted paragraph or environment), agents could see it twice, or see it again after you had removed it. Stet now treats an accepted change as yours once you commit its file, and takes your saved text as it is when sharing it. Agents' copies are corrected at their next sync.
