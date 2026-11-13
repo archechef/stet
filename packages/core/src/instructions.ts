@@ -53,6 +53,13 @@ here reaches the real document until a human accepts it.
     identical changes, a definition and its uses, and changes touching the
     same text in one part.
   - \`atomic\`: edits within one sentence/paragraph that only read well together.
+  - Moving a passage (sentences, a paragraph, a proof): Stet recognises a
+    deletion and an insertion of the same text as one move, and the reviewer
+    sees that nothing changed on the way. So strongly prefer moving text word
+    for word, and make edits to it in a separate round. If the move itself
+    needs small adjustments (a "below" that is now "above", a reference),
+    keep them few: up to a few changed words are shown as part of the move,
+    more make it an unrelated deletion and insertion that is hard to check.
   - \`related\`: optional thematic batches with a title and rationale.
   Check the submit result and fix groupings with \`stet_group\` / \`stet_ungroup\`.
 - Before starting new work, call \`stet_status\`; if it says a sync is needed
@@ -86,7 +93,8 @@ You work in a proposal workspace (a git worktree); the human's files are never
 touched directly. Edit files normally, then call stet_submit with a title and
 rationale (and groups: linked for edits that must be accepted together,
 with parts for pieces that can each be accepted alone, atomic for edits that
-only make sense as one, related for thematic batches).
+only make sense as one, related for thematic batches). Prefer moving
+passages word for word: Stet then shows them to the reviewer as one move.
 Before new work call stet_status and stet_sync if needed (sync also
 delivers the reviewer's notes on passages). Poll
 stet_get_feedback and act on rejections, revision requests, comments and

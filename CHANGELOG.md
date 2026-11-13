@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Moves:** when an agent moves a passage (two sentences or more, a whole paragraph or an environment), Stet shows it as one move instead of an unrelated deletion and insertion. The old place says *moved to line N*, the new one *moved here from line N, word for word*. If a few words changed on the way, the note lists them in a warning colour. Accepting or rejecting either end decides the whole move. Agents are asked to move text word for word where they can. Setting `grouping.moves` in `.git/stet/config.json`.
 - **Refresh updates agents:** the *Refresh* button in the Stet panel also rewrites the active agents' instructions, tool configuration and guardrails, so after an update new agent sessions get the new instructions without a sync first. Restart running agent sessions to load them.
 - **Long changes closed by default:** the panel with a long change's full new text (several lines, or over 80 characters) now starts closed; click the change's marker in the gutter to open it. The setting `stet.longChanges` set to `expanded` brings back the open panels.
 

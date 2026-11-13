@@ -9,6 +9,7 @@ import {
   checkToolUse,
   describeFeedback,
   oneLine,
+  moveChanges,
   doctor,
   hookStatus,
   installHooks,
@@ -133,6 +134,15 @@ const statusColor = (s: ItemStatus) =>
 function itemSummary(it: Item, line?: number): string {
   const where = `${it.file}${line ? `:${line}` : ""}`;
   if (it.kind !== "modify") return `${bold(it.id)} ${statusColor(it.status)} ${it.kind} ${where}${it.oldFile ? ` (from ${it.oldFile})` : ""}`;
+  if (it.move) {
+    // Half of a move (spec §6.4.7): decided with its other half.
+    const how = it.move.changed ? yellow(`${it.move.changed} word(s) changed on the way`) : "word for word";
+    const move =
+      it.move.from === it.id
+        ? `${red(`moved out: "${oneLine(it.oldText, 40)}"`)} ${dim(`→ ${it.move.to}`)}`
+        : `${green(`moved in: "${oneLine(it.newText, 40)}"`)} ${dim(`← ${it.move.from},`)} ${how}`;
+    return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${move}`;
+  }
   const change = !it.oldText ? green(`+ "${oneLine(it.newText, 50)}"`) : !it.newText ? red(`- "${oneLine(it.oldText, 50)}"`) : `${red(`"${oneLine(it.oldText, 30)}"`)} → ${green(`"${oneLine(it.newText, 30)}"`)}`;
   return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${change}`;
 }
@@ -482,9 +492,18 @@ async function main() {
       const it = await stet.getItem(id);
       if (!it) throw new StetError(`Unknown item ${id}.`);
       const { line } = await stet.locateInWorkingCopy(it);
+      const [mf, mt] = it.move ? await Promise.all([stet.getItem(it.move.from), stet.getItem(it.move.to)]) : [null, null];
+      const moved = mf && mt ? { from: mf.oldText, to: mt.newText } : null;
       return out(() => {
         const lines = [itemSummary(it, line)];
         if (it.note) lines.push(`${dim("note:")} ${it.note}`);
+        if (it.move) {
+          lines.push(`${dim("move:")} ${it.move.from} removes the passage, ${it.move.to} inserts it; accepting or rejecting one decides both.`);
+          if (it.move.changed && moved) {
+            lines.push(yellow(`Changed on the way (${it.move.changed} word(s)):`));
+            for (const c of moveChanges(moved.from, moved.to)) lines.push(`  ${red(`"${c.was}"`)} → ${green(`"${c.now}"`)}`);
+          }
+        }
         if (it.groups.length) lines.push(`${dim("groups:")} ${it.groups.join(", ")}`);
         if (it.conflictsWith.length) lines.push(`${yellow("conflicts with:")} ${it.conflictsWith.join(", ")}`);
         lines.push("", itemDiff(it));

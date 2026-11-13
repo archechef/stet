@@ -1,7 +1,7 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
-import { partId, partIndexOf, type Item } from "@stet/core";
-import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
+import { movePartner, moveChanges, partId, partIndexOf, type Item } from "@stet/core";
+import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import type { Project } from "./project.js";
 
 export interface Located {
@@ -115,6 +115,14 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       backgroundColor: new vscode.ThemeColor("stet.insertedText.background"),
     },
   });
+  /** Where half of a move goes or comes from (instead of its text). */
+  private readonly moveLabel = vscode.window.createTextEditorDecorationType({
+    after: { color: new vscode.ThemeColor("editorCodeLens.foreground"), fontStyle: "italic", margin: "0 0 0 1em" },
+  });
+  /** A move whose text changed on the way: the changes, in a warning colour so they're not missed. */
+  private readonly moveChanged = vscode.window.createTextEditorDecorationType({
+    after: { color: new vscode.ThemeColor("editorWarning.foreground"), fontStyle: "italic", fontWeight: "bold", margin: "0 0 0 1em" },
+  });
   private readonly lensChanged = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this.lensChanged.event;
   private readonly hintsChanged = new vscode.EventEmitter<void>();
@@ -155,7 +163,11 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   private async decorate(ed: vscode.TextEditor): Promise<void> {
     const on = vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true);
     const located = on ? await this.locator.locate(ed.document) : [];
-    const all = located.map(({ item, range }) => marks(ed.document, item, range));
+    // The moved-in half of a move shows a note instead of its text (see moveNote).
+    const all = located.map(({ item, range }) => {
+      const m = marks(ed.document, item, range);
+      return item.move?.to === item.id ? { ...m, inserted: [] } : m;
+    });
     ed.setDecorations(this.removed, all.flatMap((m) => m.removed.map((r) => ({ range: r }))));
     const max = inlineMax(ed.document.uri);
     ed.setDecorations(
@@ -164,6 +176,28 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
         ? []
         : all.flatMap((m) => m.inserted.map((i) => ({ range: new vscode.Range(i.at, i.at), renderOptions: { after: { contentText: ghostText(i.text, max) } } }))),
     );
+    const notes = this.moveNotes(ed.document, located);
+    const deco = (n: (typeof notes)[number]) => ({ range: new vscode.Range(n.at, n.at), renderOptions: { after: { contentText: n.text } } });
+    ed.setDecorations(this.moveLabel, notes.filter((n) => !n.changed).map(deco));
+    ed.setDecorations(this.moveChanged, notes.filter((n) => n.changed).map(deco));
+  }
+
+  /** Notes for the halves of moves in a document: after the moved-out passage, at the insertion point. */
+  private moveNotes(doc: vscode.TextDocument, located: Located[]): { at: vscode.Position; text: string; changed: boolean }[] {
+    const p = this.host.projectFor(doc.uri);
+    if (!p) return [];
+    const model = this.host.model(p);
+    const lineOf = new Map(located.map((l) => [l.item.id, l.range.start.line + 1]));
+    const out: { at: vscode.Position; text: string; changed: boolean }[] = [];
+    for (const { item, range } of located) {
+      const partner = model.partner(item);
+      const note = moveNote(item, partner, partner ? (lineOf.get(partner.id) ?? null) : null);
+      if (!note) continue;
+      // The moved-out passage usually ends with its line break: put the note on its last line of text.
+      const last = range.end.character === 0 && range.end.line > range.start.line ? range.end.line - 1 : range.end.line;
+      out.push({ at: item.move!.from === item.id ? doc.lineAt(last).range.end : range.start, ...note });
+    }
+    return out;
   }
 
   /** The proposed new text, each part right where it goes (after the struck-through text it replaces). */
@@ -172,7 +206,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const max = inlineMax(doc.uri);
     const hints: vscode.InlayHint[] = [];
     for (const { item, range: span } of await this.locator.locate(doc)) {
-      if (!item.newText || !range.intersection(span)) continue;
+      if (!item.newText || item.move || !range.intersection(span)) continue;
       const tip = new vscode.MarkdownString(`**${item.id}** proposes:\n\n${fence(item.newText, "latex")}`);
       for (const ins of marks(doc, item, span).inserted) {
         if (!range.contains(ins.at)) continue;
@@ -200,6 +234,18 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
       // Linked changes are accepted together: the whole group, or the item's part of it.
       const unit = part ? partId(part.group.id, part.index) : linked?.id;
+      if (item.move && rest.every((r) => r.id === movePartner(item))) {
+        // A move on its own: one decision for both halves (the commands take the other half along).
+        const other = model.partner(item);
+        lenses.push(
+          new vscode.CodeLens(at, { title: `${item.id}${tag}: ✓ Accept move`, command: "stet.accept", arguments: [ref(item.id)] }),
+          new vscode.CodeLens(at, { title: "✗ Reject move", command: "stet.reject", arguments: [ref(item.id)] }),
+          new vscode.CodeLens(at, { title: "↻ Revise", command: "stet.revise", arguments: [ref(item.id)] }),
+          new vscode.CodeLens(at, { title: "💬 Comment", command: "stet.comment", arguments: [ref(item.id)] }),
+          ...(other ? [new vscode.CodeLens(at, { title: item.move.from === item.id ? "↓ Go to destination" : "↑ Go to source", command: "stet.showItem", arguments: [ref(other.id)] })] : []),
+        );
+        continue;
+      }
       const accept = !rest.length
         ? `${item.id}${tag}: ✓ Accept`
         : part
@@ -246,6 +292,8 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     clearTimeout(this.timer);
     this.removed.dispose();
     this.inserted.dispose();
+    this.moveLabel.dispose();
+    this.moveChanged.dispose();
     this.lensChanged.dispose();
     this.hintsChanged.dispose();
     for (const d of this.disposables) d.dispose();
@@ -267,7 +315,18 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     const k = g ? partIndexOf(g, item.id) : -1;
     if (g && k >= 0) lines.push(`part ${k + 1} of ${g.parts!.length}: ${esc(g.parts![k]!.title)} (${g.parts![k]!.items.join(", ")})`);
   }
-  if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
+  const partner = model.partner(item);
+  if (item.move) {
+    const out = item.move.from === item.id;
+    const there = partner && partner.file !== item.file ? ` (in ${esc(partner.file)})` : "";
+    lines.push(`⇅ **Move**: ${item.move.from} removes the passage${out ? " here" : there}, ${item.move.to} inserts it${out ? there : " here"}. Accepting or rejecting one decides both.`);
+    if (item.move.changed && partner) {
+      const changes = moveChanges(out ? item.oldText : partner.oldText, out ? partner.newText : item.newText);
+      const n = item.move.changed;
+      lines.push(`⚠ **${n} word${n > 1 ? "s" : ""} changed on the way:** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`);
+    } else lines.push("Word for word: the passage arrives unchanged (spacing and line breaks aside).");
+    lines.push(fence(out ? item.oldText : item.newText, "latex"));
+  } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
   else lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);
   const last = item.thread.slice(-3);
   if (last.length) lines.push(last.map((t) => `> **${t.author === "user" ? "You" : esc(item.agent)}:** ${esc(t.text)}`).join("\n>\n"));

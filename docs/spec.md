@@ -325,6 +325,23 @@ If one part is left, the group has no parts. Parts are settled again when a memb
 
 **Review:** each part is accepted or rejected on its own (`G7.2`), and the rules of §6.4.5 apply within it: accepting or rejecting a single item of a part asks for the rest of that part. A part with mixed outcomes makes the group `broken`. Parts decided differently from each other don't: once every part is decided and some were accepted while others were not, the group is `resolved` and the agent gets a `group_partial` event listing each part and its outcome, since the document compiles but may be inconsistent.
 
+The two halves of a move (§6.4.7) always end up in one part.
+
+#### 6.4.7 Moves
+Moving a passage gives a deletion in one place and an insertion in another. Reviewed as two unrelated changes, that is hard to read, and the reviewer can't easily tell whether the text changed on the way. At submit, Stet pairs them as a **move** (`moves.ts`, `detectMoves`):
+- **Same round:** a pure deletion and a pure insertion of the same submission, in the same file or another one.
+- **Long enough:** at least `grouping.moves.minWords` words (15), and two sentences or more (sentence ends as in §6.2, abbreviations excluded) or a whole paragraph (blank lines, or a structure line such as `\section` or `\begin`, on both sides) or environment (`\begin{X}` … `\end{X}`). A handful of moved words stays a deletion and an insertion.
+- **Word for word:** words are compared with spacing and line breaks ignored. Up to `maxChangedWords` (3) changed words, and at most one per 20 words, still make a move, with `changed` set; anything more is not a move. For each differing stretch, the longer side counts.
+- Exact moves are paired first; each item is in at most one move. `grouping.moves.enabled: false` turns detection off.
+
+Both halves get `move: {from, to, changed}`, and an automatic linked group *Move "…" (3 sentences, unchanged)* or *(…, 1 word changed)* links them (it merges with an agent's linked group like any other). Accepting or rejecting one half always takes the other along, also without the group (`withMovePartners`, `linkedMembers`): half a move would drop or duplicate the passage. Parts never separate the halves (§6.4.6). The submit result reports each move to the agent, and asks it to check that changed words are intended.
+
+Since items are immutable, a move without changed words inserts exactly the text it removes; the user can still edit the inserted half when accepting (`e`). A source passage the user edited in the meantime makes the deletion stale, like any other item.
+
+**Display:** the panel shows the move group with the halves *⇣ moved out* and *⇡ moved in* (with *· n words changed*). In the editor, the moved-out passage is struck through with a note *⇣ moved to line N*; the insertion point shows *⇡ moved here from line N, word for word* instead of the text, or, in the editor's warning colour, *… with 1 word changed: "small" → "short"*. The hover shows the passage and the changes; the CodeLens reads *Accept move* / *Reject move* with a link to the other half. The CLI prints `moved out` / `moved in … word for word` and, in `stet show`, the changed words.
+
+**Not detected:** a passage moved within its own paragraph is usually one rewritten item of that paragraph (§6.2), not a deletion and an insertion.
+
 ---
 
 ## 7. Operations
@@ -530,6 +547,8 @@ reaches the real document until a human accepts it.
     Stet keeps identical changes, a definition and its uses, and changes
     touching the same text in one part.
   - `atomic` — edits within one sentence/paragraph that only read well together.
+  - Moving a passage: strongly prefer moving it word for word and editing it
+    in a later round; a few adjusted words are shown as part of the move (§6.4.7).
   - `related` — optional thematic batches with a title and rationale.
 - Check the submit result: fix wrong or missing groupings with `stet_group` /
   `stet_ungroup`.
@@ -572,6 +591,7 @@ reaches the real document until a human accepts it.
   "grouping": {
     "autoRepeatMin": 3,
     "autoDetect": ["repeat", "label", "macro", "cite"],
+    "moves": { "enabled": true, "minWords": 15, "maxChangedWords": 3 },
     "refCommands": ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref"],
     "citeCommands": ["cite", "citep", "citet", "parencite", "textcite", "autocite"]
   },
@@ -741,6 +761,11 @@ A review pass for security, efficiency and duplication before publishing the ext
 - **Report:** after `stet_sync`, the review base contained `\\Hashash` and `\\pk` where the document had `\Hash` and `\pk`. Accepted, uncommitted items are applied on top of the shared edits (or `HEAD`) only if their old text is still there. For items whose new text contains the old text (`pk` → `\pk`), the old text is still found inside the applied new text, so the item was applied again. Affected: shared edits (§7.3, since 2026-10-15) and `HEAD` after the user committed accepted items with git. Not affected: `HEAD` with the items uncommitted (the usual case before sharing existed).
 - **Fix:** `anchor` returns null when the old text it finds is part of an occurrence of the item's new text (`insideNewText`); for accepted items the new text is the applied text. This covers building the review base, the editor's locating of pending items, and accept (a pending item whose change is already in the text is refused instead of applied twice). Already corrupted review bases are rebuilt on the next `ensureBase` (the set of items to apply changes), and the agent's proposals against the corrupted text become stale at its next sync.
 - Tests: `review-base.test.ts` (the reported macros outside math, shared edits, git commit by hand, saved mode, accept of an already-made change; `insideNewText` cases). Four of them fail without the fix.
+
+### Moves (2026-11-13)
+- **Why:** a moved paragraph was reviewed as an unrelated deletion and insertion, hard to read and hard to check for changes on the way. Only longer passages (sentences, paragraphs, environments), not a few words. Small changes on the way are allowed and shown clearly; the agent instructions prefer moving word for word without forbidding adjustments.
+- **Where:** `moves.ts` (`detectMoves`, `changedWords`, `moveChanges`), `Item.move`, `movePartner`, submit (auto linked group, `SubmitResult.moves`), `withMovePartners` in accept/reject, `linkedMembers`, `settleParts` (halves joined). Extension: `TreeModel.withMove` / `partner` / `isMove`, `moveNote`, decorations `moveLabel` / `moveChanged`, CodeLens *Accept move*; long-change panels are not shown for moves. CLI: `itemSummary`, `stet show`.
+- Tests: `moves.test.ts` (paragraph move accepted from one half, also ungrouped; reject from one half; two sentences vs. a few words; one changed word shown, two in a 27-word paragraph not a move; move into another file inside a linked group with parts; parts joined), extension `model.test.ts` (labels, linking, editor notes).
 
 ### Fix: edited accepted changes applied again (2026-11-12)
 - **Report:** agents' copies contained an accepted remark and a corollary twice; the user's file had them once. The items were accepted, then edited or moved by the user (and committed with git, or only saved). Building the review base decided "still open" by finding the item's old text: a pure insertion's old text is empty and a newline is found anywhere, and the applied text was no longer there verbatim (`insideNewText` only catches the exact text). So the item was applied again, on `HEAD` and on the shared edits. The same kept accepted changes the user had undone visible to agents.

@@ -133,7 +133,23 @@ export interface Item {
   conflictsWith: string[];
   history: { at: string; status: ItemStatus; by: "user" | "agent" | "stet"; note?: string }[];
   thread: ThreadEntry[];
+  /** Half of a move (spec §6.4.7), on both halves: they are accepted or rejected together. */
+  move?: MoveInfo;
 }
+
+/**
+ * A passage moved within the submission: `from` deletes it, `to` inserts it elsewhere.
+ * `changed`: words that differ between the two (0 = word for word; spacing and line breaks aside).
+ */
+export interface MoveInfo {
+  from: string;
+  to: string;
+  changed: number;
+}
+
+/** The other half of an item's move, if it is one. */
+export const movePartner = (it: Pick<Item, "id" | "move">): string | null =>
+  it.move ? (it.move.from === it.id ? it.move.to : it.move.from) : null;
 
 /**
  * A reviewer's note to one agent about a passage of the document (spec §7.8), e.g. "shorten this

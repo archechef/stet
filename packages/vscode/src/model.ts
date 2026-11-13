@@ -6,6 +6,8 @@ import {
   compareItemIds,
   inlineDiff,
   linkedUnit,
+  moveChanges,
+  movePartner,
   numberInRound,
   oneLine,
   partId,
@@ -197,8 +199,27 @@ export class TreeModel {
           if (mi && isLive(mi) && !ids.includes(mi.id)) out.set(mi.id, mi);
         }
       }
+      const pi = this.items.get(movePartner(this.item(id) ?? { id }) ?? "");
+      if (pi && isLive(pi) && !ids.includes(pi.id)) out.set(pi.id, pi);
     }
     return [...out.values()].sort(byId);
+  }
+
+  /** An item and the other half of its move, if it is one (spec §6.4.7): decided together. */
+  withMove(item: Item): string[] {
+    const p = this.items.get(movePartner(item) ?? "");
+    return p && isLive(p) ? [item.id, p.id] : [item.id];
+  }
+
+  /** The other half of an item's move. */
+  partner(item: Item): Item | undefined {
+    return this.items.get(movePartner(item) ?? "");
+  }
+
+  /** Is the group just one move (its two halves)? */
+  isMove(g: Group): boolean {
+    const [a, b] = g.items.map((i) => this.items.get(i));
+    return g.items.length === 2 && !!a?.move && movePartner(a) === b?.id;
   }
 
   /** The linked group of an item, if any. */
@@ -227,6 +248,10 @@ export function itemLabel(it: Item): string {
     case "binary":
       return `${n}  binary ${it.file}`;
     default:
+      if (it.move) {
+        const changed = it.move.changed ? ` · ${it.move.changed} word${it.move.changed > 1 ? "s" : ""} changed` : "";
+        return it.move.from === it.id ? `${n}  ⇣ moved out: “${oneLine(it.oldText, 40)}”` : `${n}  ⇡ moved in: “${oneLine(it.newText, 40)}”${changed}`;
+      }
       if (!it.oldText) return `${n}  + “${oneLine(it.newText, 50)}”`;
       if (!it.newText) return `${n}  − “${oneLine(it.oldText, 50)}”`;
       return `${n}  “${oneLine(it.oldText, 28)}” → “${oneLine(it.newText, 28)}”`;
@@ -250,7 +275,8 @@ export function groupLabel(g: Group): string {
   return g.title;
 }
 
-export function groupDescription(g: Group, shown: number): string {
+export function groupDescription(g: Group, shown: number, move = false): string {
+  if (move) return g.state === "broken" ? "move · broken" : "move";
   const parts = [g.kind === "linked" ? "linked" : g.kind];
   if (g.parts) parts.push(`${g.parts.length} parts`);
   if (g.source === "auto") parts.push("auto");
@@ -262,6 +288,20 @@ export function groupDescription(g: Group, shown: number): string {
 /** Label of a part of a linked group: "Part 2: Section 3". */
 export function partLabel(g: Group, k: number): string {
   return `Part ${k + 1}: ${g.parts?.[k]?.title ?? ""}`;
+}
+
+/**
+ * The note shown for half of a move (spec §6.4.7) instead of its text: where the passage goes or
+ * comes from, and for the moved-in half whether it arrives word for word or with which changes.
+ */
+export function moveNote(item: Item, partner: Item | undefined, partnerLine: number | null): { text: string; changed: boolean } | null {
+  if (!item.move) return null;
+  const where = partnerLine !== null ? `line ${partnerLine}` : partner && partner.file !== item.file ? partner.file : "elsewhere";
+  if (item.move.from === item.id) return { text: `⇣ moved to ${where} (${item.move.to})`, changed: false };
+  if (!item.move.changed || !partner) return { text: `⇡ moved here from ${where} (${item.move.from}), word for word`, changed: false };
+  const list = moveChanges(partner.oldText, item.newText).map((c) => `“${c.was}” → “${c.now}”`).join(", ");
+  const n = item.move.changed;
+  return { text: `⇡ moved here from ${where} (${item.move.from}) with ${n} word${n > 1 ? "s" : ""} changed: ${list}`, changed: true };
 }
 
 /** Short text for ghost-text decorations (no newlines, bounded length). */

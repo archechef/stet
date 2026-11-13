@@ -317,6 +317,12 @@ export class StetMcpServer {
             lines.push(`Group ${g.id} (${g.kind}${g.source === "auto" ? ", auto-detected" : ""}) "${g.title}": ${g.items.join(", ")}`);
             for (const [k, p] of (g.parts ?? []).entries()) lines.push(`  part ${partId(g.id, k)} "${p.title}": ${p.items.join(", ")}`);
           }
+          for (const m of r.moves) {
+            lines.push(
+              `Move: ${m.from} (removed) and ${m.to} (inserted) move one passage; the reviewer decides them as one.` +
+                (m.changed ? ` ${m.changed} word(s) differ between the two places, and the reviewer is shown them: make sure that is intended.` : " Word for word."),
+            );
+          }
           if (r.ungrouped.length > 1) lines.push(`Ungrouped: ${r.ungrouped.join(", ")}. If some of these must be accepted together, call stet_group.`);
           if (r.superseded.length) lines.push(`Superseded (replaced by your new version): ${r.superseded.join(", ")}`);
           if (r.withdrawn.length) lines.push(`Withdrawn (you removed the change): ${r.withdrawn.join(", ")}`);
@@ -380,6 +386,7 @@ export class StetMcpServer {
           return text(
             [
               itemLine(it),
+              it.move ? `Move: ${it.move.from} removes the passage, ${it.move.to} inserts it${it.move.changed ? ` with ${it.move.changed} changed word(s)` : " word for word"}.` : "",
               it.note ? `Note: ${it.note}` : "",
               `Old text: ${JSON.stringify(it.oldText)}`,
               `New text: ${JSON.stringify(it.newText)}`,

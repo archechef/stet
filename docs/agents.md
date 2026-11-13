@@ -82,6 +82,7 @@ The agent edits, then submits by itself. Some tips:
 - `linked` groups can only be accepted together. Agents are told to use them wherever accepting only part would break the document: label and reference renames, a macro and its uses, citation keys.
 - A large linked group can come in **parts**, which you accept or reject one at a time. A part is only kept if accepting it alone still compiles (warnings such as `??` for a missing reference are fine) and blocks no other part. Stet keeps identical changes, a macro and its uses, and changes to the same text in one part. A label rename it detects is split into the label and its references. If you accept some parts and reject others, the agent is told, so it can make the paper consistent again.
 - Stet also detects label/ref renames, citation keys and repeated substitutions by itself.
+- **Moves:** a passage the agent moves (two sentences or more, a paragraph, an environment) is shown as one move. Agents are asked to move text word for word where they can and to edit it in a later round. This is a strong preference, not a rule: a move may need a few adjusted words (a "below" that is now "above"), and Stet then lists them.
 
 ---
 

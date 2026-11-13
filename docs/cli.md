@@ -66,6 +66,7 @@ Run these in your project folder. Changes have ids like `12.3`: change 3 of roun
 | `stet show <12.3\|G3\|C12\|N3>` | Shows a change with its context, a group or round with its members, or a note with its thread. |
 | `stet accept <12.3\|G3\|G3.2>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
 | `stet reject <12.3\|G3\|G3.2>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
+| | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <12.3\|N3> -m <text>` | Sends a message about a change, or in a note's thread; the agent can reply. |
 | `stet note <agent> <file[:line[-line]]> -m <text>` | Leaves a note for one agent on a passage (a line range, or the whole file). The agent receives it at its next sync. |
@@ -164,6 +165,7 @@ Settings live in `.git/stet/config.json`. Only settings that differ from the def
 | `guardHooks` | `true` | Install the git hooks at `stet init`. |
 | `split.mergeGap`, `split.rewriteRatio`, `split.abbreviations` | 2, 0.5, … | How edits are split into items (spec §6.2). |
 | `grouping.autoRepeatMin`, `grouping.autoDetect`, … | 3, … | Automatic grouping (spec §6.4). |
+| `grouping.moves` | `{"enabled": true, "minWords": 15, "maxChangedWords": 3}` | Moved passages shown as one move (spec §6.4.7). |
 
 The full list is in [spec.md](spec.md) §11. Invalid values (e.g. a branch name with shell characters) are reported instead of used.
 

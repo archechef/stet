@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
-import { diffBlock, fitsInline, ghostText, itemLabel, proposalMarkdown, roundLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
+import { diffBlock, fitsInline, ghostText, groupDescription, itemLabel, moveNote, proposalMarkdown, roundLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
 import { isManaged, managedCliPath } from "../src/runtime.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
@@ -179,5 +179,53 @@ describe("labels and text", () => {
     expect(isManaged({ command: "node", args: [managedCliPath(root).replace(/\\/g, "/")] }, root)).toBe(true);
     expect(isManaged({ command: "node", args: ["/usr/lib/stet/index.js"] }, root)).toBe(false);
     expect(isManaged(undefined, root)).toBe(false);
+  });
+});
+
+describe("moves (spec §6.4.7)", () => {
+  const PASSAGE = "Our tool splits every proposal into small items. The author accepts or rejects them one at a time.";
+  const moveSnap = (changed = 0, newText = PASSAGE): Snapshot => {
+    const move = { from: "7.1", to: "7.2", changed };
+    return {
+      ...snap(),
+      changesets: [cs("C7", ["7.1", "7.2", "7.3"], ["G7"])],
+      groups: [group("G7", "C7", "linked", ["7.1", "7.2"], { source: "auto", title: "Move “Our tool…” (2 sentences, unchanged)" })],
+      items: [
+        item("7.1", "C7", { oldText: PASSAGE + "\n\n", newText: "", groups: ["G7"], move }),
+        item("7.2", "C7", { oldText: "", newText: "\n" + newText, groups: ["G7"], move }),
+        item("7.3", "C7", { oldText: "a", newText: "b" }),
+      ],
+    };
+  };
+
+  it("labels both halves, recognises the move group, and decides the halves together", () => {
+    const m = new TreeModel(moveSnap(), "review");
+    const [a, b, c] = ["7.1", "7.2", "7.3"].map((id) => m.item(id)!);
+    expect(itemLabel(a!)).toMatch(/^1  ⇣ moved out: “Our tool splits every proposal into .*…”$/);
+    expect(itemLabel(b!)).toMatch(/^2  ⇡ moved in: “Our tool/);
+    expect(m.isMove(m.group("G7")!)).toBe(true);
+    expect(groupDescription(m.group("G7")!, 2, true)).toBe("move");
+    expect(m.withMove(b!)).toEqual(["7.2", "7.1"]);
+    expect(m.withMove(c!)).toEqual(["7.3"]);
+    expect(m.linkedRest(["7.2"]).map((i) => i.id)).toEqual(["7.1"]);
+    // Without its group (ungrouped by the agent), the halves still belong together.
+    const loose = moveSnap();
+    loose.groups = [];
+    for (const i of loose.items) i.groups = [];
+    expect(new TreeModel(loose).linkedRest(["7.1"]).map((i) => i.id)).toEqual(["7.2"]);
+  });
+
+  it("notes in the editor say where the passage goes, and show changed words", () => {
+    const m = new TreeModel(moveSnap(), "review");
+    expect(moveNote(m.item("7.1")!, m.item("7.2"), 40)).toEqual({ text: "⇣ moved to line 40 (7.2)", changed: false });
+    expect(moveNote(m.item("7.2")!, m.item("7.1"), 12)).toEqual({ text: "⇡ moved here from line 12 (7.1), word for word", changed: false });
+    expect(moveNote(m.item("7.3")!, undefined, null)).toBeNull();
+
+    const m2 = new TreeModel(moveSnap(1, PASSAGE.replace("small", "short")), "review");
+    expect(itemLabel(m2.item("7.2")!)).toMatch(/ · 1 word changed$/);
+    expect(moveNote(m2.item("7.2")!, m2.item("7.1"), 12)).toEqual({
+      text: "⇡ moved here from line 12 (7.1) with 1 word changed: “small” → “short”",
+      changed: true,
+    });
   });
 });

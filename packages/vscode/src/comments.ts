@@ -59,7 +59,8 @@ export class Threads implements vscode.Disposable {
 
   /** Whether the item's full new text goes into its thread (ghost text can't show it). */
   private showsProposal(project: Project, item: Item): boolean {
-    if (this.longMode() === "hover" || item.kind !== "modify" || !item.newText) return false;
+    // A move shows where its passage comes from instead (editor label and hover), not the text again.
+    if (this.longMode() === "hover" || item.kind !== "modify" || !item.newText || item.move) return false;
     // Only the changed parts are shown inline; the panel is for parts too long for that.
     const max = inlineMax(project.fileUri(item.file));
     return itemDiff(item).inserted.some((i) => !fitsInline(i.text, max));

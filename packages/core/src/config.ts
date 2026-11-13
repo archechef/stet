@@ -13,6 +13,13 @@ export interface GroupingConfig {
   autoDetect: ("repeat" | "label" | "cite")[];
   refCommands: string[];
   citeCommands: string[];
+  /**
+   * Moves (spec §6.4.7): a passage deleted in one place and inserted in another is shown as one
+   * move if it has at least `minWords` words and is two sentences or more, or a whole paragraph or
+   * environment. Up to `maxChangedWords` changed words (and one per 20 words) still count as a
+   * move, with the changes shown.
+   */
+  moves: { enabled: boolean; minWords: number; maxChangedWords: number };
 }
 
 export type ShareMode = "manual" | "saved" | "committed";
@@ -62,6 +69,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
       autoDetect: ["repeat", "label", "cite"],
       refCommands: ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref", "vref", "Vref"],
       citeCommands: ["cite", "citep", "citet", "citealp", "citeauthor", "citeyear", "parencite", "textcite", "autocite", "footcite"],
+      moves: { enabled: true, minWords: 15, maxChangedWords: 3 },
     },
     files: {
       tex: ["*.tex", "*.sty", "*.cls", "*.ltx", "*.dtx"],

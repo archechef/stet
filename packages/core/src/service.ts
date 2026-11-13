@@ -25,6 +25,7 @@ import {
   linkedUnit,
   numberInRound,
   isLive,
+  movePartner,
   parsePartId,
   partId,
   type Agent,
@@ -35,9 +36,11 @@ import {
   type GroupPart,
   type Item,
   type ItemStatus,
+  type MoveInfo,
   type Note,
   type StetEvent,
 } from "./model.js";
+import { detectMoves } from "./moves.js";
 import { describeNote, type DeliveredNote } from "./notes.js";
 import { combineParts, settleParts, type PartDraft } from "./parts.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
@@ -71,6 +74,8 @@ export interface SubmitResult {
   superseded: string[];
   withdrawn: string[];
   repeats: string[];
+  /** Moved passages found in this round (§6.4.7). */
+  moves: MoveInfo[];
   warnings: string[];
   sync: SyncResult | null;
 }
@@ -893,7 +898,7 @@ export class Stet {
       const files = await this.agentFiles(agent);
       const tip = await files.commitAll(`${opts.title}\n\n${opts.rationale ?? ""}\n\nStet-Agent: ${agentId}`);
       const result: SubmitResult = {
-        changeset: null, items: [], groups: [], ungrouped: [], superseded: [], withdrawn: [], repeats: [], warnings: [], sync: null,
+        changeset: null, items: [], groups: [], ungrouped: [], superseded: [], withdrawn: [], repeats: [], moves: [], warnings: [], sync: null,
       };
 
       if (tip !== agent.lastTip) {
@@ -1125,6 +1130,14 @@ export class Stet {
     // Groups: explicit hints + auto detection.
     const live = created.filter((i) => isLive(i.status));
     const drafts: GroupDraft[] = [];
+    // Moved passages (§6.4.7): the two halves are one change, linked so they're decided together.
+    for (const m of detectMoves(live, cfg.grouping.moves, cfg.split.abbreviations)) {
+      const move = { from: m.from.id, to: m.to.id, changed: m.changed };
+      m.from.move = move;
+      m.to.move = { ...move };
+      result.moves.push(move);
+      drafts.push({ kind: "linked", title: m.title, rationale: null, source: "auto", items: [m.from.id, m.to.id] });
+    }
     const idOfCand = (c: Candidate) => itemOf.get(c)?.id ?? matched.get(c)?.id;
     for (const h of effectiveHints) {
       const pool = [...live.map((i) => candOf.get(i)!), ...[...matched.entries()].filter(([, e]) => isLive(e.status)).map(([c]) => c)];
@@ -1462,6 +1475,21 @@ export class Stet {
   }
 
   /** Live items that must be accepted (or rejected) together with `items`: their linked groups' parts (§6.4.5–6). */
+  /**
+   * Items with the other halves of their moves (§6.4.7): half a move is never decided alone, it
+   * would drop or duplicate the passage.
+   */
+  private async withMovePartners(items: Item[]): Promise<Item[]> {
+    const out = [...items];
+    for (const it of items) {
+      const p = movePartner(it);
+      if (!p || out.some((o) => o.id === p)) continue;
+      const pi = await this.store.getItem(p);
+      if (pi && isLive(pi.status)) out.push(pi);
+    }
+    return out;
+  }
+
   private async linkedMembers(items: Item[]): Promise<Item[]> {
     const out = new Map<string, Item>();
     for (const it of items) {
@@ -1473,6 +1501,10 @@ export class Stet {
           if (mi && isLive(mi.status)) out.set(mi.id, mi);
         }
       }
+      // The halves of a move belong together even if their group was dissolved.
+      const partner = movePartner(it);
+      const pi = partner ? await this.store.getItem(partner) : null;
+      if (pi && isLive(pi.status)) out.set(pi.id, pi);
     }
     return [...out.values()];
   }
@@ -1506,7 +1538,7 @@ export class Stet {
     return this.store.withLock(async () => {
       await this.recoverInterrupted();
       const cfg = await this.config();
-      const items = await this.requireItems(ids);
+      const items = await this.withMovePartners(await this.requireItems(ids));
       for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
       const bad = items.flatMap((i) => [i.file, ...(i.oldFile !== undefined ? [i.oldFile] : [])]).filter((f) => !isSafeRepoPath(f));
       if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
@@ -1634,7 +1666,7 @@ export class Stet {
    */
   async reject(ids: string[], opts: { reason?: string; mode?: "all" | "revise-rest" | "only" } = {}): Promise<Item[]> {
     return this.store.withLock(async () => {
-      const items = await this.requireItems(ids);
+      const items = opts.mode === "only" ? await this.requireItems(ids) : await this.withMovePartners(await this.requireItems(ids));
       for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
       const rest = (await this.linkedMembers(items)).filter((m) => !items.some((i) => i.id === m.id));
       if (rest.length && !opts.mode) {

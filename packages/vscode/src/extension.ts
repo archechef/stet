@@ -371,11 +371,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const g = n.group;
         const members = model.members(g);
         const t = new vscode.TreeItem(groupLabel(g), E);
-        t.description = groupDescription(g, members.length);
+        const move = model.isMove(g);
+        t.description = groupDescription(g, members.length, move);
         t.iconPath =
           g.state === "broken"
             ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
-            : new vscode.ThemeIcon(g.kind === "linked" ? "link" : "symbol-namespace");
+            : new vscode.ThemeIcon(move ? "arrow-swap" : g.kind === "linked" ? "link" : "symbol-namespace");
         t.tooltip = new vscode.MarkdownString(
           `**${g.id}** ${g.kind}${g.source === "auto" ? " (detected by Stet)" : ""}: ${esc(g.title)}` +
             (g.rationale ? `\n\n${esc(g.rationale)}` : "") +
@@ -521,22 +522,24 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     const { project: p, item } = t;
-    const rest = this.model(p).linkedRest([item.id]);
-    let ids = [item.id];
+    // Half a move is never decided alone: its other half comes along without asking.
+    const own = this.model(p).withMove(item);
+    const rest = this.model(p).linkedRest(own);
+    let ids = own;
     let overrideLinked = false;
     if (rest.length) {
       const unit = this.unitName(p, item);
-      const all = `Accept all ${rest.length + 1} changes of ${unit}`;
-      const only = `Accept only ${item.id}`;
+      const all = `Accept all ${rest.length + own.length} changes of ${unit}`;
+      const only = `Accept only ${own.join(" + ")}`;
       const pick = await vscode.window.showQuickPick(
         [
-          { label: all, detail: `${[item, ...rest].map((i) => i.id).join(", ")} belong together.` },
+          { label: all, detail: `${[...own, ...rest.map((i) => i.id)].join(", ")} belong together.` },
           { label: only, detail: "Breaks the linked group; the agent is asked to repair the document." },
         ],
         { title: `${item.id} is linked with ${rest.map((r) => r.id).join(", ")}` },
       );
       if (!pick) return;
-      if (pick.label === all) ids = [item.id, ...rest.map((r) => r.id)];
+      if (pick.label === all) ids = [...own, ...rest.map((r) => r.id)];
       else overrideLinked = true;
     }
     await this.decide(p, item.id, !isRef(arg), () => this.doAccept(p, ids, { overrideLinked }));
@@ -618,13 +621,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     const { project: p, item } = t;
-    const rest = this.model(p).linkedRest([item.id]);
+    const own = this.model(p).withMove(item);
+    const rest = this.model(p).linkedRest(own);
     let mode: "all" | "revise-rest" | "only" | undefined;
     if (rest.length) {
       const picks = [
-        { label: `Reject all ${rest.length + 1} changes of ${this.unitName(p, item)}`, mode: "all" as const },
-        { label: `Reject ${item.id}, ask the agent to revise the rest`, mode: "revise-rest" as const },
-        { label: `Reject only ${item.id}`, mode: "only" as const, detail: "Breaks the linked group; the agent is asked to repair the document." },
+        { label: `Reject all ${rest.length + own.length} changes of ${this.unitName(p, item)}`, mode: "all" as const },
+        { label: `Reject ${own.join(" + ")}, ask the agent to revise the rest`, mode: "revise-rest" as const },
+        { label: `Reject only ${own.join(" + ")}`, mode: "only" as const, detail: "Breaks the linked group; the agent is asked to repair the document." },
       ];
       const pick = await vscode.window.showQuickPick(picks, { title: `${item.id} is linked with ${rest.map((r) => r.id).join(", ")}` });
       if (!pick) return;
@@ -633,7 +637,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const reason = await this.reason(`Reject ${item.id}`);
     if (reason === undefined) return;
     await this.decide(p, item.id, !isRef(arg), () => this.run(p, async () => {
-      const r = await p.stet.reject([item.id], { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
+      const r = await p.stet.reject(own, { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
       vscode.window.setStatusBarMessage(`$(close) Rejected ${r.map((i) => i.id).join(", ")}`, 4000);
     }));
   }
