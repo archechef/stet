@@ -1,6 +1,6 @@
 {
   "name": "stet-tex",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Stet: human-in-the-loop review of AI-proposed changes to LaTeX projects",
   "type": "module",
   "bin": {
@@ -10,7 +10,7 @@
     "dist"
   ],
   "dependencies": {
-    "@stet/core": "0.7.1"
+    "@stet/core": "0.7.2"
   },
   "engines": {
     "node": ">=20"

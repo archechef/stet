@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.2 — 2026-11-13
 
 - **Fix: more moves recognised.** Moving a passage word for word was often not shown as a move:
   - A block inserted or deleted right before a paragraph that starts with words also found in the block came out as a changed paragraph instead of a pure insertion or deletion.
