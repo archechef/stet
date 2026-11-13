@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-11-13
 
 - **Fix: moves next to each other.** Moves were not recognised once two moved blocks ended up next to each other, or next to a heading with another change below it. Blocks moved from different places to one spot (or from one spot to different places) are now one move, and the new place lists where each block came from. Changes that start or end at a paragraph break are no longer merged with the neighbouring paragraph.
 
