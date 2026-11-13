@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-11-13
 
 - **Moves:** when an agent moves a passage (two sentences or more, a whole paragraph or an environment), Stet shows it as one move instead of an unrelated deletion and insertion. The old place says *moved to line N*, the new one *moved here from line N, word for word*. If a few words changed on the way, the note lists them in a warning colour. Accepting or rejecting either end decides the whole move. Agents are asked to move text word for word where they can. Setting `grouping.moves` in `.git/stet/config.json`.
 - **Refresh updates agents:** the *Refresh* button in the Stet panel also rewrites the active agents' instructions, tool configuration and guardrails, so after an update new agent sessions get the new instructions without a sync first. Restart running agent sessions to load them.
