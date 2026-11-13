@@ -333,10 +333,14 @@ function splitLatex(oldText: string, newText: string, cfg: SplitConfig): Edit[] 
   raw.forEach((r, idx) => {
     const lo = idx > 0 ? raw[idx - 1]!.oldEnd : 0;
     const hi = idx + 1 < raw.length ? raw[idx + 1]!.oldStart : oldLines.length;
+    // Only into a paragraph the change is part of: a change that starts (ends) with a paragraph
+    // break on both sides stops there. Otherwise a moved paragraph next to a heading merged with
+    // it, and with a change below it, into one rewritten item (bug report 2026-11-13).
+    const edge = (o: number, n: number) => (r.oldEnd > r.oldStart && !blank(oldLines[o])) || (r.newEnd > r.newStart && !blank(newLines[n]));
     let up = 0;
-    while (r.oldStart - up > lo && !blank(oldLines[r.oldStart - up - 1])) up++;
+    if (edge(r.oldStart, r.newStart)) while (r.oldStart - up > lo && !blank(oldLines[r.oldStart - up - 1])) up++;
     let down = 0;
-    while (r.oldEnd + down < hi && !blank(oldLines[r.oldEnd + down])) down++;
+    if (edge(r.oldEnd - 1, r.newEnd - 1)) while (r.oldEnd + down < hi && !blank(oldLines[r.oldEnd + down])) down++;
     const e = { oldStart: r.oldStart - up, oldEnd: r.oldEnd + down, newStart: r.newStart - up, newEnd: r.newEnd + down };
     const last = expanded[expanded.length - 1];
     if (last && last.oldEnd >= e.oldStart) {

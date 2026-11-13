@@ -6,7 +6,7 @@ export type { SubmitResult, SyncResult, AcceptResult, AgentStatus, ItemFilter } 
 export type { GroupHint, NoteHint } from "./grouping.js";
 export { tokenize } from "./tokenizer.js";
 export { inlineDiff, type InlineDiff } from "./inline.js";
-export { moveChanges, type MoveChange } from "./moves.js";
+export { moveChanges, moveChangesOf, moveTexts, type MoveChange } from "./moves.js";
 export { splitText, type Edit } from "./split.js";
 export { anchor } from "./anchor.js";
 export { doctor, type DoctorCheck } from "./doctor.js";

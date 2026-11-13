@@ -8,7 +8,7 @@
  * one part: reviewing forty copies of the same substitution separately helps nobody.
  */
 import { joinTitles } from "./grouping.js";
-import { isLive, movePartner, type GroupPart, type Item } from "./model.js";
+import { isLive, moveOthers, type GroupPart, type Item } from "./model.js";
 import { normalizeWs } from "./text.js";
 
 export interface PartDraft {
@@ -136,10 +136,12 @@ export async function settleParts(
   });
   const at = (it: Item) => partOf.get(it.id)!;
 
-  // The two halves of a move: accepting one alone would lose or duplicate the passage.
+  // The items of a move: accepting some alone would lose or duplicate the passage.
   for (const m of members) {
-    const other = byId.get(movePartner(m) ?? "");
-    if (other && m.move!.from === m.id) join(at(m), at(other), `${m.id} and ${other.id} move one passage`);
+    for (const o of moveOthers(m)) {
+      const other = byId.get(o);
+      if (other && find(at(m)) !== find(at(other))) join(at(m), at(other), `${m.id} and ${other.id} move one passage`, true);
+    }
   }
 
   // Whole-file changes and package/class/include changes: other parts may depend on them.

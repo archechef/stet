@@ -7,7 +7,7 @@ import type { Readable, Writable } from "node:stream";
 import type { GroupHint, NoteHint } from "./grouping.js";
 
 import { archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
-import { isNoteId, partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
+import { isNoteId, moveFrom, moveTo, partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
 import { describeNote } from "./notes.js";
 import { Stet, StetError } from "./service.js";
 import { oneLine } from "./text.js";
@@ -319,7 +319,7 @@ export class StetMcpServer {
           }
           for (const m of r.moves) {
             lines.push(
-              `Move: ${m.from} (removed) and ${m.to} (inserted) move one passage; the reviewer decides them as one.` +
+              `Move: ${moveFrom(m).join(", ")} (removed) and ${moveTo(m).join(", ")} (inserted) move text; the reviewer decides them as one.` +
                 (m.changed ? ` ${m.changed} word(s) differ between the two places, and the reviewer is shown them: make sure that is intended.` : " Word for word."),
             );
           }
@@ -386,7 +386,7 @@ export class StetMcpServer {
           return text(
             [
               itemLine(it),
-              it.move ? `Move: ${it.move.from} removes the passage, ${it.move.to} inserts it${it.move.changed ? ` with ${it.move.changed} changed word(s)` : " word for word"}.` : "",
+              it.move ? `Move: ${moveFrom(it.move).join(", ")} remove(s) the text, ${moveTo(it.move).join(", ")} insert(s) it${it.move.changed ? ` with ${it.move.changed} changed word(s)` : " word for word"}.` : "",
               it.note ? `Note: ${it.note}` : "",
               `Old text: ${JSON.stringify(it.oldText)}`,
               `New text: ${JSON.stringify(it.newText)}`,

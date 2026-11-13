@@ -217,15 +217,46 @@ describe("moves (spec §6.4.7)", () => {
 
   it("notes in the editor say where the passage goes, and show changed words", () => {
     const m = new TreeModel(moveSnap(), "review");
-    expect(moveNote(m.item("7.1")!, m.item("7.2"), 40)).toEqual({ text: "⇣ moved to line 40 (7.2)", changed: false });
-    expect(moveNote(m.item("7.2")!, m.item("7.1"), 12)).toEqual({ text: "⇡ moved here from line 12 (7.1), word for word", changed: false });
-    expect(moveNote(m.item("7.3")!, undefined, null)).toBeNull();
+    const lines = (l: Record<string, number>) => (id: string) => l[id] ?? null;
+    expect(moveNote(m.item("7.1")!, m.get, lines({ "7.2": 40 }))).toEqual({ text: "⇣ moved to line 40 (7.2)", changed: false });
+    expect(moveNote(m.item("7.2")!, m.get, lines({ "7.1": 12 }))).toEqual({ text: "⇡ moved here from line 12 (7.1), word for word", changed: false });
+    expect(moveNote(m.item("7.3")!, m.get, lines({}))).toBeNull();
 
     const m2 = new TreeModel(moveSnap(1, PASSAGE.replace("small", "short")), "review");
-    expect(itemLabel(m2.item("7.2")!)).toMatch(/ · 1 word changed$/);
-    expect(moveNote(m2.item("7.2")!, m2.item("7.1"), 12)).toEqual({
+    expect(itemLabel(m2.item("7.2")!, m2.get)).toMatch(/ · 1 word changed$/);
+    expect(moveNote(m2.item("7.2")!, m2.get, lines({ "7.1": 12 }))).toEqual({
       text: "⇡ moved here from line 12 (7.1) with 1 word changed: “small” → “short”",
       changed: true,
     });
+  });
+
+  it("several blocks landing next to each other: one move, notes naming every source", () => {
+    const A = "First moved paragraph with enough words. It has two sentences.";
+    const B = "Second moved paragraph, from somewhere else. Also two sentences.";
+    const move = { from: ["8.1", "8.2"], to: ["8.3"], changed: 1 };
+    const s: Snapshot = {
+      ...snap(),
+      changesets: [cs("C8", ["8.1", "8.2", "8.3"], ["G8"])],
+      groups: [group("G8", "C8", "linked", ["8.1", "8.2", "8.3"], { source: "auto" })],
+      items: [
+        item("8.1", "C8", { oldText: A + "\n\n", newText: "", groups: ["G8"], move }),
+        item("8.2", "C8", { oldText: B + "\n\n", newText: "", groups: ["G8"], move }),
+        item("8.3", "C8", { oldText: "", newText: `\n${A}\n\n${B.replace("somewhere", "anywhere")}\n`, groups: ["G8"], move }),
+      ],
+    };
+    const m = new TreeModel(s, "review");
+    expect(m.isMove(m.group("G8")!)).toBe(true);
+    expect(m.withMove(m.item("8.1")!)).toEqual(["8.1", "8.2", "8.3"]);
+    expect(m.linkedRest(["8.2"]).map((i) => i.id)).toEqual(["8.1", "8.3"]);
+    const lines = (id: string) => ({ "8.1": 5, "8.2": 9, "8.3": 30 })[id] ?? null;
+    expect(moveNote(m.item("8.2")!, m.get, lines)).toEqual({ text: "⇣ moved to line 30 (8.3)", changed: false });
+    expect(moveNote(m.item("8.3")!, m.get, lines)).toEqual({
+      text: "⇡ moved here from lines 5 and 9 (8.1, 8.2) with 1 word changed: “somewhere” → “anywhere”",
+      changed: true,
+    });
+    // A source in another file is named by its file.
+    expect(moveNote(m.item("8.3")!, (id) => (id === "8.2" ? { ...m.get(id)!, file: "appendix.tex" } : m.get(id)), (id) => (id === "8.1" ? 5 : null))!.text).toMatch(
+      /^⇡ moved here from line 5 and appendix\.tex \(8\.1, 8\.2\)/,
+    );
   });
 });

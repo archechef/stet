@@ -25,7 +25,7 @@ import {
   linkedUnit,
   numberInRound,
   isLive,
-  movePartner,
+  moveOthers,
   parsePartId,
   partId,
   type Agent,
@@ -1132,11 +1132,10 @@ export class Stet {
     const drafts: GroupDraft[] = [];
     // Moved passages (§6.4.7): the two halves are one change, linked so they're decided together.
     for (const m of detectMoves(live, cfg.grouping.moves, cfg.split.abbreviations)) {
-      const move = { from: m.from.id, to: m.to.id, changed: m.changed };
-      m.from.move = move;
-      m.to.move = { ...move };
+      const move = { from: m.from.map((i) => i.id), to: m.to.map((i) => i.id), changed: m.changed };
+      for (const it of [...m.from, ...m.to]) it.move = { from: [...move.from], to: [...move.to], changed: move.changed };
       result.moves.push(move);
-      drafts.push({ kind: "linked", title: m.title, rationale: null, source: "auto", items: [m.from.id, m.to.id] });
+      drafts.push({ kind: "linked", title: m.title, rationale: null, source: "auto", items: [...move.from, ...move.to] });
     }
     const idOfCand = (c: Candidate) => itemOf.get(c)?.id ?? matched.get(c)?.id;
     for (const h of effectiveHints) {
@@ -1476,16 +1475,17 @@ export class Stet {
 
   /** Live items that must be accepted (or rejected) together with `items`: their linked groups' parts (§6.4.5–6). */
   /**
-   * Items with the other halves of their moves (§6.4.7): half a move is never decided alone, it
-   * would drop or duplicate the passage.
+   * Items with the rest of their moves (§6.4.7): part of a move is never decided alone, it would
+   * drop or duplicate the passage.
    */
   private async withMovePartners(items: Item[]): Promise<Item[]> {
     const out = [...items];
     for (const it of items) {
-      const p = movePartner(it);
-      if (!p || out.some((o) => o.id === p)) continue;
-      const pi = await this.store.getItem(p);
-      if (pi && isLive(pi.status)) out.push(pi);
+      for (const p of moveOthers(it)) {
+        if (out.some((o) => o.id === p)) continue;
+        const pi = await this.store.getItem(p);
+        if (pi && isLive(pi.status)) out.push(pi);
+      }
     }
     return out;
   }
@@ -1501,10 +1501,11 @@ export class Stet {
           if (mi && isLive(mi.status)) out.set(mi.id, mi);
         }
       }
-      // The halves of a move belong together even if their group was dissolved.
-      const partner = movePartner(it);
-      const pi = partner ? await this.store.getItem(partner) : null;
-      if (pi && isLive(pi.status)) out.set(pi.id, pi);
+      // The items of a move belong together even if their group was dissolved.
+      for (const p of moveOthers(it)) {
+        const pi = await this.store.getItem(p);
+        if (pi && isLive(pi.status)) out.set(pi.id, pi);
+      }
     }
     return [...out.values()];
   }

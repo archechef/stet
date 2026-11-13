@@ -10,6 +10,10 @@ import {
   describeFeedback,
   oneLine,
   moveChanges,
+  moveFrom,
+  moveTexts,
+  moveTo,
+  movesOut,
   doctor,
   hookStatus,
   installHooks,
@@ -137,10 +141,9 @@ function itemSummary(it: Item, line?: number): string {
   if (it.move) {
     // Half of a move (spec §6.4.7): decided with its other half.
     const how = it.move.changed ? yellow(`${it.move.changed} word(s) changed on the way`) : "word for word";
-    const move =
-      it.move.from === it.id
-        ? `${red(`moved out: "${oneLine(it.oldText, 40)}"`)} ${dim(`→ ${it.move.to}`)}`
-        : `${green(`moved in: "${oneLine(it.newText, 40)}"`)} ${dim(`← ${it.move.from},`)} ${how}`;
+    const move = movesOut(it)
+      ? `${red(`moved out: "${oneLine(it.oldText, 40)}"`)} ${dim(`→ ${moveTo(it.move).join(", ")}`)}`
+      : `${green(`moved in: "${oneLine(it.newText, 40)}"`)} ${dim(`← ${moveFrom(it.move).join(", ")},`)} ${how}`;
     return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${move}`;
   }
   const change = !it.oldText ? green(`+ "${oneLine(it.newText, 50)}"`) : !it.newText ? red(`- "${oneLine(it.oldText, 50)}"`) : `${red(`"${oneLine(it.oldText, 30)}"`)} → ${green(`"${oneLine(it.newText, 30)}"`)}`;
@@ -492,13 +495,13 @@ async function main() {
       const it = await stet.getItem(id);
       if (!it) throw new StetError(`Unknown item ${id}.`);
       const { line } = await stet.locateInWorkingCopy(it);
-      const [mf, mt] = it.move ? await Promise.all([stet.getItem(it.move.from), stet.getItem(it.move.to)]) : [null, null];
-      const moved = mf && mt ? { from: mf.oldText, to: mt.newText } : null;
+      const moveItems = it.move ? await Promise.all([...moveFrom(it.move), ...moveTo(it.move)].map((id) => stet.getItem(id))) : [];
+      const moved = it.move ? moveTexts(it.move, (id) => moveItems.find((m) => m?.id === id) ?? undefined) : null;
       return out(() => {
         const lines = [itemSummary(it, line)];
         if (it.note) lines.push(`${dim("note:")} ${it.note}`);
         if (it.move) {
-          lines.push(`${dim("move:")} ${it.move.from} removes the passage, ${it.move.to} inserts it; accepting or rejecting one decides both.`);
+          lines.push(`${dim("move:")} ${moveFrom(it.move).join(", ")} remove the text, ${moveTo(it.move).join(", ")} insert it; accepting or rejecting one decides the whole move.`);
           if (it.move.changed && moved) {
             lines.push(yellow(`Changed on the way (${it.move.changed} word(s)):`));
             for (const c of moveChanges(moved.from, moved.to)) lines.push(`  ${red(`"${c.was}"`)} → ${green(`"${c.now}"`)}`);

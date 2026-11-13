@@ -133,23 +133,34 @@ export interface Item {
   conflictsWith: string[];
   history: { at: string; status: ItemStatus; by: "user" | "agent" | "stet"; note?: string }[];
   thread: ThreadEntry[];
-  /** Half of a move (spec §6.4.7), on both halves: they are accepted or rejected together. */
+  /** Part of a move (spec §6.4.7), on every item of it: they are accepted or rejected together. */
   move?: MoveInfo;
 }
 
 /**
- * A passage moved within the submission: `from` deletes it, `to` inserts it elsewhere.
- * `changed`: words that differ between the two (0 = word for word; spacing and line breaks aside).
+ * Passages moved within the submission: the `from` items delete them, the `to` items insert them
+ * elsewhere. Usually one of each; several blocks that end up next to each other form one
+ * insertion with several deletions (and blocks next to each other at the start, one deletion with
+ * several insertions). Ids in text order: `from` as the blocks appear in the insertion, `to` as
+ * they appear in the deletion. A single id (string) is how Stet 0.7.0 stored them.
+ * `changed`: words that differ (0 = word for word; spacing and line breaks aside).
  */
 export interface MoveInfo {
-  from: string;
-  to: string;
+  from: string | string[];
+  to: string | string[];
   changed: number;
 }
 
-/** The other half of an item's move, if it is one. */
-export const movePartner = (it: Pick<Item, "id" | "move">): string | null =>
-  it.move ? (it.move.from === it.id ? it.move.to : it.move.from) : null;
+const ids = (v: string | string[]) => (Array.isArray(v) ? v : [v]);
+/** The items of a move that remove text. */
+export const moveFrom = (m: MoveInfo): string[] => ids(m.from);
+/** The items of a move that insert text. */
+export const moveTo = (m: MoveInfo): string[] => ids(m.to);
+/** Does the item remove text for its move (rather than insert it)? */
+export const movesOut = (it: Pick<Item, "id" | "move">): boolean => !!it.move && moveFrom(it.move).includes(it.id);
+/** The other items of an item's move (empty if it is none). */
+export const moveOthers = (it: Pick<Item, "id" | "move">): string[] =>
+  it.move ? [...moveFrom(it.move), ...moveTo(it.move)].filter((i) => i !== it.id) : [];
 
 /**
  * A reviewer's note to one agent about a passage of the document (spec §7.8), e.g. "shorten this

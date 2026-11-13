@@ -6,8 +6,11 @@ import {
   compareItemIds,
   inlineDiff,
   linkedUnit,
-  moveChanges,
-  movePartner,
+  moveChangesOf,
+  moveFrom,
+  moveOthers,
+  movesOut,
+  moveTo,
   numberInRound,
   oneLine,
   partId,
@@ -199,28 +202,36 @@ export class TreeModel {
           if (mi && isLive(mi) && !ids.includes(mi.id)) out.set(mi.id, mi);
         }
       }
-      const pi = this.items.get(movePartner(this.item(id) ?? { id }) ?? "");
-      if (pi && isLive(pi) && !ids.includes(pi.id)) out.set(pi.id, pi);
+      for (const o of this.moveRest(this.item(id))) if (!ids.includes(o.id)) out.set(o.id, o);
     }
     return [...out.values()].sort(byId);
   }
 
-  /** An item and the other half of its move, if it is one (spec §6.4.7): decided together. */
+  /** The other items of an item's move that are still pending. */
+  private moveRest(item: Item | undefined): Item[] {
+    return item ? moveOthers(item).map((o) => this.items.get(o)).filter((o): o is Item => !!o && isLive(o)) : [];
+  }
+
+  /** An item and the rest of its move, if it is part of one (spec §6.4.7): decided together. */
   withMove(item: Item): string[] {
-    const p = this.items.get(movePartner(item) ?? "");
-    return p && isLive(p) ? [item.id, p.id] : [item.id];
+    return [item.id, ...this.moveRest(item).map((o) => o.id)];
   }
 
-  /** The other half of an item's move. */
-  partner(item: Item): Item | undefined {
-    return this.items.get(movePartner(item) ?? "");
+  /** The other items of an item's move, in their order (moved-out ones first). */
+  others(item: Item): Item[] {
+    return moveOthers(item).map((o) => this.items.get(o)).filter((o): o is Item => !!o);
   }
 
-  /** Is the group just one move (its two halves)? */
+  /** Is the group exactly one move? */
   isMove(g: Group): boolean {
-    const [a, b] = g.items.map((i) => this.items.get(i));
-    return g.items.length === 2 && !!a?.move && movePartner(a) === b?.id;
+    const first = this.items.get(g.items[0] ?? "");
+    if (!first?.move) return false;
+    const all = new Set([...moveFrom(first.move), ...moveTo(first.move)]);
+    return g.items.length === all.size && g.items.every((i) => all.has(i));
   }
+
+  /** Lookup for the move helpers of the core. */
+  readonly get = (id: string): Item | undefined => this.items.get(id);
 
   /** The linked group of an item, if any. */
   linkedGroup(item: Item): Group | undefined {
@@ -236,7 +247,11 @@ export { oneLine };
 /** How a change is numbered in the panel: 3 for 12.3 (its round shows 12), the full id for old ones. */
 export const shortId = (id: string): string => String(numberInRound(id) ?? id);
 
-export function itemLabel(it: Item): string {
+/** Words a list of move changes touches (the longer side of each). */
+const changedCount = (cs: { was: string; now: string }[]) => cs.reduce((n, c) => n + Math.max(words(c.was), words(c.now)), 0);
+const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
+
+export function itemLabel(it: Item, get?: (id: string) => Item | undefined): string {
   const n = shortId(it.id);
   switch (it.kind) {
     case "add-file":
@@ -249,8 +264,9 @@ export function itemLabel(it: Item): string {
       return `${n}  binary ${it.file}`;
     default:
       if (it.move) {
-        const changed = it.move.changed ? ` · ${it.move.changed} word${it.move.changed > 1 ? "s" : ""} changed` : "";
-        return it.move.from === it.id ? `${n}  ⇣ moved out: “${oneLine(it.oldText, 40)}”` : `${n}  ⇡ moved in: “${oneLine(it.newText, 40)}”${changed}`;
+        if (movesOut(it)) return `${n}  ⇣ moved out: “${oneLine(it.oldText, 40)}”`;
+        const k = get ? changedCount(moveChangesOf(it, get)) : it.move.changed;
+        return `${n}  ⇡ moved in: “${oneLine(it.newText, 40)}”${k ? ` · ${k} word${k > 1 ? "s" : ""} changed` : ""}`;
       }
       if (!it.oldText) return `${n}  + “${oneLine(it.newText, 50)}”`;
       if (!it.newText) return `${n}  − “${oneLine(it.oldText, 50)}”`;
@@ -290,18 +306,32 @@ export function partLabel(g: Group, k: number): string {
   return `Part ${k + 1}: ${g.parts?.[k]?.title ?? ""}`;
 }
 
+/** "line 40", "lines 12 and 40", "appendix.tex", "elsewhere": where other items of a move are. */
+function places(others: Item[], file: string, lineOf: (id: string) => number | null): string {
+  const lines = others.map((o) => lineOf(o.id)).filter((l): l is number => l !== null);
+  const files = [...new Set(others.filter((o) => lineOf(o.id) === null && o.file !== file).map((o) => o.file))];
+  const parts = [...(lines.length ? [`line${lines.length > 1 ? "s" : ""} ${andList(lines.map(String))}`] : []), ...files];
+  return parts.length ? andList(parts) : "elsewhere";
+}
+const andList = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
 /**
- * The note shown for half of a move (spec §6.4.7) instead of its text: where the passage goes or
- * comes from, and for the moved-in half whether it arrives word for word or with which changes.
+ * The note shown for an item of a move (spec §6.4.7) instead of its text: where the text goes or
+ * comes from, and for a moved-in item whether it arrives word for word or with which changes.
+ * `lineOf`: the line of another item in the same document, if it is shown there.
  */
-export function moveNote(item: Item, partner: Item | undefined, partnerLine: number | null): { text: string; changed: boolean } | null {
+export function moveNote(item: Item, get: (id: string) => Item | undefined, lineOf: (id: string) => number | null): { text: string; changed: boolean } | null {
   if (!item.move) return null;
-  const where = partnerLine !== null ? `line ${partnerLine}` : partner && partner.file !== item.file ? partner.file : "elsewhere";
-  if (item.move.from === item.id) return { text: `⇣ moved to ${where} (${item.move.to})`, changed: false };
-  if (!item.move.changed || !partner) return { text: `⇡ moved here from ${where} (${item.move.from}), word for word`, changed: false };
-  const list = moveChanges(partner.oldText, item.newText).map((c) => `“${c.was}” → “${c.now}”`).join(", ");
-  const n = item.move.changed;
-  return { text: `⇡ moved here from ${where} (${item.move.from}) with ${n} word${n > 1 ? "s" : ""} changed: ${list}`, changed: true };
+  const out = movesOut(item);
+  const others = (out ? moveTo(item.move) : moveFrom(item.move)).map(get).filter((o): o is Item => !!o);
+  const where = places(others, item.file, lineOf);
+  const ids = (out ? moveTo(item.move) : moveFrom(item.move)).join(", ");
+  if (out) return { text: `⇣ moved to ${where} (${ids})`, changed: false };
+  const changes = moveChangesOf(item, get);
+  if (!changes.length) return { text: `⇡ moved here from ${where} (${ids}), word for word`, changed: false };
+  const n = changedCount(changes);
+  const list = changes.map((c) => `“${c.was}” → “${c.now}”`).join(", ");
+  return { text: `⇡ moved here from ${where} (${ids}) with ${n} word${n > 1 ? "s" : ""} changed: ${list}`, changed: true };
 }
 
 /** Short text for ghost-text decorations (no newlines, bounded length). */

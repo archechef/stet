@@ -1,6 +1,6 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
-import { movePartner, moveChanges, partId, partIndexOf, type Item } from "@stet/core";
+import { moveChanges, moveOthers, movesOut, moveTexts, partId, partIndexOf, type Item } from "@stet/core";
 import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import type { Project } from "./project.js";
 
@@ -190,12 +190,11 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const lineOf = new Map(located.map((l) => [l.item.id, l.range.start.line + 1]));
     const out: { at: vscode.Position; text: string; changed: boolean }[] = [];
     for (const { item, range } of located) {
-      const partner = model.partner(item);
-      const note = moveNote(item, partner, partner ? (lineOf.get(partner.id) ?? null) : null);
+      const note = moveNote(item, model.get, (id) => lineOf.get(id) ?? null);
       if (!note) continue;
       // The moved-out passage usually ends with its line break: put the note on its last line of text.
       const last = range.end.character === 0 && range.end.line > range.start.line ? range.end.line - 1 : range.end.line;
-      out.push({ at: item.move!.from === item.id ? doc.lineAt(last).range.end : range.start, ...note });
+      out.push({ at: movesOut(item) ? doc.lineAt(last).range.end : range.start, ...note });
     }
     return out;
   }
@@ -234,15 +233,15 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
       // Linked changes are accepted together: the whole group, or the item's part of it.
       const unit = part ? partId(part.group.id, part.index) : linked?.id;
-      if (item.move && rest.every((r) => r.id === movePartner(item))) {
-        // A move on its own: one decision for both halves (the commands take the other half along).
-        const other = model.partner(item);
+      if (item.move && rest.every((r) => moveOthers(item).includes(r.id))) {
+        // A move on its own: one decision for all of it (the commands take the rest along).
+        const other = model.others(item).find((o) => movesOut(o) !== movesOut(item));
         lenses.push(
           new vscode.CodeLens(at, { title: `${item.id}${tag}: ✓ Accept move`, command: "stet.accept", arguments: [ref(item.id)] }),
           new vscode.CodeLens(at, { title: "✗ Reject move", command: "stet.reject", arguments: [ref(item.id)] }),
           new vscode.CodeLens(at, { title: "↻ Revise", command: "stet.revise", arguments: [ref(item.id)] }),
           new vscode.CodeLens(at, { title: "💬 Comment", command: "stet.comment", arguments: [ref(item.id)] }),
-          ...(other ? [new vscode.CodeLens(at, { title: item.move.from === item.id ? "↓ Go to destination" : "↑ Go to source", command: "stet.showItem", arguments: [ref(other.id)] })] : []),
+          ...(other ? [new vscode.CodeLens(at, { title: movesOut(item) ? "↓ Go to destination" : "↑ Go to source", command: "stet.showItem", arguments: [ref(other.id)] })] : []),
         );
         continue;
       }
@@ -315,16 +314,17 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     const k = g ? partIndexOf(g, item.id) : -1;
     if (g && k >= 0) lines.push(`part ${k + 1} of ${g.parts!.length}: ${esc(g.parts![k]!.title)} (${g.parts![k]!.items.join(", ")})`);
   }
-  const partner = model.partner(item);
   if (item.move) {
-    const out = item.move.from === item.id;
-    const there = partner && partner.file !== item.file ? ` (in ${esc(partner.file)})` : "";
-    lines.push(`⇅ **Move**: ${item.move.from} removes the passage${out ? " here" : there}, ${item.move.to} inserts it${out ? there : " here"}. Accepting or rejecting one decides both.`);
-    if (item.move.changed && partner) {
-      const changes = moveChanges(out ? item.oldText : partner.oldText, out ? partner.newText : item.newText);
-      const n = item.move.changed;
-      lines.push(`⚠ **${n} word${n > 1 ? "s" : ""} changed on the way:** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`);
-    } else lines.push("Word for word: the passage arrives unchanged (spacing and line breaks aside).");
+    const out = movesOut(item);
+    const files = [...new Set(model.others(item).map((o) => o.file).filter((f) => f !== item.file))];
+    const from = (item.move.from instanceof Array ? item.move.from : [item.move.from]).join(", ");
+    const to = (item.move.to instanceof Array ? item.move.to : [item.move.to]).join(", ");
+    lines.push(`⇅ **Move**: ${from} remove${out ? " text here" : ""}, ${to} insert${out ? "" : " it here"}${files.length ? ` (also in ${files.map(esc).join(", ")})` : ""}. Accepting or rejecting one decides the whole move.`);
+    const texts = moveTexts(item.move, model.get);
+    const changes = texts ? moveChanges(texts.from, texts.to) : [];
+    if (changes.length) {
+      lines.push(`⚠ **Changed on the way (${item.move.changed} word${item.move.changed > 1 ? "s" : ""}):** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`);
+    } else lines.push("Word for word: the text arrives unchanged (spacing and line breaks aside).");
     lines.push(fence(out ? item.oldText : item.newText, "latex"));
   } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
   else lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);

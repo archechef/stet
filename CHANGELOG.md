@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: moves next to each other.** Moves were not recognised once two moved blocks ended up next to each other, or next to a heading with another change below it. Blocks moved from different places to one spot (or from one spot to different places) are now one move, and the new place lists where each block came from. Changes that start or end at a paragraph break are no longer merged with the neighbouring paragraph.
+
 ## 0.7.0 — 2026-11-13
 
 - **Moves:** when an agent moves a passage (two sentences or more, a whole paragraph or an environment), Stet shows it as one move instead of an unrelated deletion and insertion. The old place says *moved to line N*, the new one *moved here from line N, word for word*. If a few words changed on the way, the note lists them in a warning colour. Accepting or rejecting either end decides the whole move. Agents are asked to move text word for word where they can. Setting `grouping.moves` in `.git/stet/config.json`.

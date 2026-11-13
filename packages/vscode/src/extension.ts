@@ -406,7 +406,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }
       case "item": {
         const it = n.item;
-        const t = new vscode.TreeItem(itemLabel(it), vscode.TreeItemCollapsibleState.None);
+        const t = new vscode.TreeItem(itemLabel(it, model.get), vscode.TreeItemCollapsibleState.None);
         const line = await this.lineOf(el.project, it);
         t.description = `${it.file}${it.kind === "modify" ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}`;
         t.iconPath = itemIcon(it);

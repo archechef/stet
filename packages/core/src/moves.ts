@@ -4,7 +4,7 @@
  * changed words still count, and are shown; anything more stays a deletion and an insertion.
  */
 import { diffArrays } from "diff";
-import { isLive, type Item } from "./model.js";
+import { isLive, moveFrom, moveTo, movesOut, type Item, type MoveInfo } from "./model.js";
 import { normalizeWs } from "./text.js";
 
 export interface MoveSettings {
@@ -14,11 +14,16 @@ export interface MoveSettings {
 }
 
 export interface MovePair {
-  from: Item;
-  to: Item;
+  /** The deleting items, in the order their blocks appear in the insertion. */
+  from: Item[];
+  /** The inserting items, in the order their blocks appear in the deletion. */
+  to: Item[];
   changed: number;
   title: string;
 }
+
+/** Blocks shorter than this aren't matched as pieces of a move of several blocks. */
+const MIN_PIECE = 5;
 
 /** Words of a passage: moves are compared word for word, spacing and line breaks aside. */
 export const moveWords = (s: string): string[] => s.split(/\s+/).filter(Boolean);
@@ -108,10 +113,43 @@ const short = (s: string) => {
   return t.length > 30 ? t.slice(0, 29) + "…" : t;
 };
 
+const howChanged = (changed: number) => (changed ? `${changed} word${changed > 1 ? "s" : ""} changed` : "unchanged");
+
 /**
- * Pairs of a deletion and an insertion in the same round that move a passage: at least
- * `minWords` words, two sentences or more or a whole paragraph/environment, and no more changed
- * words than allowed. Exact moves are paired first.
+ * Where `small`'s words occur in `big` as (nearly) one stretch: first and last word index in
+ * `big`, or null. Exact occurrences first; otherwise at most `allowed` words may differ.
+ */
+function within(small: string[], big: string[], allowed: number): [number, number] | null {
+  outer: for (let k = 0; k + small.length <= big.length; k++) {
+    for (let j = 0; j < small.length; j++) if (big[k + j] !== small[j]) continue outer;
+    return [k, k + small.length - 1];
+  }
+  if (!allowed) return null;
+  let bi = 0;
+  let first = -1;
+  let last = -1;
+  let common = 0;
+  for (const ch of diffArrays(small, big)) {
+    const n = ch.count ?? ch.value.length;
+    if (ch.added) bi += n;
+    else if (!ch.removed) {
+      if (first < 0) first = bi;
+      last = bi + n - 1;
+      common += n;
+      bi += n;
+    }
+  }
+  if (first < 0 || small.length - common > allowed || last - first + 1 > small.length + allowed) return null;
+  return [first, last];
+}
+
+/**
+ * Moves among the items of one round (§6.4.7), exact ones first:
+ * - a deletion and an insertion of the same passage;
+ * - several deleted blocks that land next to each other, so they form one insertion;
+ * - one deleted stretch of several blocks that go to different places.
+ * The moved text must have at least `minWords` words, be two sentences or more or whole
+ * paragraphs/environments, and differ in no more words than allowed.
  */
 export function detectMoves(items: Item[], s: MoveSettings, abbreviations: string[]): MovePair[] {
   if (!s.enabled) return [];
@@ -119,6 +157,10 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
   const mods = items.filter((i) => i.kind === "modify" && isLive(i.status) && !i.move);
   const dels = mods.filter((i) => i.oldText.trim() && !i.newText.trim());
   const ins = mods.filter((i) => i.newText.trim() && !i.oldText.trim());
+  const used = new Set<string>();
+  const out: MovePair[] = [];
+
+  // One block to one place.
   const cands: MovePair[] = [];
   for (const d of dels) {
     const dw = moveWords(d.oldText);
@@ -134,18 +176,79 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       const block = wholeBlock(d, d.oldText) ?? wholeBlock(i, i.newText);
       if (n < 2 && !block) continue;
       const what = block && block !== "paragraph" ? block : n >= 2 ? `${n} sentences` : "paragraph";
-      const how = changed ? `${changed} word${changed > 1 ? "s" : ""} changed` : "unchanged";
-      cands.push({ from: d, to: i, changed, title: `Move “${short(d.oldText)}” (${what}, ${how})` });
+      cands.push({ from: [d], to: [i], changed, title: `Move “${short(d.oldText)}” (${what}, ${howChanged(changed)})` });
     }
   }
   cands.sort((a, b) => a.changed - b.changed);
-  const used = new Set<string>();
-  const out: MovePair[] = [];
   for (const c of cands) {
-    if (used.has(c.from.id) || used.has(c.to.id)) continue;
-    used.add(c.from.id);
-    used.add(c.to.id);
+    if (used.has(c.from[0]!.id) || used.has(c.to[0]!.id)) continue;
+    used.add(c.from[0]!.id);
+    used.add(c.to[0]!.id);
     out.push(c);
   }
+
+  // Several blocks: one item on one side holds them all, one item each on the other.
+  const sides = [
+    { bigs: ins, smalls: dels, bigText: (i: Item) => i.newText, smallText: (i: Item) => i.oldText, into: true },
+    { bigs: dels, smalls: ins, bigText: (i: Item) => i.oldText, smallText: (i: Item) => i.newText, into: false },
+  ];
+  for (const { bigs, smalls, bigText, smallText, into } of sides) {
+    for (const big of bigs) {
+      if (used.has(big.id)) continue;
+      const bw = moveWords(bigText(big));
+      if (bw.length < s.minWords) continue;
+      const allowed = allowedChanges(bw.length, s.maxChangedWords);
+      const found: { item: Item; words: string[]; at: [number, number] }[] = [];
+      for (const sm of smalls) {
+        if (used.has(sm.id) || sm.changeset !== big.changeset) continue;
+        const sw = moveWords(smallText(sm));
+        if (sw.length < MIN_PIECE) continue;
+        const at = within(sw, bw, allowed);
+        if (at) found.push({ item: sm, words: sw, at });
+      }
+      found.sort((a, b) => a.at[0] - b.at[0]);
+      const pieces: typeof found = [];
+      for (const f of found) if (!pieces.length || f.at[0] > pieces[pieces.length - 1]!.at[1]) pieces.push(f);
+      if (pieces.length < 2) continue;
+      const changed = changedWords(pieces.flatMap((p) => p.words), bw);
+      if (changed > allowed) continue;
+      const n = sentences(bw, abbr);
+      if (n < 2 && !pieces.every((p) => wholeBlock(p.item, smallText(p.item)))) continue;
+      for (const x of [big, ...pieces.map((p) => p.item)]) used.add(x.id);
+      const blocks = pieces.map((p) => p.item);
+      const names = blocks.map((b) => `“${short(smallText(b))}”`).join(", ");
+      out.push({
+        from: into ? blocks : [big],
+        to: into ? [big] : blocks,
+        changed,
+        title: `Move ${blocks.length} passages ${names} (${n >= 2 ? `${n} sentences` : "paragraphs"}, ${howChanged(changed)})`,
+      });
+    }
+  }
   return out;
+}
+
+/** The whole moved-out and moved-in text of a move, blocks in order; null if an item is missing. */
+export function moveTexts(m: MoveInfo, get: (id: string) => Item | undefined): { from: string; to: string } | null {
+  const from = moveFrom(m).map(get);
+  const to = moveTo(m).map(get);
+  if (from.some((x) => !x) || to.some((x) => !x)) return null;
+  return { from: from.map((x) => x!.oldText).join("\n"), to: to.map((x) => x!.newText).join("\n") };
+}
+
+/** Where an inserting item of a move differs from what was moved out (offsets in its new text). */
+export function moveChangesOf(item: Item, get: (id: string) => Item | undefined): MoveChange[] {
+  if (!item.move || movesOut(item)) return [];
+  const from = moveFrom(item.move).map(get);
+  const to = moveTo(item.move).map(get);
+  if (from.some((x) => !x) || to.some((x) => !x)) return [];
+  let toText = "";
+  let mine: [number, number] = [0, 0];
+  for (const t of to) {
+    if (t!.id === item.id) mine = [toText.length, toText.length + t!.newText.length];
+    toText += t!.newText + "\n";
+  }
+  return moveChanges(from.map((x) => x!.oldText).join("\n"), toText)
+    .filter((c) => c.start >= mine[0] && c.start <= mine[1])
+    .map((c) => ({ ...c, start: c.start - mine[0], end: Math.min(c.end, mine[1]) - mine[0] }));
 }
