@@ -25,7 +25,9 @@ import {
   linkedUnit,
   numberInRound,
   isLive,
+  moveFrom,
   moveOthers,
+  moveTo,
   parsePartId,
   partId,
   type Agent,
@@ -1103,6 +1105,11 @@ export class Stet {
       await this.store.putItem(e);
       result.superseded.push(e.id);
     }
+    // A move loses an item it can't do without: dissolve it, so its group isn't inherited by a
+    // replacement that moves something else (bug report 2026-11-13: an old move group ended up
+    // linking unrelated items). Detection below pairs the remaining items again where it can.
+    const gone = existing.filter((e) => result.superseded.includes(e.id) || result.withdrawn.includes(e.id));
+    await this.dissolveMoves(gone, new Map(allItems.map((i) => [i.id, i])));
 
     // Conflicts with other agents' live items (same base only; others are checked at accept time).
     for (const other of allItems.filter((i) => i.agent !== agent.id && isLive(i.status) && i.baseCommit === base && i.kind === "modify")) {
@@ -1130,8 +1137,12 @@ export class Stet {
     // Groups: explicit hints + auto detection.
     const live = created.filter((i) => isLive(i.status));
     const drafts: GroupDraft[] = [];
-    // Moved passages (§6.4.7): the two halves are one change, linked so they're decided together.
-    for (const m of detectMoves(live, cfg.grouping.moves, cfg.split.abbreviations)) {
+    // Auto-detection also sees the agent's earlier pending items (a \label here, its \ref from before).
+    const newIds = new Set(created.map((i) => i.id));
+    const earlier = (await this.store.items()).filter((i) => i.agent === agent.id && isLive(i.status) && !newIds.has(i.id) && !result.superseded.includes(i.id));
+    // Moved passages (§6.4.7), decided as one change. Over all pending items: re-splitting at a
+    // later submit can leave the two sides of a move in different rounds.
+    for (const m of detectMoves([...earlier, ...live], cfg.grouping.moves, cfg.split.abbreviations)) {
       const move = { from: m.from.map((i) => i.id), to: m.to.map((i) => i.id), changed: m.changed };
       for (const it of [...m.from, ...m.to]) it.move = { from: [...move.from], to: [...move.to], changed: move.changed };
       result.moves.push(move);
@@ -1156,9 +1167,6 @@ export class Stet {
       }
       if (members.length) drafts.push({ kind: h.kind, title: h.title, rationale: h.rationale ?? null, source: "agent", items: members, ...(parts ? { parts } : {}) });
     }
-    // Auto-detection also sees the agent's earlier pending items (a \label here, its \ref from before).
-    const newIds = new Set(created.map((i) => i.id));
-    const earlier = (await this.store.items()).filter((i) => i.agent === agent.id && isLive(i.status) && !newIds.has(i.id) && !result.superseded.includes(i.id));
     drafts.push(...autoGroups([...earlier, ...live], cfg.grouping).filter((d) => d.items.some((i) => newIds.has(i))));
     const finalDrafts = normalizeGroups(drafts);
     const gids = await this.store.allocate("group", finalDrafts.length);
@@ -1475,6 +1483,35 @@ export class Stet {
 
   /** Live items that must be accepted (or rejected) together with `items`: their linked groups' parts (§6.4.5–6). */
   /**
+   * Dissolve the moves (§6.4.7) of items that no longer stand (superseded, withdrawn): the other
+   * items become ordinary deletions and insertions, and the move's own group goes. `known`:
+   * in-memory items to update, so callers holding them don't write old versions back.
+   */
+  private async dissolveMoves(gone: Item[], known: Map<string, Item>): Promise<void> {
+    for (const g of gone) {
+      if (!g.move) continue;
+      const ids = [...moveFrom(g.move), ...moveTo(g.move)];
+      const members: Item[] = [];
+      for (const id of ids) {
+        const it = known.get(id) ?? (await this.store.getItem(id));
+        if (it) members.push(it);
+      }
+      const all = new Set(ids);
+      for (const gid of new Set(members.flatMap((m) => m.groups))) {
+        const grp = await this.store.getGroup(gid);
+        // Only the group that is just this move; an agent's larger linked group stays.
+        if (!grp || grp.kind !== "linked" || grp.source !== "auto" || grp.items.length !== all.size || !grp.items.every((i) => all.has(i))) continue;
+        await this.store.deleteGroup(gid);
+        for (const m of members) m.groups = m.groups.filter((x) => x !== gid);
+      }
+      for (const m of members) {
+        delete m.move;
+        await this.store.putItem(m);
+      }
+    }
+  }
+
+  /**
    * Items with the rest of their moves (§6.4.7): part of a move is never decided alone, it would
    * drop or duplicate the passage.
    */
@@ -1736,6 +1773,7 @@ export class Stet {
         await this.store.putItem(it);
         await this.store.appendEvent({ type: "withdrawn", agent: agentId, items: [it.id], data: reason ? { reason } : {} });
       }
+      await this.dissolveMoves(items, new Map(items.map((i) => [i.id, i])));
       await this.updateGroups(items);
       return items;
     });

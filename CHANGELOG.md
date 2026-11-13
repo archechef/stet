@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: more moves recognised.** Moving a passage word for word was often not shown as a move:
+  - A block inserted or deleted right before a paragraph that starts with words also found in the block came out as a changed paragraph instead of a pure insertion or deletion.
+  - The two sides of a move were only paired within one submission; a later submit that re-splits pending changes could put them in different ones.
+  - Moving a block next to another pending move merged the two and left the old move's group linking unrelated changes. Moves that lose a change are now dissolved and detected again, and a deletion and an insertion holding the same paragraphs in another order are one move.
+
 ## 0.7.1 — 2026-11-13
 
 - **Fix: moves next to each other.** Moves were not recognised once two moved blocks ended up next to each other, or next to a heading with another change below it. Blocks moved from different places to one spot (or from one spot to different places) are now one move, and the new place lists where each block came from. Changes that start or end at a paragraph break are no longer merged with the neighbouring paragraph.

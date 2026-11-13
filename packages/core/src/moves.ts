@@ -57,8 +57,43 @@ export interface MoveChange {
   now: string;
 }
 
-/** Where the moved-in text differs from the moved-out text, word by word. */
+/** The paragraphs of a passage (split at blank lines), as word lists. */
+const blocksOf = (s: string): string[][] => s.split(/\n[ \t]*\n/).map(moveWords).filter((w) => w.length);
+
+/**
+ * Do `a` and `b` hold the same paragraphs, possibly in another order? Pairs each block of `b`
+ * with the closest unpaired block of `a`: `a`'s blocks in `b`'s order, and the words changed.
+ * Null if the counts differ or more than `allowed` words change.
+ */
+function sameBlocks(a: string[][], b: string[][], allowed: number): { order: number[]; changed: number } | null {
+  if (a.length < 2 || a.length !== b.length) return null;
+  const left = new Set(a.keys());
+  const order: number[] = [];
+  let changed = 0;
+  for (const bb of b) {
+    let best = -1;
+    let bestN = Infinity;
+    for (const k of left) {
+      if (Math.abs(a[k]!.length - bb.length) > allowed - changed) continue;
+      const n = changedWords(a[k]!, bb);
+      if (n < bestN) [best, bestN] = [k, n];
+      if (!n) break;
+    }
+    if (best < 0 || changed + bestN > allowed) return null;
+    changed += bestN;
+    left.delete(best);
+    order.push(best);
+  }
+  return { order, changed };
+}
+
+/** Where the moved-in text differs from the moved-out text, word by word (paragraphs that changed order are compared with each other). */
 export function moveChanges(fromText: string, toText: string): MoveChange[] {
+  const fb = blocksOf(fromText);
+  const sb = sameBlocks(fb, blocksOf(toText), Infinity);
+  if (sb && sb.order.some((k, j) => k !== j) && sb.changed < changedWords(fb.flat(), moveWords(toText))) {
+    fromText = sb.order.map((k) => fb[k]!.join(" ")).join("\n\n");
+  }
   const words = [...toText.matchAll(/\S+/g)].map((m) => ({ text: m[0], start: m.index!, end: m.index! + m[0].length }));
   const out: MoveChange[] = [];
   let bi = 0;
@@ -144,8 +179,9 @@ function within(small: string[], big: string[], allowed: number): [number, numbe
 }
 
 /**
- * Moves among the items of one round (§6.4.7), exact ones first:
- * - a deletion and an insertion of the same passage;
+ * Moves among an agent's pending items (§6.4.7), exact ones first (any rounds: re-splitting at a
+ * later submit can put the two sides of a move into different rounds):
+ * - a deletion and an insertion of the same passage, or of the same paragraphs in another order;
  * - several deleted blocks that land next to each other, so they form one insertion;
  * - one deleted stretch of several blocks that go to different places.
  * The moved text must have at least `minWords` words, be two sentences or more or whole
@@ -167,16 +203,27 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
     if (dw.length < s.minWords) continue;
     const allowed = allowedChanges(dw.length, s.maxChangedWords);
     for (const i of ins) {
-      if (i.changeset !== d.changeset) continue;
+      if (i.agent !== d.agent) continue;
       const iw = moveWords(i.newText);
       if (Math.abs(dw.length - iw.length) > allowed) continue;
-      const changed = changedWords(dw, iw);
-      if (changed > allowed) continue;
+      let changed = changedWords(dw, iw);
+      // Two blocks that were next to each other at both ends, in swapped order, come out as one
+      // deletion and one insertion (bug report 2026-11-13).
+      let blocks: string[][] | null = null;
+      if (changed > allowed) {
+        const sb = sameBlocks(blocksOf(d.oldText), blocksOf(i.newText), allowed);
+        if (!sb) continue;
+        changed = sb.changed;
+        blocks = blocksOf(d.oldText);
+      }
       const n = sentences(dw, abbr);
       const block = wholeBlock(d, d.oldText) ?? wholeBlock(i, i.newText);
       if (n < 2 && !block) continue;
       const what = block && block !== "paragraph" ? block : n >= 2 ? `${n} sentences` : "paragraph";
-      cands.push({ from: [d], to: [i], changed, title: `Move “${short(d.oldText)}” (${what}, ${howChanged(changed)})` });
+      const title = blocks
+        ? `Move ${blocks.length} passages ${blocks.map((b) => `“${short(b.join(" "))}”`).join(", ")} (reordered, ${n >= 2 ? `${n} sentences` : "paragraphs"}, ${howChanged(changed)})`
+        : `Move “${short(d.oldText)}” (${what}, ${howChanged(changed)})`;
+      cands.push({ from: [d], to: [i], changed, title });
     }
   }
   cands.sort((a, b) => a.changed - b.changed);
@@ -200,7 +247,7 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       const allowed = allowedChanges(bw.length, s.maxChangedWords);
       const found: { item: Item; words: string[]; at: [number, number] }[] = [];
       for (const sm of smalls) {
-        if (used.has(sm.id) || sm.changeset !== big.changeset) continue;
+        if (used.has(sm.id) || sm.agent !== big.agent) continue;
         const sw = moveWords(smallText(sm));
         if (sw.length < MIN_PIECE) continue;
         const at = within(sw, bw, allowed);

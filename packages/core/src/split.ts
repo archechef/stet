@@ -367,10 +367,25 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
   const nt = tokenize(newSeg);
   const same = (a: Token, b: Token) =>
     a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws");
+  // Anchor the common prefix and suffix before diffing the middle. The diff matches greedily from
+  // the front: for a block inserted before a paragraph whose first words also occur in the block,
+  // it matched those words inside the block, and a pure insertion became a replacement ("The
+  // algorithm " → block + "The algorithm "), which hid moves (bug report 2026-11-13). When one
+  // side is wholly a suffix of the other, the change is an insertion (deletion) in front.
+  const shorter = Math.min(ot.length, nt.length);
+  let suf = 0;
+  while (suf < shorter && same(ot[ot.length - 1 - suf]!, nt[nt.length - 1 - suf]!)) suf++;
+  let pre = 0;
+  if (suf < shorter) {
+    while (pre < shorter && same(ot[pre]!, nt[pre]!)) pre++;
+    suf = 0;
+    while (suf < shorter - pre && same(ot[ot.length - 1 - suf]!, nt[nt.length - 1 - suf]!)) suf++;
+  }
   const u: U[] = [];
-  let oi = 0;
-  let ni = 0;
-  for (const ch of diffArrays(ot, nt, { comparator: same })) {
+  for (let k = 0; k < pre; k++) u.push({ o: k, n: k });
+  let oi = pre;
+  let ni = pre;
+  for (const ch of diffArrays(ot.slice(pre, ot.length - suf), nt.slice(pre, nt.length - suf), { comparator: same })) {
     const count = ch.count ?? ch.value.length;
     for (let k = 0; k < count; k++) {
       if (ch.removed) u.push({ o: oi++, n: -1 });
@@ -378,6 +393,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
       else u.push({ o: oi++, n: ni++ });
     }
   }
+  for (let k = 0; k < suf; k++) u.push({ o: oi++, n: ni++ });
   const isChange = (e: U) => e.o < 0 || e.n < 0;
 
   // Raw edits: maximal runs of changed entries.

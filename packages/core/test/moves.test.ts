@@ -170,6 +170,75 @@ describe("moves (§6.4.7)", () => {
   });
 });
 
+describe("moves the agent's report found missing (2026-11-13)", () => {
+  const THM = "\\begin{theorem}[Master theorem]\nThe randomized algorithm runs in time $T$.\\footnote{The bound is tight.} It uses space $S$.\n\\end{theorem}";
+  const Y = "The algorithm of \\cref{thm:master} is simple. It has three steps.";
+  const PAPER = `\\documentclass{article}\n\\begin{document}\n\\section{Introduction}\n${THM}\n\n${P1}\n\n\\section{Results}\n${Y}\n\n${P2}\n\\end{document}\n`;
+
+  async function agentOn(doc: string) {
+    const s = await setup({ "main.tex": doc });
+    const { worktree: wt } = await s.stet.newAgent("a");
+    return { ...s, wt };
+  }
+
+  it("a block inserted right before a paragraph starting with words from the block is a pure insertion (cause 1)", async () => {
+    const { stet, wt } = await agentOn(PAPER);
+    write(wt, "main.tex", PAPER.replace(`${THM}\n\n`, "").replace(`\\section{Results}\n${Y}`, `\\section{Results}\n${THM}\n${Y}`));
+    const r = await stet.submit("a", { title: "move the theorem" });
+    expect(r.items.map((i) => [!!i.oldText.trim(), !!i.newText.trim()])).toEqual([[true, false], [false, true]]);
+    expect(r.moves).toEqual([expect.objectContaining({ changed: 0 })]);
+    expect(r.groups[0]!.title).toMatch(/\(theorem environment, unchanged\)/);
+  });
+
+  it("the two sides of a move submitted in different rounds are paired (cause 2)", async () => {
+    const { stet, wt } = await agentOn(PAPER);
+    write(wt, "main.tex", PAPER.replace(`${P1}\n\n`, ""));
+    const r1 = await stet.submit("a", { title: "drop P1" });
+    expect(r1.moves).toEqual([]);
+    write(wt, "main.tex", read(wt, "main.tex").replace(`${P2}\n`, `${P2}\n\n${P1}\n`));
+    const r2 = await stet.submit("a", { title: "P1 at the end" });
+    expect(r2.moves).toEqual([{ from: [r1.items[0]!.id], to: [r2.items[0]!.id], changed: 0 }]);
+    expect((await stet.getItem(r1.items[0]!.id))!.move).toEqual(r2.moves[0]);
+  });
+
+  it("a block moved next to a pending moved block: one move of both, and no group linking unrelated items (cause 3)", async () => {
+    const { stet, repo, wt } = await agentOn(PAPER);
+    // Round 1: the theorem moves to the end.
+    write(wt, "main.tex", PAPER.replace(`${THM}\n\n`, "").replace(`${P2}\n`, `${P2}\n\n${THM}\n`));
+    const r1 = await stet.submit("a", { title: "theorem to the end" });
+    expect(r1.moves).toHaveLength(1);
+    const oldGroup = r1.groups[0]!.id;
+    // Round 2: P1 moves to the end too, right before the theorem's pending insertion.
+    write(wt, "main.tex", read(wt, "main.tex").replace(`${P1}\n\n`, "").replace(`${P2}\n\n${THM}`, `${P2}\n\n${P1}\n\n${THM}`));
+    const r2 = await stet.submit("a", { title: "P1 to the end" });
+    // Re-splitting joins the two deletions (adjacent at the source) and the two insertions; the
+    // blocks are in swapped order, and it is still one move.
+    expect(r2.moves).toHaveLength(1);
+    const m = r2.moves[0]!;
+    expect(r2.groups.find((g) => g.items.includes(m.to[0]!))!.title).toMatch(/reordered, .*unchanged\)/);
+    expect((await stet.listGroups()).map((g) => g.id)).not.toContain(oldGroup);
+    const get = byId(await stet.listItems({ agent: "a" }));
+    expect(moveChangesOf(get(m.to[0]!)!, get)).toEqual([]);
+    // Every pending item is part of this one move; accepting one accepts all and gives the agent's text.
+    const pending = await stet.listItems({ agent: "a", status: ["pending"] });
+    expect(pending.map((i) => i.id).sort()).toEqual([...m.from, ...m.to].sort());
+    await stet.accept([m.to[0]!]);
+    expect(read(repo, "main.tex")).toBe(read(wt, "main.tex"));
+  });
+
+  it("withdrawing part of a move dissolves it", async () => {
+    const { stet, wt } = await agentOn(PAPER);
+    write(wt, "main.tex", PAPER.replace(`${P1}\n\n`, "").replace(`${P2}\n`, `${P2}\n\n${P1}\n`));
+    const r = await stet.submit("a", { title: "move" });
+    const [from, to] = [r.moves[0]!.from[0]!, r.moves[0]!.to[0]!];
+    await stet.withdraw("a", [to]);
+    const left = (await stet.getItem(from))!;
+    expect(left.move).toBeUndefined();
+    expect(left.groups).toEqual([]);
+    expect((await stet.listGroups()).filter((g) => g.items.includes(from))).toEqual([]);
+  });
+});
+
 describe("parts and moves", () => {
   it("joins proposed parts that would split a move", async () => {
     const mk = (id: string, oldText: string, newText: string, move?: Item["move"]) =>
