@@ -2,7 +2,8 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
+import { foldPath } from "./paths.js";
 import { detectEol, toLf, type Eol } from "./text.js";
 
 export class GitError extends Error {
@@ -227,6 +228,22 @@ export class Repo {
         branch: /^branch refs\/heads\/(.*)$/m.exec(block)?.[1] ?? null,
       });
     }
+    if (res[0]) res[0].path = await this.mainWorktreePath(res[0].path);
     return res;
+  }
+
+  /**
+   * Git derives the main worktree's path from the git directory by dropping `/.git`. When the git
+   * directory has another name, as a submodule's `.git/modules/<name>` does, it lists the git
+   * directory itself; the folder is then `core.worktree`, relative to the git directory. Only in
+   * that case is `core.worktree` consulted, so for an ordinary repository the setting (which an
+   * agent's git could write) cannot move the project.
+   */
+  private async mainWorktreePath(listed: string): Promise<string> {
+    let common = await this.run(["rev-parse", "--git-common-dir"]);
+    if (!isAbsolute(common)) common = resolve(this.cwd, common);
+    if (foldPath(listed) !== foldPath(common)) return listed;
+    const wt = await this.tryRun(["config", "--file", join(common, "config"), "--get", "core.worktree"]);
+    return wt ? resolve(common, wt).replace(/\\/g, "/") : listed;
   }
 }

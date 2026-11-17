@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: projects inside a git submodule.** Stet took the submodule's git directory (`.git/modules/<name>` in the parent repository) for the project folder. VS Code then treated the project as an agent workspace and never offered **New agent workspace** after setup, and agent workspaces were placed inside the parent's `.git`. Stet now uses the submodule's folder.
+
 ## 0.7.2 — 2026-11-13
 
 - **Fix: more moves recognised.** Moving a passage word for word was often not shown as a move:

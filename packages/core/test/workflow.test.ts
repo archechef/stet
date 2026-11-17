@@ -1,5 +1,9 @@
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/doctor.js";
+import { foldPath, isInside } from "../src/paths.js";
+import { Stet } from "../src/service.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
 
 const statuses = async (stet: Awaited<ReturnType<typeof setup>>["stet"]) =>
@@ -385,5 +389,38 @@ describe("agents and doctor", () => {
     const checks = await doctor(repo);
     expect(checks.filter((c) => c.status === "error")).toEqual([]);
     expect(checks.find((c) => c.name === "agent a")?.status).toBe("ok");
+  });
+});
+
+describe("project inside a submodule", () => {
+  it("uses the submodule's folder, not its git directory, as the project", async () => {
+    // A superproject whose `paper` folder is a submodule: its git directory is
+    // outer/.git/modules/paper, and `git worktree list` reports that instead of the folder.
+    const { repo: inner } = await setup({ "main.tex": PAPER });
+    const outer = join(dirname(inner), "outer");
+    mkdirSync(outer);
+    git(outer, "init", "-q", "-b", "master");
+    git(outer, "-c", "protocol.file.allow=always", "submodule", "add", "-q", inner, "paper");
+    const sub = join(outer, "paper");
+    git(sub, "config", "user.name", "Test User");
+    git(sub, "config", "user.email", "test@example.com");
+    git(sub, "config", "core.autocrlf", "false");
+    git(sub, "switch", "-q", "master");
+
+    const loc = await Stet.locate(sub);
+    expect(foldPath(loc.mainPath)).toBe(foldPath(sub));
+    expect(foldPath(loc.toplevel)).toBe(foldPath(loc.mainPath)); // the extension treats it as a project
+
+    const stet = await Stet.init(sub);
+    expect(foldPath(stet.mainPath)).toBe(foldPath(sub));
+    const { worktree: wt } = await stet.newAgent("a");
+    expect(isInside(wt, join(outer, ".git"))).toBe(false);
+    expect(foldPath((await Stet.locate(wt)).mainPath)).toBe(foldPath(sub));
+
+    edit(wt, "main.tex", "the problem of reviewing", "the task of reviewing");
+    const [s1] = (await stet.submit("a", { title: "Wording" })).items;
+    await stet.accept([s1!.id]);
+    expect(read(sub, "main.tex")).toContain("the task of reviewing");
+    expect((await doctor(sub)).filter((c) => c.status === "error")).toEqual([]);
   });
 });
