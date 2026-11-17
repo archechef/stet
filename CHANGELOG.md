@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.3 — 2026-11-17
 
 - **Fix: projects inside a git submodule.** Stet took the submodule's git directory (`.git/modules/<name>` in the parent repository) for the project folder. VS Code then treated the project as an agent workspace and never offered **New agent workspace** after setup, and agent workspaces were placed inside the parent's `.git`. Stet now uses the submodule's folder.
 
