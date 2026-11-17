@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/doctor.js";
@@ -397,8 +397,9 @@ describe("project inside a submodule", () => {
     // A superproject whose `paper` folder is a submodule: its git directory is
     // outer/.git/modules/paper, and `git worktree list` reports that instead of the folder.
     const { repo: inner } = await setup({ "main.tex": PAPER });
-    const outer = join(dirname(inner), "outer");
-    mkdirSync(outer);
+    mkdirSync(join(dirname(inner), "outer"));
+    // Git reports real paths; CI temp folders have another spelling (Windows RUNNER~1, macOS /var).
+    const outer = realpathSync.native(join(dirname(inner), "outer"));
     git(outer, "init", "-q", "-b", "master");
     git(outer, "-c", "protocol.file.allow=always", "submodule", "add", "-q", inner, "paper");
     const sub = join(outer, "paper");
