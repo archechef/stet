@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-18
 
 - **Agents are told when something arrives, instead of polling:** while an agent's session runs, the Stet MCP server writes a line to `.stet/inbox` in its workspace for each decision, comment, note, needed sync, or archiving. The new agent-side command `stet watch` waits for these lines and prints them (`--once`: exits after the first ones), so an agent can wait for you in the background. It is read-only, works in the sandbox, and the guard allows the workspace's own `stet watch` command. Every Stet tool result also mentions unread feedback, waiting notes and a needed sync. Run **Refresh** (or `stet agent refresh <name>`) to give existing agents the new instructions.
 - **Fix: accepted changes missing from agents' copies.** An accepted change right next to another accepted one (a sentence rewritten up to the line break that the next change removes) could not be located on top of your commit or shared edits, and was left out of what agents sync onto. Re-proposing it then failed with "could not be applied". Stet now locates such a change with its accepted neighbours.
