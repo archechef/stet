@@ -1,0 +1,37 @@
+// Dev container for Stet with rootless Podman. See CONTRIBUTING.md, "Working in a container".
+// VS Code needs one user setting for Podman: "dev.containers.dockerPath": "podman".
+{
+  "name": "Stet",
+  "build": { "dockerfile": "Containerfile" },
+
+  // Runs on your machine first: the folders the package volumes are mounted on must exist (as
+  // yours), or Podman creates them in the repo owned by a container uid you can't delete.
+  "initializeCommand": "mkdir -p node_modules packages/vscode/node_modules",
+
+  // The repository is the only folder shared with your machine.
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/stet,type=bind",
+  "workspaceFolder": "/workspaces/stet",
+
+  "runArgs": [
+    // Your user outside is `node` (uid 1000) inside: files written in the repo stay yours.
+    "--userns=keep-id",
+    // Nothing in here needs extra privileges.
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    // Packages and npm's cache live in volumes, not in the repo folder on your machine, so tools
+    // you run outside never pick them up. `:U` gives the volumes to the container's user.
+    "--volume=stet-node-modules:/workspaces/stet/node_modules:U",
+    "--volume=stet-node-modules-vscode:/workspaces/stet/packages/vscode/node_modules:U",
+    "--volume=stet-npm-cache:/home/node/.npm:U"
+  ],
+  "containerUser": "node",
+  "remoteUser": "node",
+  // --userns=keep-id already maps your uid; no image rebuild to change it.
+  "updateRemoteUserUID": false,
+
+  // Don't hand the container your SSH agent (it could push or reach other servers with your keys).
+  "remoteEnv": { "SSH_AUTH_SOCK": "" },
+
+  // Runs inside the container when it is first created: installs exactly the locked versions.
+  "postCreateCommand": "npm ci"
+}

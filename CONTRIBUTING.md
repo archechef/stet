@@ -12,6 +12,25 @@ npm test             # all unit and end-to-end tests (vitest)
 
 With npm 11 (Node 24), `npm install` reports that some packages' install scripts were not run (esbuild, vsce). The build works regardless: esbuild's platform binary comes as a separate package.
 
+## Working in a container
+
+`.devcontainer/` sets up a development container for rootless [Podman](https://podman.io). Node.js, npm, the installed packages, npm's cache and the packages' install scripts then stay in the container; only the repository folder is shared with your machine.
+
+**Once per machine:**
+1. Install Podman (on Ubuntu: `sudo apt install podman`) and VS Code's **Dev Containers** extension.
+2. In VS Code's user settings: `"dev.containers.dockerPath": "podman"`, and `"dev.containers.gitCredentialHelperConfigLocation": "none"` so VS Code doesn't pass your git credentials into containers.
+
+**Then:** open the repository in VS Code and run **Dev Containers: Reopen in Container**. The first time, this builds the image and runs `npm ci` inside the container. `npm run build`, `npm test` and `npm run package:vscode` work in the container's terminal as usual.
+
+**What the container does:**
+- Your user is `node` inside (`--userns=keep-id`), so files written in the repository stay yours. It has no extra privileges (`--cap-drop=ALL`, `no-new-privileges`).
+- `node_modules` (the root's and `packages/vscode`'s) and npm's cache are Podman volumes (`stet-node-modules`, `stet-node-modules-vscode`, `stet-npm-cache`), not folders in the repository on your machine. On your machine the two `node_modules` folders stay empty: the volumes are mounted on them (`initializeCommand` creates them before the container starts). `podman volume rm` removes the volumes.
+- **No pushing from inside:** git there rewrites GitHub push URLs to a scheme that doesn't exist, and your SSH agent is not passed in. Commit and tag in the container; push from your own terminal.
+
+**Not in the container:** the VS Code integration test (`npm run test:integration -w stet-vscode`) needs VS Code and a display. Run it on your machine, which then needs Node.js and an `npm ci` there.
+
+**Agents:** a Claude Code session started *inside* the container (in its terminal, or with the Claude Code extension in the container window) runs its commands there too. The Claude desktop app runs its commands on your machine, even for this folder.
+
 ## Layout
 
 | Package | Contents |
