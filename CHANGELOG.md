@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: Windows build of 0.8.0.** The release build of 0.8.0 failed on Windows: when an agent's Stet tools stopped, the inbox writer could still be busy in the agent's workspace, so it couldn't be removed right away. Stopping now waits for it. 0.8.1 contains all changes of 0.8.0.
+
 ## 0.8.0 — 2026-11-18
 
 - **Agents are told when something arrives, instead of polling:** while an agent's session runs, the Stet MCP server writes a line to `.stet/inbox` in its workspace for each decision, comment, note, needed sync, or archiving. The new agent-side command `stet watch` waits for these lines and prints them (`--once`: exits after the first ones), so an agent can wait for you in the background. It is read-only, works in the sandbox, and the guard allows the workspace's own `stet watch` command. Every Stet tool result also mentions unread feedback, waiting notes and a needed sync. Run **Refresh** (or `stet agent refresh <name>`) to give existing agents the new instructions.

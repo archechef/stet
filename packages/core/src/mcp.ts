@@ -230,6 +230,7 @@ type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean
 export class StetMcpServer {
   private stet: Stet | null = null;
   private inbox: InboxWriter | null = null;
+  private inboxStarting: Promise<void> | null = null;
   private inboxStopped = false;
 
   constructor(private readonly opts: McpOptions) {}
@@ -298,21 +299,25 @@ export class StetMcpServer {
    * Keep the agent's inbox (`.stet/inbox`) up to date while this server runs. Quietly does
    * nothing outside an agent workspace.
    */
-  async startInbox(): Promise<void> {
-    if (this.inbox) return;
-    try {
-      const { stet, agent } = await this.context();
-      if (this.inboxStopped) return;
-      this.inbox ??= new InboxWriter(stet, agent);
-      this.inbox.start();
-    } catch {
-      /* not an agent workspace, or archived: the tools say so */
-    }
+  startInbox(): Promise<void> {
+    this.inboxStarting ??= (async () => {
+      try {
+        const { stet, agent } = await this.context();
+        if (this.inboxStopped) return;
+        this.inbox = new InboxWriter(stet, agent);
+        this.inbox.start();
+      } catch {
+        /* not an agent workspace, or archived: the tools say so */
+      }
+    })();
+    return this.inboxStarting;
   }
 
-  stopInbox(): void {
+  /** Stop the inbox; resolves once nothing of it is running any more. */
+  async stopInbox(): Promise<void> {
     this.inboxStopped = true;
-    this.inbox?.stop();
+    await this.inboxStarting;
+    await this.inbox?.stop();
   }
 
   async callTool(name: string, args: any): Promise<ToolResult> {
@@ -589,5 +594,5 @@ export async function serveStdio(server: StetMcpServer, input: Readable, output:
       .catch(() => undefined);
   }
   await queue;
-  server.stopInbox();
+  await server.stopInbox();
 }

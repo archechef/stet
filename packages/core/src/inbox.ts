@@ -39,7 +39,7 @@ export class InboxWriter {
   private keys: Set<string> | null = null;
   private signature = "";
   private lastFull = 0;
-  private busy = false;
+  private running: Promise<InboxLine[]> | null = null;
   private timer: NodeJS.Timeout | null = null;
   private done = false;
 
@@ -56,32 +56,37 @@ export class InboxWriter {
     this.timer.unref();
   }
 
-  stop(): void {
+  /**
+   * Stop checking; resolves once a check still running has finished, so nothing touches the
+   * workspace afterwards (on Windows, a file or process still using it stops it being removed).
+   */
+  async stop(): Promise<void> {
     this.done = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    await this.running?.catch(() => undefined);
   }
 
   /** Check for news and append it; returns the lines written. */
   async tick(force = false): Promise<InboxLine[]> {
-    if (this.busy || this.done) return [];
-    this.busy = true;
+    if (this.running || this.done) return [];
+    this.running = this.check(force);
     try {
-      return await this.check(force);
+      return await this.running;
     } finally {
-      this.busy = false;
+      this.running = null;
     }
   }
 
   private async check(force: boolean): Promise<InboxLine[]> {
     const { store, repo } = this.stet;
     const agent = await store.getAgent(this.agentId);
-    if (!agent) return (this.stop(), []);
+    if (!agent) return this.halt();
     const worktree = agent.worktree;
-    if (!(await pathExists(worktree))) return (this.stop(), []);
+    if (!(await pathExists(worktree))) return this.halt();
     if (agent.state === "archived") {
       const lines = await this.append(worktree, [{ key: "archived", text: "the reviewer archived this workspace: stop working here (any Stet tool explains)" }]);
-      this.stop();
+      this.halt();
       return lines;
     }
 
@@ -119,7 +124,16 @@ export class InboxWriter {
     return this.append(worktree, news);
   }
 
+  /** Stop from inside a check (which `stop` would wait for). */
+  private halt(): InboxLine[] {
+    this.done = true;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    return [];
+  }
+
   private async append(worktree: string, news: Omit<InboxLine, "at">[]): Promise<InboxLine[]> {
+    if (this.done) return []; // stopped meanwhile: leave the workspace alone
     if (!this.keys) {
       // Keys already in the file (an earlier session, or another server for the same workspace).
       const old = (await readInside(worktree, INBOX_FILE))?.toString("utf8") ?? "";

@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkToolUse } from "../src/guard.js";
 import { findInbox, followInbox, InboxWriter, INBOX_FILE, parseInboxLine } from "../src/inbox.js";
-import { StetMcpServer } from "../src/mcp.js";
+import { PassThrough } from "node:stream";
+import { serveStdio, StetMcpServer } from "../src/mcp.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
 
 const FAKE_CLI = { command: process.execPath, args: ["/opt/stet/cli.js"] };
@@ -48,6 +49,37 @@ describe("agent inbox", () => {
 
     await stet.archiveAgent("a");
     expect((await w.tick(true)).map((l) => l.key)).toEqual(["archived"]);
+  });
+
+  it("finishes a running check before stop resolves, and writes nothing after it", async () => {
+    // On Windows a check still running (git, the inbox file) kept the workspace from being removed.
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Shorter.");
+    const w = new InboxWriter(stet, "a");
+    let settled = false;
+    const t = w.tick(true).then((l) => ((settled = true), l));
+    await w.stop();
+    expect(settled).toBe(true);
+    expect(await t).toEqual([]); // stopped before it wrote
+    expect(read(a.worktree, INBOX_FILE)).toBe("");
+    expect(await w.tick(true)).toEqual([]);
+  });
+
+  it("is stopped and done when the MCP server's input ends", async () => {
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Shorter.");
+    const server = new StetMcpServer({ cwd: a.worktree, version: "test" });
+    const input = new PassThrough();
+    const done = serveStdio(server, input, new PassThrough());
+    input.end();
+    await done;
+    const before = read(a.worktree, INBOX_FILE);
+    rmSync(a.worktree, { recursive: true, force: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(existsSync(a.worktree)).toBe(false);
+    expect(before === "" || /note:N1/.test(before)).toBe(true);
   });
 
   it("does not write through a link the agent planted", async () => {
