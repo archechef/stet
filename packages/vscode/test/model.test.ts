@@ -34,6 +34,7 @@ function snap(): Snapshot {
     syncNeeded: new Set(),
     uncommitted: [],
     unshared: false,
+    missing: [],
   };
 }
 

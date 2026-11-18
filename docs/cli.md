@@ -51,6 +51,7 @@ Run these in your LaTeX project, which must be a git repository with at least on
 | `stet agent list` | Lists all agents with their state and folder. |
 | `stet agent refresh <name>` | Rewrites the agent's instructions, tool configuration and guardrails, e.g. after a Stet update. |
 | `stet agent archive <name> [--remove]` | Retires an agent: its pending changes are withdrawn. `--remove` also deletes the folder and branch. The agent is told on its next action. |
+| `stet agent notify <name> [now\|batched\|off]` | When an agent waiting with `stet watch` is woken: `batched` (default) once you have paused for half a minute, `now` at each decision, `off` not at all (switching back on delivers what arrived meanwhile). Without a mode, shows the current one. |
 
 Names use letters, digits, `.`, `_` and `-`. What happens inside a workspace, and how Claude and Codex are set up, is described in [agents.md](agents.md).
 
@@ -66,6 +67,7 @@ Run these in your project folder. Changes have ids like `12.3`: change 3 of roun
 | `stet show <12.3\|G3\|C12\|N3>` | Shows a change with its context, a group or round with its members, or a note with its thread. |
 | `stet accept <12.3\|G3\|G3.2>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
 | `stet reject <12.3\|G3\|G3.2>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
+| `stet undo <12.3>` | Undoes a rejection, or an accept until you commit it (the change is taken out of your file again): the change is pending again, and so are changes the accept made stale. Changes decided together (a linked group, a move) are undone together. The agent is told. |
 | | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <12.3\|N3> -m <text>` | Sends a message about a change, or in a note's thread; the agent can reply. |

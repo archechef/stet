@@ -6,7 +6,7 @@ import { foldPath, isSafeRepoPath, Stet } from "@stet/core";
 import type { Snapshot } from "./model.js";
 
 export class Project implements vscode.Disposable {
-  snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], notes: [], syncNeeded: new Set(), uncommitted: [], unshared: false };
+  snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], notes: [], syncNeeded: new Set(), uncommitted: [], unshared: false, missing: [] };
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
   private watcher: FSWatcher | undefined;
@@ -116,6 +116,7 @@ export class Project implements vscode.Disposable {
         this.checkAgain = false;
         await this.checkAgents();
         await this.checkShare();
+        await this.checkMissing();
       } while (this.checkAgain);
     } finally {
       this.checking = false;
@@ -148,6 +149,21 @@ export class Project implements vscode.Disposable {
     }
     if (unshared !== this.snapshot.unshared) {
       this.snapshot = { ...this.snapshot, unshared };
+      this.changed.fire();
+    }
+  }
+
+  /** Accepted changes agents don't get. Nothing is shown while there are none. */
+  private async checkMissing(): Promise<void> {
+    let missing: Snapshot["missing"] = [];
+    try {
+      missing = (await this.stet.missingFromBase()).map((m) => ({ id: m.item.id, reason: m.reason }));
+    } catch {
+      /* e.g. the main branch is missing; doctor explains */
+    }
+    const key = (m: Snapshot["missing"]) => m.map((x) => `${x.id}:${x.reason}`).join("|");
+    if (key(missing) !== key(this.snapshot.missing)) {
+      this.snapshot = { ...this.snapshot, missing };
       this.changed.fire();
     }
   }

@@ -36,6 +36,8 @@ import {
   type Item,
   type ItemStatus,
   type NoteHint,
+  type NotifyMode,
+  notifyMode,
   type StetEvent,
   describeNote,
   findInbox,
@@ -54,6 +56,8 @@ Project (run in your project folder):
   stet agent list
   stet agent refresh <name>             rewrite the agent's instructions, MCP and guard files
   stet agent archive <name> [--remove]  retire an agent (withdraws its pending items)
+  stet agent notify <name> [now|batched|off]
+                                        when a watching agent hears about your decisions
   stet setup claude|codex [--print]     register the Stet MCP server with Claude Code / Codex
   stet hooks install|uninstall|status   git hooks that block merges/pushes of agent branches
 
@@ -63,6 +67,7 @@ Review:
   stet show <12.3|G3|G3.2|C12|N3>       show a change (round 12, change 3), group, part of a group, round or note
   stet accept <12.3|G3|G3.2>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
   stet reject <12.3|G3|G3.2>... [-m <reason>] [--all | --revise-rest | --only]
+  stet undo <12.3>                      undo an accept (until committed) or a rejection: pending again
   stet revise <12.3> -m <what to change>
   stet comment <12.3|N3> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
@@ -285,6 +290,17 @@ const describeEvent = (e: StetEvent) =>
 
 const noteReply = (id: string) => `stet reply ${id} -m "..."`;
 
+const NOTIFY_TEXT: Record<NotifyMode, string> = {
+  now: "notified right away (a watching agent wakes at each decision)",
+  batched: "notified when you pause (a watching agent wakes once you have stopped for a while)",
+  off: "not notified (it hears about your decisions when it next checks)",
+};
+
+const missingText = (missing: { item: Item; reason: string }[]) =>
+  `! Agents don't get ${missing.length === 1 ? "this accepted change" : "these accepted changes"}: ` +
+  missing.map((m) => `${m.item.id} (${m.reason})`).join(", ") +
+  ". Finish the review (`stet commit`) or share your edits (`stet share`) to pass them on.";
+
 function noteSummary(n: Note): string {
   const tag = n.state === "resolved" ? dim(" [resolved]") : n.deliveredAt ? "" : dim(" [not delivered yet]");
   return `${bold(n.id)} for ${n.agent} on ${n.file}${tag}: ${oneLine(n.body, 80)}${n.thread.length ? dim(` (${n.thread.length} repl${n.thread.length === 1 ? "y" : "ies"})`) : ""}`;
@@ -425,7 +441,15 @@ async function main() {
           { archived: name, withdrawn: r.withdrawn, worktreeRemoved: r.worktreeRemoved },
         );
       }
-      throw new StetError("Usage: stet agent new|list|archive <name>");
+      if (sub === "notify") {
+        const id = need(name, "agent name");
+        const mode = args[2] as NotifyMode | undefined;
+        if (mode) await stet.setNotify(id, mode);
+        const a = (await stet.listAgents()).find((x) => x.id === id);
+        if (!a) throw new StetError(`Unknown agent '${id}'.`);
+        return out(() => `${bold(id)}: ${NOTIFY_TEXT[notifyMode(a)]}`, { agent: id, notify: notifyMode(a) });
+      }
+      throw new StetError("Usage: stet agent new|list|refresh|archive|notify <name>");
     }
 
     case "hooks": {
@@ -451,6 +475,8 @@ async function main() {
       if (opt.json) return out(() => {}, { items, groups: groups.filter((g) => g.items.some((i) => items.some((x) => x.id === i))) });
       const share = await stet.shareStatus().catch(() => null);
       const shareHint = share?.unshared && share.mode === "manual" ? [dim("Agents don't see your latest saved edits yet: `stet share` shares them.")] : [];
+      const missing = await stet.missingFromBase().catch(() => []);
+      if (missing.length) shareHint.push(yellow(missingText(missing)));
       if (!items.length) return console.log(["Nothing to review.", ...shareHint].join("\n"));
       const lines: string[] = [];
       for (const cs of changesets) {
@@ -583,6 +609,17 @@ async function main() {
       }
     }
 
+    case "undo": {
+      if (!args.length) throw new StetError("Usage: stet undo <12.3>");
+      const r = await stet.undo(args[0]!);
+      return out(
+        () =>
+          `Undone: ${r.reopened.map((i) => i.id).join(", ")} ${r.reopened.length === 1 ? "is" : "are"} pending again.` +
+          (r.restored.length ? ` No longer stale: ${r.restored.map((i) => i.id).join(", ")}.` : ""),
+        r,
+      );
+    }
+
     case "revise": {
       const it = await stet.requestRevision(need(args[0], "item id"), need(opt.message, "-m <what to change>"));
       return out(() => `${yellow("Revision requested")} for ${it.id}.`, it);
@@ -672,6 +709,7 @@ async function main() {
             s.unreadFeedback ? yellow(`${s.unreadFeedback} unread feedback event(s): run \`stet feedback\``) : "No unread feedback.",
             s.syncNeeded ? yellow("The document changed: run `stet sync` before starting new work.") : "Up to date with the document.",
             ...(s.notesWaiting ? [yellow(`${s.notesWaiting} note(s) from the reviewer waiting: run \`stet sync\` to receive them.`)] : []),
+            ...(s.missingAccepted.length ? [yellow(`Accepted but not in your copy yet: ${s.missingAccepted.join(", ")} (the reviewer is told). Don't propose them again.`)] : []),
           ].join("\n"),
         s,
       );

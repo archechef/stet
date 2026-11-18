@@ -191,6 +191,15 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
       add({ name: n, status: "warn", message: `${parts.join(", ")}; missing workspace files: ${missingFiles.join(", ")}`, fix: `stet agent refresh ${a.id}` });
     else add({ name: n, status: "ok", message: parts.join(", ") });
   }
+  // Only when something is wrong: accepted changes agents don't get.
+  const missing = await stet.missingFromBase().catch(() => []);
+  if (missing.length)
+    add({
+      name: "review base",
+      status: "warn",
+      message: `agents don't get accepted ${missing.map((m) => `${m.item.id} (${m.reason})`).join(", ")}`,
+      fix: "stet commit  (or share your edits again: stet share)",
+    });
   const orphans = worktrees.filter((w) => w.branch?.startsWith(cfg.agentBranchPrefix) && !agents.some((a) => a.branch === w.branch));
   for (const o of orphans) add({ name: "worktree", status: "info", message: `${o.path} (${o.branch}) is not registered yet; it is adopted when used as an agent workspace` });
 

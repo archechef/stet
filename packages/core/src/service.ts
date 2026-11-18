@@ -28,8 +28,11 @@ import {
   moveFrom,
   moveOthers,
   moveTo,
+  NOTIFY_MODES,
+  notifyMode,
   parsePartId,
   partId,
+  type NotifyMode,
   type Agent,
   type AgentKind,
   type Changeset,
@@ -109,6 +112,15 @@ export interface AgentStatus {
   unreadFeedback: number;
   /** Reviewer notes waiting for the agent's next sync (§7.8). */
   notesWaiting: number;
+  /** Its accepted items that its copy lacks: the review base could not apply them (see `missingFromBase`). */
+  missingAccepted: string[];
+}
+
+export interface UndoResult {
+  /** The items whose decision was undone: pending again. */
+  reopened: Item[];
+  /** Items the undone accept had made stale: pending again too. */
+  restored: Item[];
 }
 
 export interface ItemFilter {
@@ -123,6 +135,8 @@ export interface ItemFilter {
 /** Journal of an accept in progress (`.git/stet/txn.json`). */
 interface AcceptJournal {
   items: { id: string; appliedText: string; edited: boolean }[];
+  /** An undo of accepted items (`Stet.undo`): finishing it makes them pending again. */
+  undo?: boolean;
   filesDone: boolean;
   /**
    * Every file the accept writes: original content (base64; null = did not exist) and content
@@ -304,7 +318,7 @@ export class Stet {
    * journaled; any failure restores them. `recoverInterrupted` finishes or undoes an accept that
    * was cut off (crash, killed process).
    */
-  private async writeWorking(changes: Map<string, FileChange>, resolutions: AcceptJournal["items"]): Promise<void> {
+  private async writeWorking(changes: Map<string, FileChange>, resolutions: AcceptJournal["items"], undo = false): Promise<void> {
     // Items come from the store, which is plain files: re-check every path before touching disk.
     const bad = [...changes.keys()].filter((p) => !isSafeRepoPath(p));
     if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
@@ -321,7 +335,7 @@ export class Stet {
     for (const [p, c] of changes) data.set(p, c === null ? null : "blob" in c ? await this.blobBytes(c.blob) : fromLf(c.text, c.eol));
 
     await this.store.fence(); // never write the user's files without holding the lock
-    const journal: AcceptJournal = { items: resolutions, filesDone: false, files: [] };
+    const journal: AcceptJournal = { items: resolutions, ...(undo ? { undo } : {}), filesDone: false, files: [] };
     for (const [p, t] of targets) {
       const orig = t.exists ? await readFile(t.path) : null;
       const d = data.get(p) ?? null;
@@ -386,7 +400,13 @@ export class Stet {
     } catch {
       return;
     }
-    if (j.filesDone) {
+    if (j.filesDone && j.undo) {
+      for (const r of j.items) {
+        const it = await this.store.getItem(r.id);
+        if (it?.status !== "accepted") continue;
+        await this.reopen(it, "accept undone (completed after an interruption)", "accepted");
+      }
+    } else if (j.filesDone) {
       for (const r of j.items) {
         const it = await this.store.getItem(r.id);
         if (!it || !isLive(it.status)) continue;
@@ -490,6 +510,9 @@ export class Stet {
     const share = await this.sharedTree(cfg, head);
     const shared = share && share.tree !== (await this.repo.run(["rev-parse", `${head}^{tree}`])) ? share.tree : null;
     let toApply = stillOpen;
+    // Accepted items the base should hold but can't: agents would never see them (bug report
+    // 2026-11-18), so they are recorded and shown to the reviewer.
+    const missing: { id: string; reason: string }[] = [];
     if (share) {
       const sview = this.treeView(share.tree);
       toApply = [];
@@ -502,9 +525,10 @@ export class Stet {
         const f = await sview.read(it.file);
         // With its accepted neighbours: one right next to it changed its surroundings (bug report 2026-11-18).
         if (f && anchorNear({ ...it, newText: it.resolution!.appliedText }, f.text, await this.refText(it), await this.neighbours(it))) toApply.push(it);
+        else if (!f || !this.holdsApplied(it, f.text)) missing.push({ id: it.id, reason: "it can't be located in your shared edits" });
       }
     }
-    const key = head + ":" + (shared ?? "") + ":" + toApply.map((i) => i.id).join(",");
+    const key = head + ":" + (shared ?? "") + ":" + toApply.map((i) => i.id).join(",") + ":" + missing.map((m) => m.id).join(",");
     const state = await this.store.state();
     const current = await this.repo.revParse(BASE_REF);
     if (state.base?.key === key && current === state.base.commit) return current;
@@ -517,6 +541,7 @@ export class Stet {
         neighbours: this.neighbours,
         overrides: new Map(toApply.map((i) => [i.id, i.resolution!.appliedText])),
       });
+      for (const f of res.failed) missing.push({ id: f.item.id, reason: f.reason });
       const what = [
         ...(shared ? ["your shared edits"] : []),
         ...(res.applied.length ? [`accepted, not yet committed: ${res.applied.map((a) => a.item.id).join(", ")}`] : []),
@@ -530,9 +555,37 @@ export class Stet {
     }
     await this.repo.run(["update-ref", BASE_REF, commit]);
     const s = await this.store.state();
-    s.base = { key, commit };
+    s.base = { key, commit, ...(missing.length ? { missing } : {}) };
     await this.store.saveState(s);
     return commit;
+  }
+
+  /** Whether `text` already holds an accepted item's applied text where the item was. */
+  private holdsApplied(it: Item, text: string): boolean {
+    const applied = it.resolution!.appliedText;
+    return !!anchor({ ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } }, text);
+  }
+
+  /**
+   * Accepted changes agents don't get: the review base could not apply them on top of your
+   * last commit or shared edits. Empty when everything works. Committing them (*Finish review*)
+   * or sharing your edits again passes them on.
+   */
+  async missingFromBase(): Promise<{ item: Item; reason: string }[]> {
+    return this.store.withLock(async () => {
+      await this.ensureBase();
+      return this.missingNow();
+    });
+  }
+
+  /** `missingFromBase` for a base just ensured. Call under lock. */
+  private async missingNow(): Promise<{ item: Item; reason: string }[]> {
+    const out: { item: Item; reason: string }[] = [];
+    for (const m of (await this.store.state()).base?.missing ?? []) {
+      const it = await this.store.getItem(m.id);
+      if (it?.status === "accepted" && it.resolution && !it.resolution.committed) out.push({ item: it, reason: m.reason });
+    }
+    return out;
   }
 
   /** The tree of the user's edits that agents see per `shareEdits`, or null for "HEAD only". */
@@ -840,6 +893,7 @@ export class Stet {
       if (!trees.has(rev)) trees.set(rev, this.repo.tryRun(["rev-parse", `${rev}^{tree}`]));
       return trees.get(rev)!;
     };
+    const missing = await this.missingNow();
     const out: AgentStatus[] = [];
     for (const agent of agents) {
       const counts: Partial<Record<ItemStatus, number>> = {};
@@ -847,7 +901,8 @@ export class Stet {
       const unread = events.filter((e) => e.seq > agent.feedbackCursor && e.agent === agent.id && FEEDBACK_TYPES.includes(e.type)).length;
       const syncNeeded = agent.baseCommit !== base && (await tree(agent.baseCommit)) !== (await tree(base));
       const notesWaiting = notes.filter((n) => n.agent === agent.id && n.state === "open" && !n.deliveredAt).length;
-      out.push({ agent, mainBranch: cfg.mainBranch, base, syncNeeded, counts, unreadFeedback: unread, notesWaiting });
+      const missingAccepted = missing.filter((m) => m.item.agent === agent.id).map((m) => m.item.id);
+      out.push({ agent, mainBranch: cfg.mainBranch, base, syncNeeded, counts, unreadFeedback: unread, notesWaiting, missingAccepted });
     }
     return out;
   }
@@ -1794,6 +1849,117 @@ export class Stet {
       }
       await this.updateGroups([...toReject, ...rest]);
       return toReject;
+    });
+  }
+
+  /**
+   * Undo the reviewer's decision on an item, together with the items decided with it (the rest of
+   * its linked group or move): a rejection, or an accept not committed yet, whose change is taken
+   * out of the working copy again. The items are pending again, and so are items the accept made
+   * stale. The agent is told. A committed accept is in git's history: revert it with git.
+   */
+  async undo(id: string): Promise<UndoResult> {
+    return this.store.withLock(async () => {
+      await this.recoverInterrupted();
+      const [item] = await this.requireItems([id]);
+      if (item!.status !== "accepted" && item!.status !== "rejected")
+        throw new StetError(`${item!.id} is ${item!.status}: only accepted and rejected changes can be undone.`);
+      const unit = await this.decidedWith(item!);
+      if (item!.status === "rejected") {
+        for (const it of unit) await this.reopen(it, "rejection undone", "rejected");
+        await this.updateGroups(unit);
+        return { reopened: unit, restored: [] };
+      }
+
+      const committed = unit.find((i) => i.resolution?.committed);
+      if (committed) {
+        const c = committed.resolution!.committed!.replace(/^external:/, "");
+        throw new StetError(`${committed.id} is committed already (${c.slice(0, 8)}): Stet can't undo it any more. Revert it with git if you need to.`);
+      }
+      const cfg = await this.config();
+      const onBranch = await this.projectBranch();
+      if (onBranch !== cfg.mainBranch)
+        throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before undoing.`);
+
+      // The inverse changes: from the applied text back to the old one.
+      const refs = new Map<string, string>();
+      const inverse: Item[] = [];
+      for (const it of unit) {
+        const applied = it.resolution!.appliedText;
+        if (it.kind === "modify") {
+          const ref = (await this.refText(it)) ?? "";
+          const after = ref.slice(0, it.range.start) + applied + ref.slice(it.range.end);
+          const range = { start: it.range.start, end: it.range.start + applied.length };
+          refs.set(it.id, after);
+          inverse.push({ ...it, oldText: applied, newText: it.oldText, range, context: captureContext(after, range.start, range.end) });
+        } else if (it.kind === "add-file") inverse.push({ ...it, kind: "delete-file", oldText: applied, newText: "" });
+        else if (it.kind === "delete-file") inverse.push({ ...it, kind: "add-file", oldText: "", newText: it.oldText });
+        else if (it.kind === "rename-file") inverse.push({ ...it, file: it.oldFile!, oldFile: it.file, oldText: applied, newText: it.oldText });
+        else {
+          const { oldFile, ...rest } = it;
+          inverse.push({ ...rest, ...(oldFile ? { file: oldFile, oldFile: it.file } : {}), oldBlob: it.newBlob ?? null, newBlob: it.oldBlob ?? null });
+        }
+      }
+      const res = await applyItems(inverse, this.workingView(), {
+        refText: async (i) => refs.get(i.id) ?? (await this.refText(i)),
+      });
+      if (res.failed.length) {
+        throw new StetError(
+          "Nothing was undone, because some changes are no longer as accepted (you edited them since?):\n" +
+            res.failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n"),
+        );
+      }
+      await this.writeWorking(res.changes, unit.map((i) => ({ id: i.id, appliedText: "", edited: false })), true);
+      for (const it of unit) await this.reopen(it, "accept undone", "accepted");
+      await rm(this.journalPath, { force: true });
+
+      // Items the accept made stale (`overlaps accepted <id>`) are pending again.
+      const ids = new Set(unit.map((i) => i.id));
+      const restored: Item[] = [];
+      for (const it of await this.store.items()) {
+        const last = it.history[it.history.length - 1];
+        const by = last?.note?.match(/^overlaps accepted (\S+)$/)?.[1];
+        if (it.status !== "stale" || !by || !ids.has(by)) continue;
+        await this.reopen(it, `the accept of ${by} was undone`, "stale");
+        restored.push(it);
+      }
+      await this.updateGroups([...unit, ...restored]);
+      return { reopened: unit, restored };
+    });
+  }
+
+  /** An item and those decided together with it (move partners, its linked unit) in the same state. */
+  private async decidedWith(item: Item): Promise<Item[]> {
+    const out = new Map<string, Item>([[item.id, item]]);
+    const add = async (id: string) => {
+      const it = await this.store.getItem(id);
+      if (it && it.status === item.status && !out.has(it.id)) out.set(it.id, it);
+    };
+    for (const p of moveOthers(item)) await add(p);
+    for (const gid of item.groups) {
+      const g = await this.store.getGroup(gid);
+      if (g?.kind === "linked") for (const m of linkedUnit(g, item.id)) await add(m);
+    }
+    return [...out.values()];
+  }
+
+  private async reopen(it: Item, note: string, was: ItemStatus): Promise<void> {
+    this.setStatus(it, "pending", "user", note);
+    it.resolution = null;
+    delete it.acceptFailed;
+    await this.store.putItem(it);
+    await this.store.appendEvent({ type: "reopened", agent: it.agent, items: [it.id], data: { item: await this.describe(it), was } });
+  }
+
+  /** Set how an agent hears about the reviewer's activity (see `NotifyMode`). Returns false if unchanged. */
+  async setNotify(agentId: string, mode: NotifyMode): Promise<boolean> {
+    if (!NOTIFY_MODES.includes(mode)) throw new StetError(`Unknown notification mode '${mode}' (use ${NOTIFY_MODES.join(", ")}).`);
+    return this.store.withLock(async () => {
+      const agent = await this.requireAgent(agentId);
+      if (notifyMode(agent) === mode) return false;
+      agent.notify = mode;
+      await this.store.putAgent(agent);
+      return true;
     });
   }
 

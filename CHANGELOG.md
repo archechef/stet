@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Undo in the History:** the new ↶ button (or `stet undo <id>`) undoes a rejection, or an accept until you finish the review. The change is pending again, an undone accept is taken out of your file, and changes the accept had made stale are pending again too. Changes decided together (a linked group, a move) are undone together, and the agent is told.
+- **Notifications per agent:** the bell next to an agent (or `stet agent notify <name>`) chooses when an agent waiting with `stet watch` is woken. *When I pause* (the new default) waits until you have stopped for half a minute, so the agent hears about a review at once instead of after every click. *Right away* is the behaviour of 0.8.0. *Off* doesn't wake it at all; switching back on delivers what arrived meanwhile.
+- **View options in the panel:** a gear in the Stet panel's title switches the settings you may change back and forth: changes inline, Accept / Reject actions above changes, going to the next change, how long changes are shown, and which of your edits agents see.
+- **Accepted changes that can't reach agents are shown:** if the review base can't apply an accepted change on top of your last commit or shared edits, the panel, the status bar, `stet review` and `stet doctor` say so, and the agent is told not to propose it again. Nothing is shown while everything works.
+
 ## 0.8.1 — 2026-11-18
 
 - **Fix: Windows build of 0.8.0.** The release build of 0.8.0 failed on Windows: when an agent's Stet tools stopped, the inbox writer could still be busy in the agent's workspace, so it couldn't be removed right away. Stopping now waits for it. 0.8.1 contains all changes of 0.8.0.

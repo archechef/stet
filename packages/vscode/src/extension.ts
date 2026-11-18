@@ -2,7 +2,7 @@
 
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, foldPath, isNoteId, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type ShareMode } from "@stet/core";
+import { doctor, foldPath, isNoteId, notifyMode, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
 import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -169,17 +169,25 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const uncommitted = snaps.reduce((n, s) => n + s.uncommitted.length, 0);
     const sync = snaps.flatMap((s) => [...s.syncNeeded]);
     const unshared = all.filter((p) => p.snapshot.unshared).map((p) => p.name);
+    const missing = all.flatMap((p) => p.snapshot.missing.map((m) => ({ ...m, project: p.name })));
+    // Shown only when something is wrong: accepted changes agents would never see.
+    this.tree.message = missing.length
+      ? `⚠ Agents don't get accepted ${missing.map((m) => m.id).join(", ")} (${missing[0]!.reason}${missing.length > 1 ? ", …" : ""}). ` +
+        "Finish the review, or share your edits, to pass them on."
+      : undefined;
     // Redraw first: selecting the next change waits for the tree, not for the context keys.
     this.treeChanged.fire(undefined);
     this.historyChanged.fire(undefined);
     this.changed.fire();
     this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
     if (all.length) {
-      this.status.text = `$(checklist) ${pending}` + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "") + (unshared.length ? " $(cloud-upload)" : "");
+      this.status.text =
+        `$(checklist) ${pending}` + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "") + (unshared.length ? " $(cloud-upload)" : "") + (missing.length ? " $(warning)" : "");
       const tip = [`Stet: ${pending} change${pending === 1 ? "" : "s"} to review`];
       if (uncommitted) tip.push(`${uncommitted} accepted, not committed yet (Finish review)`);
       if (unshared.length) tip.push(`Agents don't see your latest saved edits${all.length > 1 ? ` in ${unshared.join(", ")}` : ""} (Share my edits)`);
       if (sync.length) tip.push(`Behind your latest text: ${sync.join(", ")}. Agents catch up when they next call stet_sync.`);
+      for (const m of missing) tip.push(`Agents don't get accepted ${m.id}: ${m.reason}. Finish the review or share your edits.`);
       this.status.tooltip = tip.join("\n");
       this.status.show();
     } else this.status.hide();
@@ -333,13 +341,16 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const parts = history ? [model.outcome((i) => i.agent === n.agent.id)] : [`${pending} pending`];
         if (snap.syncNeeded.has(n.agent.id)) parts.push("behind your text");
         if (n.agent.state === "archived") parts.push("archived");
+        const notify = notifyMode(n.agent);
+        if (n.agent.state === "active" && notify === "off") parts.push("not notified");
         t.description = parts.join(" · ");
         t.iconPath = new vscode.ThemeIcon(n.agent.kind === "codex" ? "terminal" : "hubot");
         t.tooltip = new vscode.MarkdownString(
           `**${esc(n.agent.id)}** (${n.agent.kind})\n\nWorkspace: ${esc(n.agent.worktree)}` +
-            (snap.syncNeeded.has(n.agent.id) ? "\n\nThe agent works on an older version of your text; it catches up when it calls `stet_sync`." : ""),
+            (snap.syncNeeded.has(n.agent.id) ? "\n\nThe agent works on an older version of your text; it catches up when it calls `stet_sync`." : "") +
+            (n.agent.state === "active" ? `\n\nNotifications: ${NOTIFY_PICKS.find((x) => x.mode === notify)!.label.toLowerCase()} (bell button).` : ""),
         );
-        t.contextValue = n.agent.state === "active" ? "agent" : "agent.archived";
+        t.contextValue = n.agent.state === "active" ? `agent.active.notify-${notify}` : "agent.archived";
         return t;
       }
       case "note": {
@@ -412,7 +423,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         t.iconPath = itemIcon(it);
         const md = new vscode.MarkdownString(itemMarkdown(it, model));
         t.tooltip = md;
-        t.contextValue = isLive(it) ? `item.live.${it.kind}` : `item.done.${it.kind}`;
+        // Undoable: a rejection, or an accept not committed yet.
+        const undo = it.status === "rejected" || (it.status === "accepted" && !!it.resolution && !it.resolution.committed);
+        t.contextValue = isLive(it) ? `item.live.${it.kind}` : `item.done.${it.kind}${undo ? ".undo" : ""}`;
         // Decided changes open as a diff of the change itself; open ones are shown in the file.
         t.command = history
           ? { command: "stet.showDiff", title: "Show diff", arguments: [el] }
@@ -1001,6 +1014,46 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (a) await copyPath(a.agent.worktree);
   }
 
+  /** How an agent that waits with `stet watch` hears about your decisions. */
+  async agentNotify(arg: unknown): Promise<void> {
+    const a = await this.pickAgent(arg);
+    if (!a) return;
+    const current = notifyMode(a.agent);
+    const pick = await vscode.window.showQuickPick(
+      NOTIFY_PICKS.map((x) => ({ ...x, label: `${x.mode === current ? "$(check) " : ""}${x.label}` })),
+      { title: `Notifications for ${a.agent.id}`, placeHolder: "When should a waiting agent hear about your decisions?" },
+    );
+    if (!pick || pick.mode === current) return;
+    await this.run(a.project, () => a.project.stet.setNotify(a.agent.id, pick.mode));
+  }
+
+  /** Undo a decision from the History: the change is pending again (an accept is taken out of your file). */
+  async undo(arg: unknown): Promise<void> {
+    const t = await this.targetItem(arg);
+    if (!t) return;
+    const { project: p, item } = t;
+    if (item.status === "accepted") await this.saveFiles(p, [item.file, ...(item.oldFile ? [item.oldFile] : [])]);
+    const r = await this.run(p, () => p.stet.undo(item.id));
+    if (r) {
+      const what = item.status === "accepted" ? "accept" : "rejection";
+      vscode.window.setStatusBarMessage(
+        `$(discard) Undid the ${what} of ${r.reopened.map((i) => i.id).join(", ")}` + (r.restored.length ? `; ${r.restored.map((i) => i.id).join(", ")} pending again too` : ""),
+        5000,
+      );
+    }
+  }
+
+  /** Set one of Stet's settings from the panel's View options (where it is set already, or for the user). */
+  async setOption(key: string, value: unknown): Promise<void> {
+    const conf = vscode.workspace.getConfiguration("stet");
+    const i = conf.inspect(key);
+    const target =
+      i?.workspaceValue !== undefined || (key === "shareEdits" && vscode.workspace.workspaceFolders?.length)
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+    await conf.update(key, value, target);
+  }
+
   async archiveAgent(arg: unknown): Promise<void> {
     const a = await this.pickAgent(arg);
     if (!a) return;
@@ -1193,6 +1246,13 @@ function elId(el: El): string {
   }
 }
 
+/** The notification modes as offered in the panel. */
+const NOTIFY_PICKS: { mode: NotifyMode; label: string; detail: string }[] = [
+  { mode: "batched", label: "When I pause", detail: "Once you have stopped for half a minute, with all your decisions together. Not after every click." },
+  { mode: "now", label: "Right away", detail: "At each decision, comment or note." },
+  { mode: "off", label: "Off", detail: "Not woken: the agent hears about your decisions when it next checks. Switching back on delivers what arrived meanwhile." },
+];
+
 function itemIcon(it: Item): vscode.ThemeIcon {
   const c = (id: string) => new vscode.ThemeColor(id);
   switch (it.status) {
@@ -1232,6 +1292,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.openAgent", (a) => ext.openAgent(a));
   reg("stet.copyAgentPath", (a) => ext.copyAgentPath(a));
   reg("stet.archiveAgent", (a) => ext.archiveAgent(a));
+  reg("stet.agentNotify", (a) => ext.agentNotify(a));
+  reg("stet.agentNotifyOff", (a) => ext.agentNotify(a));
+  reg("stet.undo", inOrder((a) => ext.undo(a)));
+  // View options: settings you may switch back and forth, from the panel.
+  const toggle = (key: string) => () => ext.setOption(key, !vscode.workspace.getConfiguration("stet").get<boolean>(key, true));
+  reg("stet.toggleInlineChanges", toggle("inlineChanges"));
+  reg("stet.toggleCodeLens", toggle("codeLens"));
+  reg("stet.toggleAutoAdvance", toggle("autoAdvance"));
+  for (const v of ["expanded", "collapsed", "hover"]) reg(`stet.longChanges.${v}`, () => ext.setOption("longChanges", v));
+  for (const v of ["manual", "saved", "committed"]) reg(`stet.shareEdits.${v}`, () => ext.setOption("shareEdits", v));
   reg("stet.refresh", () => ext.refresh());
   reg("stet.doctor", () => ext.doctor());
   reg("stet.finishReview", () => ext.finishReview());

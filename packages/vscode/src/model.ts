@@ -38,6 +38,8 @@ export interface Snapshot {
   uncommitted: Item[];
   /** Saved edits exist that agents don't see yet (setting stet.shareEdits). */
   unshared: boolean;
+  /** Accepted, uncommitted items agents don't get (the review base can't apply them). Usually empty. */
+  missing: { id: string; reason: string }[];
 }
 
 export type Node =

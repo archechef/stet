@@ -70,7 +70,7 @@ The agent edits, then submits by itself. Some tips:
 
 | Tool | What the agent does with it |
 |---|---|
-| `stet_status` | Sees its item counts, unread feedback, notes from you waiting for it, and whether it must sync first. |
+| `stet_status` | Sees its item counts, unread feedback, notes from you waiting for it, whether it must sync first, and accepted changes its copy lacks (rare; you are told too). |
 | `stet_submit` | Submits its edits with a title, a rationale and optional groups. |
 | `stet_sync` | Moves onto your latest text. Accepted changes become part of it, rejected ones disappear. Delivers your notes on passages. |
 | `stet_get_feedback` | Reads your decisions: accepted (possibly with your wording), rejected with reason, revision requests, comments, stale items, broken linked groups and partly accepted ones. |
@@ -85,7 +85,7 @@ Every other tool's result also ends with a line when something arrived meanwhile
 - With a runtime that wakes the agent when a background command prints (such as Claude Code's monitor), it runs `stet watch` and reacts to each line.
 - With one that wakes it when a background command ends, it runs `stet watch --once`, which exits after the first lines, and starts it again after acting.
 
-`stet watch` only reads the inbox, so it works inside the sandbox, and the guard allows it although its path is inside your project's `.git` folder. `tail -n 0 -f .stet/inbox` works too. An agent that is woken this way starts working and using tokens without you prompting it: tell it not to watch if you'd rather it waited for you.
+`stet watch` only reads the inbox, so it works inside the sandbox, and the guard allows it although its path is inside your project's `.git` folder. `tail -n 0 -f .stet/inbox` works too. When the agent is woken is up to you, per agent: the bell next to it in the Stet panel, or `stet agent notify <name> now|batched|off`. *batched* (the default) waits until you have paused for half a minute, so the agent hears about a review all at once instead of after every click. *now* writes each line as it happens. *off* writes nothing until you switch it on again, then everything that arrived meanwhile. A woken agent starts working and using tokens without you prompting it, so *off* is also the way to keep it waiting for you.
 
 **Grouping:**
 - `linked` groups can only be accepted together. Agents are told to use them wherever accepting only part would break the document: label and reference renames, a macro and its uses, citation keys.

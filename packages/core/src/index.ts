@@ -2,7 +2,7 @@ export * from "./model.js";
 export * from "./config.js";
 export { Stet, BASE_REF } from "./service.js";
 export { StetError } from "./errors.js";
-export type { SubmitResult, SyncResult, AcceptResult, AgentStatus, ItemFilter } from "./service.js";
+export type { SubmitResult, SyncResult, AcceptResult, AgentStatus, ItemFilter, UndoResult } from "./service.js";
 export type { GroupHint, NoteHint } from "./grouping.js";
 export { tokenize } from "./tokenizer.js";
 export { inlineDiff, type InlineDiff } from "./inline.js";

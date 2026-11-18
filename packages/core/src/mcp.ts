@@ -197,6 +197,10 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
       return `${label("LINKED GROUP BROKEN", "bad")} ${e.group} "${d.title}": ${(d.members ?? []).map((m: any) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
     case "note_comment":
       return `${label("REVIEWER ON NOTE", "info")} ${d.note} (${d.file}): ${d.text} (answer with ${reply(String(d.note ?? ""))})`;
+    case "reopened":
+      return d.was === "stale"
+        ? `${label("PENDING AGAIN", "info")} ${it}: it was stale because of an accept the reviewer has undone. Nothing to do.`
+        : `${label("REOPENED", "info")} ${it}: the reviewer undid ${d.was === "accepted" ? "accepting" : "rejecting"} it; it is pending again${d.was === "accepted" ? " and no longer part of the document" : ""}. Nothing to do.`;
     case "note_resolved":
       return `${label("NOTE RESOLVED", "good")} ${d.note} (${d.file}): the reviewer closed it.`;
     case "group_partial": {
@@ -359,6 +363,9 @@ export class StetMcpServer {
               s.unreadFeedback ? `${s.unreadFeedback} unread feedback event(s): call stet_get_feedback.` : "No unread feedback.",
               ...(s.notesWaiting ? [`${s.notesWaiting} note(s) from the reviewer waiting for you: call stet_sync to receive them.`] : []),
               s.syncNeeded ? "The document changed since your last sync: call stet_sync before starting new work." : "Your workspace is up to date with the document.",
+              ...(s.missingAccepted.length
+                ? [`Accepted but not in your copy yet: ${s.missingAccepted.join(", ")} (the reviewer is told). Don't propose them again.`]
+                : []),
             ].join("\n"),
           );
         }

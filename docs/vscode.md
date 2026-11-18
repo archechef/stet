@@ -66,7 +66,14 @@ The agent needs no further setup. The first time it opens the folder, Claude ask
 
 **Working with the agent:** ask it to improve the paper as usual, for example "Tighten the introduction". It edits its own copy and submits the result for review by itself. Several agents can work in parallel, each in its own workspace.
 
-**Right-click an agent in the panel** to open its workspace again, copy its path, or **Archive** it. Archiving withdraws its pending changes and can also delete the folder and its branch. Stet shows what it did, and an agent session that is still open is told on its next action that its workspace was archived (and asked to stop); you can then close that session.
+**Notifications** (the bell next to the agent): an agent that waits for you with `stet watch` is woken when something arrives for it. Choose when:
+- **When I pause** (the default): once you have stopped for half a minute, with all your decisions together, not after every click.
+- **Right away**: at each decision, comment or note.
+- **Off**: not woken (the bell is crossed out). The agent hears about your decisions when it next checks; switching back on delivers what arrived meanwhile.
+
+A woken agent starts working without you prompting it, so *Off* is also the way to keep it waiting for you.
+
+**Right-click an agent in the panel** to open its workspace again, copy its path, set its notifications, or **Archive** it. Archiving withdraws its pending changes and can also delete the folder and its branch. Stet shows what it did, and an agent session that is still open is told on its next action that its workspace was archived (and asked to stop); you can then close that session.
 
 More on how agents work with Stet, per tool: [agents.md](agents.md).
 
@@ -102,12 +109,14 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
 - The number on the Stet icon and in the status bar counts the changes waiting for you.
 - The status bar also shows how many accepted changes are not committed yet, and a sync icon while an agent is working on an older version of your text. The agent catches up by itself.
 - A cloud icon means you have saved edits that agents don't see yet (see *Sharing your edits* below).
+- A warning icon, and a line at the top of the panel, appear only if an accepted change can't reach agents: Stet could not apply it on top of your last commit or shared edits. **Finish review** or **Share my edits** passes it on. While everything works, neither is shown.
 
 **Panel title buttons:**
 - **Share my edits with agents** (only shown when you have saved edits that agents don't see)
 - **Finish review** (only shown when there is something to commit)
 - **New agent workspace**
 - **Highlight proposed text in green** / **Show proposed text in theme colours** (for word-wrapped editors, see 4.2)
+- **View options** (gear): settings you may want to switch back and forth, with a checkmark at the current one: changes shown inline, Accept / Reject actions above changes, going to the next change after deciding, how long changes are shown, and which of your edits agents see. They are the settings of §9, so the Settings editor shows the same values.
 - **Refresh**: reloads the panel and rewrites the active agents' instructions, tool configuration and guardrails, e.g. after you updated Stet. Agent sessions read them when they start, so restart running ones.
 - `…` menu: **Check setup**, **Set up project**
 
@@ -117,6 +126,7 @@ The **History** view (under Review in the Stet sidebar; click its title to open 
 
 - Clicking a change shows its diff: the old text against the text that was accepted (your edited version, if you edited it), in its original context.
 - Right-click for **Go to change** and **Comment…** (the agent can still reply).
+- **Undo** (the ↶ button): the change is pending again, and the agent is told. Undoing an accept takes the change out of your file again, and changes the accept had made stale are pending again too. A change decided together with others (a linked group, a move) is undone with them. You can undo an accept until you **Finish review**; after that it is in git's history, and its diff still shows here.
 - A round that is partly decided appears in both views: its open changes under Review, the decided ones under History.
 
 ### 4.2 In the editor
@@ -231,6 +241,8 @@ Agents can write only their own workspace folder. Your project, its `.git` folde
 ---
 
 ## 9. Settings
+
+Most of these can also be switched from the panel's **View options** (§4.1).
 
 | Setting | Default | Meaning |
 |---|---|---|

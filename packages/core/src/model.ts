@@ -18,7 +18,19 @@ export interface Agent {
   state: "active" | "archived";
   /** Set when the reviewer archives the agent. */
   archived?: { at: string; withdrawn: string[]; worktreeRemoved: boolean };
+  /** When the agent's inbox gets news (it wakes an agent running `stet watch`). Absent: "batched". */
+  notify?: NotifyMode;
 }
+
+/**
+ * How an agent hears about the reviewer's activity through its inbox (`stet watch`):
+ * - `now`: as soon as it happens;
+ * - `batched`: once the reviewer has paused for a while, all at once (not after every click);
+ * - `off`: not at all, until switched on again (then everything since arrives).
+ */
+export type NotifyMode = "now" | "batched" | "off";
+export const NOTIFY_MODES: readonly NotifyMode[] = ["now", "batched", "off"];
+export const notifyMode = (a: Agent): NotifyMode => a.notify ?? "batched";
 
 export type GroupKind = "atomic" | "linked" | "related";
 export type GroupSource = "agent" | "commit" | "auto";
@@ -211,7 +223,9 @@ export type EventType =
   | "note_comment"
   /** The agent replied to a note. */
   | "note_reply"
-  | "note_resolved";
+  | "note_resolved"
+  /** The reviewer undid a decision: the item is pending again. */
+  | "reopened";
 
 export interface StetEvent {
   seq: number;
@@ -235,6 +249,7 @@ export const FEEDBACK_TYPES: readonly EventType[] = [
   "group_partial",
   "note_comment",
   "note_resolved",
+  "reopened",
 ];
 
 export interface StoreState {
@@ -245,8 +260,11 @@ export interface StoreState {
   /** Absent in stores made before reviewer notes (2026-11-11): starts at 1. */
   nextNote?: number;
   nextEvent: number;
-  /** Cached review base: key identifies HEAD + uncommitted accepted items. */
-  base: { key: string; commit: string } | null;
+  /**
+   * Cached review base: key identifies HEAD + uncommitted accepted items. `missing`: accepted,
+   * uncommitted items it should hold but could not (absent when there are none).
+   */
+  base: { key: string; commit: string; missing?: { id: string; reason: string }[] } | null;
   /** The user's saved files as of their last *Share my edits*, on top of main at `head`. */
   /** The last *Share my edits*; `at` (since 0.6.1) tells which accepted items it already holds. */
   shared?: { head: string; tree: string; at?: string } | null;

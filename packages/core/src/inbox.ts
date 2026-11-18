@@ -8,7 +8,7 @@
  */
 import { open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { FEEDBACK_TYPES, type StetEvent } from "./model.js";
+import { FEEDBACK_TYPES, notifyMode, type StetEvent } from "./model.js";
 import { describeFeedback } from "./mcp.js";
 import { pathExists } from "./paths.js";
 import { appendInside, readInside } from "./safefs.js";
@@ -17,8 +17,12 @@ import { oneLine } from "./text.js";
 
 export const INBOX_FILE = ".stet/inbox";
 
-/** How often the writer looks for changes, and how often it checks fully anyway (the user's saved edits change no store file). */
-export const INBOX_TIMING = { poll: 3_000, full: 30_000 };
+/**
+ * How often the writer looks for changes; how often it checks fully anyway (the user's saved
+ * edits change no store file); and, for agents notified `batched`, how long the reviewer must
+ * have paused before news is written.
+ */
+export const INBOX_TIMING = { poll: 3_000, full: 30_000, quiet: 30_000 };
 
 export interface InboxLine {
   at: string;
@@ -37,8 +41,12 @@ export function parseInboxLine(line: string): InboxLine | null {
 /** Writes the inbox of one agent. `tick` checks once; `start` keeps checking until `stop`. */
 export class InboxWriter {
   private keys: Set<string> | null = null;
-  private signature = "";
+  private signature: string | null = null;
   private lastFull = 0;
+  /** When the store last changed (the reviewer, or the agent, did something). */
+  private lastActivity = 0;
+  /** A `batched` agent has news waiting for the reviewer to pause. */
+  private waiting = false;
   private running: Promise<InboxLine[]> | null = null;
   private timer: NodeJS.Timeout | null = null;
   private done = false;
@@ -96,6 +104,7 @@ export class InboxWriter {
       const s = await stat(join(store.root, f)).catch(() => null);
       return s ? `${s.size}:${s.mtimeMs}` : "-";
     };
+    const mode = notifyMode(agent);
     const signature = [
       await sizeOf("events.jsonl"),
       await sizeOf("state.json"),
@@ -103,10 +112,21 @@ export class InboxWriter {
       await repo.tryRun(["rev-parse", "-q", "--verify", `refs/heads/${cfg.mainBranch}`]),
       agent.baseCommit,
       agent.feedbackCursor,
+      mode,
     ].join("|");
     const now = Date.now();
-    if (!force && signature === this.signature && now - this.lastFull < INBOX_TIMING.full) return [];
+    const changed = signature !== this.signature;
+    if (changed && this.signature !== null) this.lastActivity = now; // the first look is no activity
     this.signature = signature;
+    // Off: nothing is written, so all of it arrives once notifications are on again.
+    if (mode === "off") return [];
+    if (!force && !changed && !this.waiting && now - this.lastFull < INBOX_TIMING.full) return [];
+    // Batched: wait until the reviewer has paused, then write everything at once.
+    if (!force && mode === "batched" && now - this.lastActivity < INBOX_TIMING.quiet) {
+      this.waiting = true;
+      return [];
+    }
+    this.waiting = false;
     this.lastFull = now;
 
     const status = await this.stet.agentStatus(this.agentId);

@@ -221,6 +221,31 @@ exports.run = async function run() {
       !errors.length && statusOf(fx.items[1]) === "accepted" && statusOf(fx.items[2]) === "accepted",
       JSON.stringify({ errors, a: statusOf(fx.items[1]), b: statusOf(fx.items[2]) }),
     );
+
+    // Undo from the panel: the accept is taken out of the file again and the change is pending.
+    const undoBefore = readFileSync(join(fx.repo, "main.tex"), "utf8");
+    await vscode.commands.executeCommand("stet.undo", fx.items[0]);
+    const undoAfter = await until("undo", async () => (statusOf(fx.items[0]) === "pending" ? readFileSync(join(fx.repo, "main.tex"), "utf8") : null), 5000).catch(() => null);
+    check(
+      "undo takes an accepted change out of the file",
+      undoAfter !== null && undoBefore.includes("the task of reviewing") && !undoAfter.includes("the task of reviewing"),
+      JSON.stringify({ status: statusOf(fx.items[0]) }),
+    );
+
+    // View options switch settings from the panel.
+    const stetConf = () => vscode.workspace.getConfiguration("stet");
+    const inlineBefore = stetConf().get("inlineChanges");
+    await vscode.commands.executeCommand("stet.toggleInlineChanges");
+    const flipped = stetConf().get("inlineChanges");
+    await vscode.commands.executeCommand("stet.toggleInlineChanges");
+    await vscode.commands.executeCommand("stet.longChanges.hover");
+    const long = stetConf().get("longChanges");
+    await vscode.commands.executeCommand("stet.longChanges.collapsed");
+    check("view options switch settings", flipped === !inlineBefore && stetConf().get("inlineChanges") === inlineBefore && long === "hover", JSON.stringify({ inline: inlineBefore, flipped, long }));
+
+    const allCommands = await vscode.commands.getCommands(true);
+    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved"];
+    check("new commands are registered", wanted.every((c) => allCommands.includes(c)), JSON.stringify(wanted.filter((c) => !allCommands.includes(c))));
   } catch (e) {
     check("no exception", false, e && e.stack);
   }

@@ -2,7 +2,8 @@ import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "no
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkToolUse } from "../src/guard.js";
-import { findInbox, followInbox, InboxWriter, INBOX_FILE, parseInboxLine } from "../src/inbox.js";
+import { findInbox, followInbox, InboxWriter, INBOX_FILE, INBOX_TIMING, parseInboxLine } from "../src/inbox.js";
+import { notifyMode } from "../src/model.js";
 import { PassThrough } from "node:stream";
 import { serveStdio, StetMcpServer } from "../src/mcp.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
@@ -18,6 +19,7 @@ describe("agent inbox", () => {
   it("gets one line per feedback event, waiting note and needed sync, once each", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
     const a = await stet.newAgent("a");
+    await stet.setNotify("a", "now");
     expect(read(a.worktree, INBOX_FILE)).toBe(""); // created with the workspace, so watchers can start at once
     const w = new InboxWriter(stet, "a");
     expect(await w.tick()).toEqual([]);
@@ -85,6 +87,7 @@ describe("agent inbox", () => {
   it("does not write through a link the agent planted", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
     const a = await stet.newAgent("a");
+    await stet.setNotify("a", "now");
     const target = join(repo, "victim.txt");
     writeFileSync(target, "original\n");
     try {
@@ -116,6 +119,45 @@ describe("agent inbox", () => {
   });
 });
 
+describe("notification modes", () => {
+  it("batched (the default) waits until the reviewer pauses, then writes everything at once", async () => {
+    const quiet = INBOX_TIMING.quiet;
+    INBOX_TIMING.quiet = 300;
+    try {
+      const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+      const a = await stet.newAgent("a");
+      expect(notifyMode(a)).toBe("batched");
+      const w = new InboxWriter(stet, "a");
+      await w.tick();
+      edit(a.worktree, "main.tex", "the problem", "the task");
+      edit(a.worktree, "main.tex", "$a+b=c$", "$a+b=d$");
+      const { items } = await stet.submit("a", { title: "t" });
+      await stet.reject([items[0]!.id]);
+      expect(await w.tick()).toEqual([]); // the reviewer is still at it
+      await stet.reject([items[1]!.id]);
+      expect(await w.tick()).toEqual([]);
+      await new Promise((r) => setTimeout(r, 350));
+      expect((await w.tick()).map((l) => l.key)).toEqual([expect.stringMatching(/^feedback#/), expect.stringMatching(/^feedback#/)]);
+    } finally {
+      INBOX_TIMING.quiet = quiet;
+    }
+  });
+
+  it("off writes nothing; switched on again, what arrived meanwhile is written", async () => {
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    expect(await stet.setNotify("a", "off")).toBe(true);
+    expect(await stet.setNotify("a", "off")).toBe(false);
+    const w = new InboxWriter(stet, "a");
+    await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Shorter.");
+    expect(await w.tick(true)).toEqual([]);
+    expect(read(a.worktree, INBOX_FILE)).toBe("");
+    await stet.setNotify("a", "now");
+    expect((await w.tick()).map((l) => l.key)).toEqual(["note:N1"]);
+    await expect(stet.setNotify("a", "loud" as any)).rejects.toThrow(/Unknown notification mode/);
+  });
+});
+
 describe("stet watch", () => {
   it("is allowed by the guard exactly as the instructions give it", async () => {
     const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
@@ -140,6 +182,7 @@ describe("stet watch", () => {
   it("follows the inbox from now on; --once ends after the first batch", async () => {
     const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
     const a = await stet.newAgent("a");
+    await stet.setNotify("a", "now");
     const w = new InboxWriter(stet, "a");
     await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Old news.");
     await w.tick();
