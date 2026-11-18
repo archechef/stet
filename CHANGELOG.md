@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-11-18
 
 - **Undo in the History:** the new ↶ button (or `stet undo <id>`) undoes a rejection, or an accept until you finish the review. The change is pending again, an undone accept is taken out of your file, and changes the accept had made stale are pending again too. Changes decided together (a linked group, a move) are undone together, and the agent is told.
 - **Notifications per agent:** the bell next to an agent (or `stet agent notify <name>`) chooses when an agent waiting with `stet watch` is woken. *When I pause* (the new default) waits until you have stopped for half a minute, so the agent hears about a review at once instead of after every click. *Right away* is the behaviour of 0.8.0. *Off* doesn't wake it at all; switching back on delivers what arrived meanwhile.
