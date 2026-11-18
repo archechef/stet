@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 — 2026-11-18
 
 - **Fix: Windows build of 0.8.0.** The release build of 0.8.0 failed on Windows: when an agent's Stet tools stopped, the inbox writer could still be busy in the agent's workspace, so it couldn't be removed right away. Stopping now waits for it. 0.8.1 contains all changes of 0.8.0.
 
