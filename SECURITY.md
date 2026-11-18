@@ -19,6 +19,7 @@ Stet's promise: **an AI agent never changes your project without your approval.*
   - edits outside the workspace;
   - writes into the git folder;
   - git commands that bypass review, such as merge, push, branch switching, `git config` and remote changes.
+  - changes to the files Stet manages in the workspace, including the inbox `.stet/inbox`. The one command naming the project's git folder that the guard allows is the workspace's own `stet watch` command exactly as its instructions give it, with no other arguments or shell operators: it only reads the inbox inside the workspace.
 - **Git hooks in your project:** `reference-transaction` and `pre-push` refuse to bring agent commits into the main branch or push agent branches.
 - **Stet's own checks** (these hold even if the guard is bypassed):
   - Agent files are handled through your project's repository, with Stet's own index. Stet never uses the agent worktree's git link, config or index, so swapping them has no effect.

@@ -7,7 +7,7 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isInside } from "./paths.js";
-import { WORKSPACE_FILES } from "./workspace.js";
+import { WORKSPACE_FILES, type CliCommand } from "./workspace.js";
 
 export { isInside };
 
@@ -20,6 +20,8 @@ export interface GuardContext {
   commonDir: string;
   /** Extra writable locations (temp dirs, scratchpads). */
   writable?: string[];
+  /** How the workspace runs the Stet CLI; `<cli> watch` is allowed although it names the project's git dir. */
+  cli?: CliCommand;
 }
 
 export interface HookInput {
@@ -85,8 +87,35 @@ function isOwnFile(rel: string): boolean {
   const r = fold(rel);
   return (
     WORKSPACE_FILES.some((f) => fold(f) === r) ||
-    [".claude", ".codex", ".git"].some((d) => r === d || r.startsWith(d + "/"))
+    [".claude", ".codex", ".git", ".stet"].some((d) => r === d || r.startsWith(d + "/"))
   );
+}
+
+const unquote = (t: string) => t.replace(/^["']|["']$/g, "");
+
+/**
+ * Whether `cmd` is exactly the workspace's Stet CLI running `watch` (only reads the inbox): its
+ * environment, runtime and script, then `watch` and its flags. Nothing else may follow, so it
+ * cannot carry another command into the project folder.
+ */
+function isStetWatch(cmd: string, cli: CliCommand | undefined, cwd: string): boolean {
+  if (!cli || /[;&|<>`$()\r\n]/.test(cmd)) return false;
+  const tokens = (cmd.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map(unquote);
+  let i = 0;
+  for (; i < tokens.length && /^[A-Za-z_]\w*=/.test(tokens[i]!); i++) {
+    const [k, ...v] = tokens[i]!.split("=");
+    if (cli.env?.[k!] !== unquote(v.join("="))) return false;
+  }
+  for (const want of [cli.command, ...cli.args]) {
+    const t = tokens[i++];
+    if (!t) return false;
+    try {
+      if (abs(t, cwd) !== real(want)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return tokens[i] === "watch" && tokens.slice(i + 1).every((t) => t === "--once" || t === "--json");
 }
 
 /** Returns a reason to block, or null to allow. */
@@ -137,6 +166,8 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
     if (GIT_CONFIG_WRITE.test(cmd)) return gitMsg("changing git config (it is shared with the reviewer's project)") + " Reading it with `git config --get <key>` is fine.";
     if (GIT_REMOTE_WRITE.test(cmd)) return gitMsg("changing git remotes");
 
+    if (isStetWatch(cmd, shown.cli, cwd)) return null;
+
     // Paths mentioned in the command that lead into the user's project.
     const tokens = cmd.match(/"[^"]*"|'[^']*'|[^\s;&|<>()]+/g) ?? [];
     const pathLike = tokens.map((t) => t.replace(/^["']|["']$/g, "")).filter((t) => /[\\/]/.test(t) && !/^https?:/.test(t));
@@ -161,7 +192,7 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
     // Stet's own workspace files (settings, MCP config, instructions) may be read but not changed.
     // Match the names anywhere, including inside quoted code such as python -c "open('.claude/…')".
     // The worktree's `.git` file links it to the repository; changing it would redirect Stet's git calls.
-    const names = cmd.match(/[\w:.\/\\~-]*?(?:\.claude|\.codex|CLAUDE\.local\.md|AGENTS\.override\.md|\.mcp\.json|\.git\b)[\w.\/\\-]*/gi) ?? [];
+    const names = cmd.match(/[\w:.\/\\~-]*?(?:\.claude|\.codex|\.stet|CLAUDE\.local\.md|AGENTS\.override\.md|\.mcp\.json|\.git\b)[\w.\/\\-]*/gi) ?? [];
     const touchesOwn = names.some((t) => {
       try {
         const p = abs(t, cwd);

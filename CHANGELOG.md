@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Agents are told when something arrives, instead of polling:** while an agent's session runs, the Stet MCP server writes a line to `.stet/inbox` in its workspace for each decision, comment, note, needed sync, or archiving. The new agent-side command `stet watch` waits for these lines and prints them (`--once`: exits after the first ones), so an agent can wait for you in the background. It is read-only, works in the sandbox, and the guard allows the workspace's own `stet watch` command. Every Stet tool result also mentions unread feedback, waiting notes and a needed sync. Run **Refresh** (or `stet agent refresh <name>`) to give existing agents the new instructions.
+- **Fix: accepted changes missing from agents' copies.** An accepted change right next to another accepted one (a sentence rewritten up to the line break that the next change removes) could not be located on top of your commit or shared edits, and was left out of what agents sync onto. Re-proposing it then failed with "could not be applied". Stet now locates such a change with its accepted neighbours.
+- **Fix: changes right next to each other.** Accepting a change after its neighbour failed with "the surrounding text changed", and a sync marked it stale. `stet_group` refused to merge such changes into an atomic group when one of them crossed a paragraph break itself; only the text between them counts now.
+- **Fix: a failed accept no longer blocks a change for good.** If accepting fails and you then reject the change, the rejection doesn't count when Stet looks for repeats, and the agent is told to propose it again against the current text instead of never again.
+- **Fix: a reworded sentence is kept together** when a piece of it repeats a change you rejected. Before, only that piece was auto-rejected, and accepting the rest would have left a broken sentence.
+- **Fix: several insertions at one spot** (entries appended to a `.bib` file, paragraphs added at the end of a section) no longer go stale at every sync, and keep their order when you accept them one at a time.
+
 ## 0.7.3 — 2026-11-17
 
 - **Fix: projects inside a git submodule.** Stet took the submodule's git directory (`.git/modules/<name>` in the parent repository) for the project folder. VS Code then treated the project as an agent workspace and never offered **New agent workspace** after setup, and agent workspaces were placed inside the parent's `.git`. Stet now uses the submodule's folder.

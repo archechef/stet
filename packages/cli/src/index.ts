@@ -38,6 +38,8 @@ import {
   type NoteHint,
   type StetEvent,
   describeNote,
+  findInbox,
+  followInbox,
   isNoteId,
   type Note,
 } from "@stet/core";
@@ -80,6 +82,8 @@ Agent side (run inside an agent workspace, or pass --agent <name>):
   stet list [--status <s>]
   stet reply <12.3|N3> -m <text>
   stet withdraw <12.3>... [-m <reason>]
+  stet watch [--once]                   wait for the reviewer: print a line whenever something arrives
+                                        (feedback, a note, a sync needed); --once exits after the first
 
 Internal (called by agents' tools):
   stet mcp                              MCP server over stdio
@@ -113,6 +117,7 @@ const { values: opt, positionals: pos } = parseArgs({
     parts: { type: "string" },
     notes: { type: "string" },
     peek: { type: "boolean" },
+    once: { type: "boolean" },
     print: { type: "boolean" },
   },
 });
@@ -238,12 +243,24 @@ async function guard(): Promise<void> {
     const cfg = await stet.config();
     const branch = await new Repo(toplevel).tryRun(["symbolic-ref", "--short", "HEAD"]);
     if (!branch?.startsWith(cfg.agentBranchPrefix)) return; // not an agent workspace
-    const reason = checkToolUse(input, { worktree: toplevel, mainPath, commonDir });
+    const reason = checkToolUse(input, { worktree: toplevel, mainPath, commonDir, ...(cfg.cli ? { cli: cfg.cli } : {}) });
     if (reason) block(reason);
   } catch (e: any) {
     // Never block on internal errors, but say so (non-blocking hook error).
     process.stderr.write(`stet guard: ${e?.message ?? e}\n`);
     process.exitCode = 1;
+  }
+}
+
+/** `stet watch`: follow the workspace's inbox, which the Stet MCP server writes. */
+async function watch(cwd: string): Promise<void> {
+  const inbox = await findInbox(cwd);
+  if (!inbox) throw new StetError("Run `stet watch` inside an agent workspace.");
+  if (!existsSync(inbox)) {
+    process.stderr.write(`stet watch: ${inbox} does not exist yet. Lines are written while the agent's Stet tools (MCP server) are connected.\n`);
+  }
+  for await (const line of followInbox(inbox, { once: !!opt.once })) {
+    console.log(opt.json ? JSON.stringify(line) : `${line.key}: ${line.text}`);
   }
 }
 
@@ -296,6 +313,9 @@ async function main() {
   }
 
   if (cmd === "guard") return guard();
+
+  // Agent side, and read-only: it runs inside the agent's sandbox, where Stet's store is read-only.
+  if (cmd === "watch") return watch(cwd);
 
   if (cmd === "mcp") {
     const server = new StetMcpServer({

@@ -1,6 +1,6 @@
 /** Applying items to a set of files (working copy or git tree). */
-import { anchor, type Span } from "./anchor.js";
-import type { Item } from "./model.js";
+import { anchorNear, type Neighbour, type Span } from "./anchor.js";
+import { compareItemIds as compareIds, type Item } from "./model.js";
 import type { Eol } from "./text.js";
 
 export interface TextFile {
@@ -28,6 +28,8 @@ export interface ApplyOptions {
   refText(item: Item): Promise<string | undefined>;
   /** Replacement texts that override `newText` (edited accepts). */
   overrides?: Map<string, string>;
+  /** Changes accepted from the item's base, to locate it when they changed its surroundings. */
+  neighbours?(item: Item): Promise<Neighbour[]>;
 }
 
 /** Locate every item in `view`. Items that can't be located are reported as failed. */
@@ -50,11 +52,43 @@ export async function locate(items: Item[], view: FileView, opts: ApplyOptions) 
       failed.push({ item, reason: `${item.file} no longer exists` });
       continue;
     }
-    const span = anchor(item, f.text, await opts.refText(item));
+    const span = anchorNear(item, f.text, await opts.refText(item), opts.neighbours ? await opts.neighbours(item) : []);
     if (span) located.push({ item, span });
     else failed.push({ item, reason: "the surrounding text changed; the change can't be located" });
   }
+  keepInsertionOrder(located);
   return { located, failed };
+}
+
+/**
+ * Whether two changes compete for the same text: like `overlaps`, except that insertions at one
+ * spot don't (they go in one after the other, such as entries appended to a .bib file).
+ */
+export function conflicts(a: Span, b: Span): boolean {
+  if (a.start === a.end && b.start === b.end) return false;
+  return overlaps(a, b) || (a.start === b.start && a.end === b.end);
+}
+
+/**
+ * Insertions made at one spot (same file, base and offset) keep their order: a later one (in item
+ * order) never lands before an earlier one, which may have found its place after text that is
+ * new in the target. Changes the spans in `located` in place.
+ */
+function keepInsertionOrder(located: { item: Item; span: Span }[]): void {
+  const spots = new Map<string, { item: Item; span: Span }[]>();
+  for (const l of located) {
+    const it = l.item;
+    if (it.kind !== "modify" || it.oldText !== "" || l.span.start !== l.span.end) continue;
+    const key = `${it.file}\0${it.baseCommit}\0${it.range.start}`;
+    spots.set(key, [...(spots.get(key) ?? []), l]);
+  }
+  for (const list of spots.values()) {
+    list.sort((a, b) => compareIds(a.item.id, b.item.id));
+    for (let k = 1; k < list.length; k++) {
+      const at = Math.max(list[k]!.span.start, list[k - 1]!.span.start);
+      list[k]!.span = { start: at, end: at };
+    }
+  }
 }
 
 export function overlaps(a: Span, b: Span): boolean {
@@ -133,10 +167,13 @@ export async function applyItems(items: Item[], view: FileView, opts: ApplyOptio
       for (const { item } of list) failed.push({ item, reason: `${path} no longer exists` });
       continue;
     }
-    list.sort((a, b) => a.span.start - b.span.start || a.item.id.localeCompare(b.item.id));
+    // At one offset, insertions come before a change starting there, and in item order: applied
+    // from the end backwards, they then end up in that order, ahead of the change.
+    const empty = (s: Span) => (s.start === s.end ? 0 : 1);
+    list.sort((a, b) => a.span.start - b.span.start || empty(a.span) - empty(b.span) || compareIds(a.item.id, b.item.id));
     const kept: typeof list = [];
     for (const l of list) {
-      const clash = kept.find((k) => overlaps(k.span, l.span) || (k.span.start === l.span.start && k.span.end === l.span.end));
+      const clash = kept.find((k) => conflicts(k.span, l.span));
       if (clash) failed.push({ item: l.item, reason: `overlaps ${clash.item.id}` });
       else kept.push(l);
     }

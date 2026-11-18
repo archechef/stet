@@ -25,6 +25,7 @@ Create a workspace with **Stet: New agent workspace** in VS Code, or `stet agent
 | `.mcp.json` | Claude | The Stet tools (MCP server), pre-approved. |
 | `.codex/config.toml` | Codex | The Stet tools, and `sandbox_mode = "workspace-write"`. |
 | `.claude/settings.json` | Claude | Guardrails: blocked edits and commands, the `stet guard` hook, and on macOS/Linux/WSL2 the Bash sandbox. |
+| `.stet/inbox` | both | One line per thing that arrived for the agent (feedback, a note, a sync needed). Written by the Stet MCP server, read by `stet watch` (§4). |
 
 **The working rules** tell the agent:
 - to edit only inside the workspace, keep changes minimal, and not reflow text;
@@ -77,6 +78,14 @@ The agent edits, then submits by itself. Some tips:
 | `stet_reply` | Answers your comments and notes. |
 | `stet_withdraw` | Withdraws proposals it no longer believes in. |
 | `stet_group`, `stet_ungroup` | Fixes how its changes are grouped. |
+
+Every other tool's result also ends with a line when something arrived meanwhile: unread feedback, notes waiting, a sync needed.
+
+**Waiting for you without polling:** while the agent's session runs, the Stet MCP server appends a line to `.stet/inbox` in the workspace for each thing that arrives: a decision or comment, a note, a sync needed after you commit or share, the workspace archived. It checks every few seconds, and at least every 30 seconds for saved edits you share. The agent's instructions give it the command to wait for these lines, `stet watch`, to run in the background:
+- With a runtime that wakes the agent when a background command prints (such as Claude Code's monitor), it runs `stet watch` and reacts to each line.
+- With one that wakes it when a background command ends, it runs `stet watch --once`, which exits after the first lines, and starts it again after acting.
+
+`stet watch` only reads the inbox, so it works inside the sandbox, and the guard allows it although its path is inside your project's `.git` folder. `tail -n 0 -f .stet/inbox` works too. An agent that is woken this way starts working and using tokens without you prompting it: tell it not to watch if you'd rather it waited for you.
 
 **Grouping:**
 - `linked` groups can only be accepted together. Agents are told to use them wherever accepting only part would break the document: label and reference renames, a macro and its uses, citation keys.

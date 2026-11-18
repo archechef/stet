@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { applyItems, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
-import { anchor, captureContext, type Span } from "./anchor.js";
+import { applyItems, conflicts, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
+import { anchor, anchorNear, captureContext, chainInsertions, type Neighbour, type Span } from "./anchor.js";
 import { matchesAny, validateConfig, type StetConfig } from "./config.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import {
@@ -60,6 +60,9 @@ import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normali
 export { StetError };
 
 export const BASE_REF = "refs/stet/base";
+/** Text between two changes that ends a sentence or a paragraph. */
+const SENTENCE_BREAK = /[.!?]["')\]}]*\s|\n[ \t]*\n/;
+
 const now = () => new Date().toISOString();
 const hashOf = (b: Buffer | null) => (b === null ? null : createHash("sha256").update(b).digest("hex"));
 /** When the user (last) accepted an item; "" if unknown. */
@@ -265,6 +268,17 @@ export class Stet {
   }
 
   private refText = async (item: Item) => (await this.textAt(item.baseCommit, item.oldFile ?? item.file))?.text;
+
+  /** Text changes accepted from the same base as `item` in its file (see `anchorNear`). */
+  private neighbours = async (item: Item): Promise<Neighbour[]> =>
+    (await this.store.items())
+      .filter((i) => i.id !== item.id && i.status === "accepted" && i.resolution && i.kind === "modify" && i.file === item.file && i.baseCommit === item.baseCommit)
+      .map((i) => ({ range: i.range, oldText: i.oldText, text: i.resolution!.appliedText }));
+
+  /** Where `item` is in `text` (its file's current text somewhere). */
+  private async anchorItem(item: Item, text: string): Promise<Span | null> {
+    return anchorNear(item, text, await this.refText(item), await this.neighbours(item));
+  }
 
   private async changesToCommitMap(changes: Map<string, FileChange>): Promise<Map<string, string | Buffer | null>> {
     const out = new Map<string, string | Buffer | null>();
@@ -486,7 +500,8 @@ export class Stet {
           continue;
         }
         const f = await sview.read(it.file);
-        if (f && anchor({ ...it, newText: it.resolution!.appliedText }, f.text, await this.refText(it))) toApply.push(it);
+        // With its accepted neighbours: one right next to it changed its surroundings (bug report 2026-11-18).
+        if (f && anchorNear({ ...it, newText: it.resolution!.appliedText }, f.text, await this.refText(it), await this.neighbours(it))) toApply.push(it);
       }
     }
     const key = head + ":" + (shared ?? "") + ":" + toApply.map((i) => i.id).join(",");
@@ -499,6 +514,7 @@ export class Stet {
       const from = shared ?? head;
       const res = await applyItems(toApply, this.treeView(from), {
         refText: this.refText,
+        neighbours: this.neighbours,
         overrides: new Map(toApply.map((i) => [i.id, i.resolution!.appliedText])),
       });
       const what = [
@@ -1033,6 +1049,40 @@ export class Stet {
       (merged as any).note = h.rationale ? `${h.title}: ${h.rationale}` : h.title;
     }
 
+    // A reworded sentence with a piece that repeats an earlier rejection: keep that sentence's
+    // changes together as one item. Auto-rejecting only the piece left the rest a broken
+    // sentence, which accepting would have put into the document (bug report 2026-11-18).
+    const rejectedFps = new Set(allItems.filter((i) => i.status === "rejected" && !i.acceptFailed).map((i) => i.fingerprint));
+    const repeats = (c: Candidate) => rejectedFps.has(this.fingerprint(c));
+    for (const file of new Set(fresh.filter((c) => c.kind === "modify" && repeats(c)).map((c) => c.file))) {
+      const list = fresh.filter((c) => c.kind === "modify" && c.file === file).sort((a, b) => a.start - b.start);
+      const baseText = (await this.textAt(base, file))!.text;
+      const tipText = (await this.textAt(tip, file))!.text;
+      // Runs of changes with no sentence end, paragraph break or other (unchanged) item between them.
+      const runs: Candidate[][] = [];
+      for (const c of list) {
+        const run = runs[runs.length - 1];
+        const prev = run?.[run.length - 1];
+        const between = (o: Candidate) => o.file === file && !fresh.includes(o) && o.start >= prev!.end && o.end <= c.start;
+        if (prev && !SENTENCE_BREAK.test(baseText.slice(prev.end, c.start)) && !cands.some(between)) run.push(c);
+        else runs.push([c]);
+      }
+      for (const run of runs) {
+        if (run.length < 2 || !run.some(repeats) || run.some((c) => isKeyEdit(c.oldText, c.newText) || (c as any).note)) continue;
+        const first = run[0]!;
+        const last = run[run.length - 1]!;
+        const merged: Candidate = {
+          file, kind: "modify", start: first.start, end: last.end, newStart: first.newStart, newEnd: last.newEnd,
+          oldText: baseText.slice(first.start, last.end), newText: tipText.slice(first.newStart, last.newEnd),
+        };
+        fresh.splice(fresh.indexOf(first), 1, merged);
+        for (const c of run.slice(1)) fresh.splice(fresh.indexOf(c), 1);
+        result.warnings.push(
+          `Kept ${run.length} changes to one sentence of ${file} together as one item: part of it repeats a change the reviewer rejected earlier.`,
+        );
+      }
+    }
+
     // Existing items that disappeared: superseded (if replaced) or withdrawn.
     const stillThere = new Set(matched.values());
     const replacedBy = new Map<Item, Candidate>();
@@ -1053,7 +1103,8 @@ export class Stet {
     }
 
     // Create items.
-    const rejected = new Map(allItems.filter((i) => i.status === "rejected").map((i) => [i.fingerprint, i]));
+    // A rejection right after a failed accept is about applying, not the change: it doesn't count.
+    const rejected = new Map(allItems.filter((i) => i.status === "rejected" && !i.acceptFailed).map((i) => [i.fingerprint, i]));
     const [csId] = await this.store.allocate("changeset");
     // Changes are numbered within their round (submission): 12.1, 12.2, …
     const ids = fresh.map((_, k) => itemId(csId!, k + 1));
@@ -1096,6 +1147,7 @@ export class Stet {
       candOf.set(item, c);
       itemOf.set(c, item);
     }
+    chainInsertions(created, compareItemIds);
     const inherited: { from: Item; to: Item }[] = [];
     for (const [e, c] of replacedBy) {
       const item = created[fresh.indexOf(c)]!;
@@ -1266,7 +1318,7 @@ export class Stet {
       }
       const base = await this.ensureBase();
       const live = (await this.store.items()).filter((i) => i.agent === agentId && isLive(i.status));
-      const res = await applyItems(live, this.treeView(base), { refText: this.refText });
+      const res = await applyItems(live, this.treeView(base), { refText: this.refText, neighbours: this.neighbours });
       const stale: Item[] = [];
       const baseTexts = new Map<string, string>();
       for (const { item, reason } of res.failed) {
@@ -1281,8 +1333,9 @@ export class Stet {
           item.context = captureContext(bt, span.start, span.end);
         }
         item.baseCommit = base;
-        await this.store.putItem(item);
       }
+      chainInsertions(res.applied.map((a) => a.item), compareItemIds);
+      for (const { item } of res.applied) await this.store.putItem(item);
       const commit = res.changes.size
         ? await this.repo.buildCommit({
             parents: [base],
@@ -1436,14 +1489,14 @@ export class Stet {
   async locateInWorkingCopy(item: Item): Promise<{ line: number; span: Span | null }> {
     if (item.kind !== "modify") return { line: 1, span: null };
     const f = await this.workingView().read(item.file);
-    const span = f ? anchor(item, f.text, await this.refText(item)) : null;
+    const span = f ? await this.anchorItem(item, f.text) : null;
     return { line: span && f ? lineOf(f.text, span.start) : await this.itemLine(item), span };
   }
 
   /** Where an item's old text sits in `text` (LF line endings), e.g. an editor buffer with unsaved edits. */
   async locateInText(item: Item, text: string): Promise<Span | null> {
     if (item.kind !== "modify") return null;
-    return anchor(item, text, await this.refText(item));
+    return this.anchorItem(item, text);
   }
 
   /** Accepted items whose changes are in the working copy but not yet committed. */
@@ -1603,8 +1656,13 @@ export class Stet {
       if (wantCommit) for (const f of files) if ((await this.repo.status([f])).length) dirtyBefore.add(f);
 
       const overrides = new Map(Object.entries(opts.edited ?? {}).map(([k, v]) => [k.toUpperCase(), toLf(v)]));
-      const res = await applyItems(items, view, { refText: this.refText, overrides });
+      const res = await applyItems(items, view, { refText: this.refText, overrides, neighbours: this.neighbours });
       if (res.failed.length) {
+        // Remembered, so rejecting such an item afterwards doesn't block the change for good.
+        for (const f of res.failed) {
+          f.item.acceptFailed = { at: now(), reason: f.reason };
+          await this.store.putItem(f.item);
+        }
         throw new StetError(
           "Nothing was applied, because some items could not be applied:\n" +
             res.failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n"),
@@ -1615,11 +1673,11 @@ export class Stet {
       const stale: Item[] = [];
       const acceptedIds = new Set(items.map((i) => i.id));
       const others = (await this.store.items()).filter((i) => isLive(i.status) && !acceptedIds.has(i.id) && files.has(i.file));
-      const spans = new Map((await locate(others, view, { refText: this.refText })).located.map((l) => [l.item.id, l.span]));
+      const spans = new Map((await locate(others, view, { refText: this.refText, neighbours: this.neighbours })).located.map((l) => [l.item.id, l.span]));
       for (const o of others) {
         const span = spans.get(o.id);
         const hit = res.applied.find(
-          (a) => a.item.file === o.file && (o.kind !== "modify" || a.item.kind !== "modify" || (span && overlaps(span, a.span))),
+          (a) => a.item.file === o.file && (o.kind !== "modify" || a.item.kind !== "modify" || (span && conflicts(span, a.span))),
         );
         if (hit) stale.push(o);
       }
@@ -1638,6 +1696,7 @@ export class Stet {
       for (const a of res.applied) {
         const edited = editedOf(a);
         this.setStatus(a.item, "accepted", "user");
+        delete a.item.acceptFailed;
         a.item.resolution = { appliedText: appliedText(a), edited, committed: null, headBlob: headBlobs.get(a.item.file) ?? null };
         await this.store.putItem(a.item);
         await this.store.appendEvent({
@@ -1720,7 +1779,11 @@ export class Stet {
         await this.store.putItem(it);
         await this.store.appendEvent({
           type: "rejected", agent: it.agent, items: [it.id],
-          data: { item: await this.describe(it), ...(opts.reason ? { reason: opts.reason } : {}) },
+          data: {
+            item: await this.describe(it),
+            ...(opts.reason ? { reason: opts.reason } : {}),
+            ...(it.acceptFailed ? { acceptFailed: it.acceptFailed.reason } : {}),
+          },
         });
       }
       if (opts.mode === "revise-rest") {
@@ -1851,7 +1914,10 @@ export class Stet {
     const bt = (await this.refText(first)) ?? "";
     const start = sorted[0]!.range.start;
     const end = sorted[sorted.length - 1]!.range.end;
-    if (/\n[ \t]*\n/.test(bt.slice(start, end))) throw new StetError("Atomic groups must stay within one paragraph; use a linked group instead.");
+    // Only the text between the edits counts: an edit that itself crosses a paragraph break is one
+    // item already, and merging it with an edit right next to it splits nothing that was together.
+    if (sorted.some((it, k) => k > 0 && /\n[ \t]*\n/.test(bt.slice(sorted[k - 1]!.range.end, it.range.start))))
+      throw new StetError("Atomic groups must stay within one paragraph; use a linked group instead.");
     let newText = "";
     let pos = start;
     for (const it of sorted) {

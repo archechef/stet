@@ -1,5 +1,5 @@
 /** Files Stet writes into agent workspaces: instructions, MCP config, guardrails (spec §9, §10). */
-import { readInside, writeInside } from "./safefs.js";
+import { appendInside, readInside, writeInside } from "./safefs.js";
 import { shQuote } from "./text.js";
 import { Repo } from "./git.js";
 import { agentInstructions, STET_MARKER } from "./instructions.js";
@@ -21,6 +21,7 @@ export const WORKSPACE_FILES = [
   ".claude/settings.json",
   ".claude/settings.local.json",
   ".codex/config.toml",
+  ".stet/inbox",
 ] as const;
 
 export function isWorkspaceFile(path: string): boolean {
@@ -54,14 +55,21 @@ export interface WorkspaceContext {
   platform?: NodeJS.Platform;
 }
 
+/**
+ * A shell command running the Stet CLI with `sub` (POSIX shell: Git Bash on Windows too, so
+ * `VAR=value cmd` works everywhere). Single quotes: a folder name containing `$(…)` or backticks
+ * must not be run by the shell.
+ */
+export function cliShellCommand(cli: CliCommand, sub: string, env: Record<string, string> = {}): string {
+  const all = { ...cli.env, ...env };
+  const envPrefix = Object.entries(all).map(([k, v]) => `${k}=${shQuote(v)} `).join("");
+  return envPrefix + [cli.command, ...cli.args].map((a) => shQuote(fwd(a))).join(" ") + " " + sub;
+}
+
 function claudeSettings(ctx: WorkspaceContext): object {
   const { cli, mainPath, gitDir } = ctx;
-  // Hook commands run in a POSIX shell (Git Bash on Windows), so `VAR=value cmd` works everywhere.
   // STET_PROJECT/STET_AGENT let the guard explain an archived workspace even after its folder is gone.
-  const env = { ...cli.env, STET_PROJECT: fwd(mainPath), STET_AGENT: ctx.agent.id };
-  // Single quotes: a folder name containing `$(…)` or backticks must not be run by the shell.
-  const envPrefix = Object.entries(env).map(([k, v]) => `${k}=${shQuote(v)} `).join("");
-  const hookCmd = envPrefix + [cli.command, ...cli.args].map((a) => shQuote(fwd(a))).join(" ") + " guard";
+  const hookCmd = cliShellCommand(cli, "guard", { STET_PROJECT: fwd(mainPath), STET_AGENT: ctx.agent.id });
   const main = claudeAbsPath(mainPath);
   const settings: Record<string, unknown> = {
     permissions: {
@@ -145,7 +153,7 @@ export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<Worksp
     return true;
   };
 
-  const instructions = agentInstructions(ctx.agent.id);
+  const instructions = agentInstructions(ctx.agent.id, cliShellCommand(ctx.cli, "watch"));
   await put("CLAUDE.local.md", instructions);
 
   // Codex reads AGENTS.override.md *instead of* AGENTS.md: carry the project's own instructions over.
@@ -158,5 +166,8 @@ export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<Worksp
   if (!(await put(".claude/settings.json", settings))) await put(".claude/settings.local.json", settings);
 
   await put(".codex/config.toml", codexConfig(ctx));
+
+  // The inbox is appended to, never replaced: a running `stet watch` or `tail -f` keeps following it.
+  if (!tracked.has(".stet/inbox")) await appendInside(ctx.agent.worktree, ".stet/inbox", "");
   return result;
 }

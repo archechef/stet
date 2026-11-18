@@ -3,7 +3,8 @@
  * Lexical path checks are not enough: `alias/new.tex` is harmless as text but may lead
  * elsewhere if `alias` is a link. Like git, Stet does not write beyond a link.
  */
-import { lstat, mkdir, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { isInside, samePath } from "./paths.js";
 
@@ -104,6 +105,27 @@ export async function writeInside(root: string, rel: string, data: string | Buff
   const t = await inspect(root, rel, { replaceLinks: true });
   await prepare(root, t);
   await replaceFile(t.path, data);
+}
+
+/**
+ * Append to a file below `root` (created if missing), never through a link: a link on the way or
+ * in the file's place is replaced. Appending keeps the file's identity, so a reader following it
+ * (`tail -f`) sees the new lines.
+ */
+export async function appendInside(root: string, rel: string, data: string): Promise<void> {
+  const t = await inspect(root, rel, { replaceLinks: true });
+  await prepare(root, t);
+  const st = await lstatOrNull(t.path);
+  if (st?.isSymbolicLink()) await removeLink(t.path);
+  // O_NOFOLLOW closes the gap between the check and the open where the platform has it.
+  const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0);
+  const fh = await open(t.path, flags, 0o644);
+  try {
+    if (!(await fh.stat()).isFile()) throw new UnsafePathError(`${rel} is not a regular file`);
+    if (data) await fh.appendFile(data, "utf8");
+  } finally {
+    await fh.close();
+  }
 }
 
 /** Read a file below `root`, or null if it is missing or reached through a link. */

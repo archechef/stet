@@ -135,6 +135,11 @@ export interface Item {
   thread: ThreadEntry[];
   /** Part of a move (spec §6.4.7), on every item of it: they are accepted or rejected together. */
   move?: MoveInfo;
+  /**
+   * The reviewer's last attempt to accept it failed (it could not be applied). Rejecting it then
+   * says nothing about the change itself, so it does not count for repeat detection.
+   */
+  acceptFailed?: { at: string; reason: string };
 }
 
 /**

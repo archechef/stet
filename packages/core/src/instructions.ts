@@ -18,7 +18,8 @@ export function archivedMessage(agent: Agent): string {
 
 export const STET_MARKER = "<!-- stet:instructions -->";
 
-export function agentInstructions(agentId: string): string {
+/** `watch`: the shell command that runs `stet watch` here (absolute paths, so it needs no PATH setup). */
+export function agentInstructions(agentId: string, watch = "stet watch"): string {
   return `${STET_MARKER}
 # You are working under Stet review (agent: ${agentId})
 
@@ -84,6 +85,17 @@ here reaches the real document until a human accepts it.
     rejected others. The document compiles but may be inconsistent (e.g.
     references to a renamed label); propose what makes it consistent.
 - Use \`stet_withdraw\` for proposals you no longer believe in.
+- Waiting for the reviewer: don't poll \`stet_status\` in a loop. Run this
+  command in the background instead (it only reads, works in the sandbox and
+  the guard allows it):
+      ${watch}
+  It prints one line for each thing that arrives for you (feedback, a note,
+  a sync needed) as it happens. Add \`--once\` if your tool wakes you when a
+  background command ends rather than when it prints: it then exits after
+  the first lines. When a line arrives, act on it (\`stet_get_feedback\`,
+  \`stet_sync\`) and start watching again. The same lines are appended to
+  \`.stet/inbox\` in this folder (\`tail -n 0 -f .stet/inbox\` works too). They
+  are only written while your Stet tools are connected.
 `;
 }
 
@@ -96,6 +108,9 @@ with parts for pieces that can each be accepted alone, atomic for edits that
 only make sense as one, related for thematic batches). Prefer moving
 passages word for word: Stet then shows them to the reviewer as one move.
 Before new work call stet_status and stet_sync if needed (sync also
-delivers the reviewer's notes on passages). Poll
+delivers the reviewer's notes on passages). Read
 stet_get_feedback and act on rejections, revision requests, comments and
-stale items. Never reflow text or touch files outside the workspace.`;
+stale items. To wait for the reviewer without polling, run \`stet watch\` in
+the background (the exact command is in your instructions file): it prints a
+line whenever something arrives, from .stet/inbox in the workspace. Never
+reflow text or touch files outside the workspace.`;

@@ -12,6 +12,7 @@ import { describeNote } from "./notes.js";
 import { Stet, StetError } from "./service.js";
 import { oneLine } from "./text.js";
 import { pathExists } from "./paths.js";
+import { InboxWriter } from "./inbox.js";
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -178,6 +179,11 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
     case "accepted":
       return `${label("ACCEPTED", "good")} ${it}${d.finalText !== undefined ? `; the reviewer edited it to: "${oneLine(d.finalText, 300)}"` : ""}`;
     case "rejected":
+      if (d.acceptFailed)
+        return (
+          `${label("REJECTED", "bad")} ${it}${d.reason ? `; reason: ${d.reason}` : ""}. The reviewer tried to accept it, but it could not be applied ` +
+          `(${d.acceptFailed}): sync, and if it is still wanted, propose it again against the current text.`
+        );
       return `${label("REJECTED", "bad")} ${it}${d.reason ? `; reason: ${d.reason}` : ""}. Do not propose this change again.`;
     case "revision_requested":
       return `${label("REVISION REQUESTED", "warn")} for ${it}: ${d.comment}`;
@@ -219,8 +225,12 @@ export interface McpOptions {
   version: string;
 }
 
+type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean; structuredContent?: unknown };
+
 export class StetMcpServer {
   private stet: Stet | null = null;
+  private inbox: InboxWriter | null = null;
+  private inboxStopped = false;
 
   constructor(private readonly opts: McpOptions) {}
 
@@ -284,7 +294,50 @@ export class StetMcpServer {
     }
   }
 
-  async callTool(name: string, args: any): Promise<{ content: { type: "text"; text: string }[]; isError?: boolean; structuredContent?: unknown }> {
+  /**
+   * Keep the agent's inbox (`.stet/inbox`) up to date while this server runs. Quietly does
+   * nothing outside an agent workspace.
+   */
+  async startInbox(): Promise<void> {
+    if (this.inbox) return;
+    try {
+      const { stet, agent } = await this.context();
+      if (this.inboxStopped) return;
+      this.inbox ??= new InboxWriter(stet, agent);
+      this.inbox.start();
+    } catch {
+      /* not an agent workspace, or archived: the tools say so */
+    }
+  }
+
+  stopInbox(): void {
+    this.inboxStopped = true;
+    this.inbox?.stop();
+  }
+
+  async callTool(name: string, args: any): Promise<ToolResult> {
+    const result = await this.runTool(name, args);
+    // Tell the agent what arrived while it worked, whatever it called (status, sync and feedback already do).
+    if (!result.isError && !["stet_status", "stet_sync", "stet_get_feedback"].includes(name)) {
+      const line = await this.news().catch(() => null);
+      if (line) result.content.push({ type: "text", text: line });
+    }
+    return result;
+  }
+
+  /** One line on unread feedback, waiting notes and a needed sync, or null if there is none. */
+  private async news(): Promise<string | null> {
+    const { stet, agent } = await this.context();
+    const s = await stet.agentStatus(agent);
+    const parts = [
+      ...(s.unreadFeedback ? [`${s.unreadFeedback} unread feedback event(s) (call stet_get_feedback)`] : []),
+      ...(s.notesWaiting ? [`${s.notesWaiting} note(s) from the reviewer waiting (call stet_sync)`] : []),
+      ...(s.syncNeeded ? ["the document changed since your last sync (call stet_sync before new work)"] : []),
+    ];
+    return parts.length ? `Stet: ${parts.join("; ")}.` : null;
+  }
+
+  private async runTool(name: string, args: any): Promise<ToolResult> {
     const text = (t: string, data?: unknown) => ({
       content: [{ type: "text" as const, text: data === undefined ? t : `${t}\n\n${"```json"}\n${JSON.stringify(data, null, 2)}\n${"```"}` }],
     });
@@ -509,6 +562,7 @@ const validId = (id: unknown) => typeof id === "string" || (typeof id === "numbe
 
 /** Serve MCP over newline-delimited JSON on the given streams. Resolves when input ends. */
 export async function serveStdio(server: StetMcpServer, input: Readable, output: Writable): Promise<void> {
+  void server.startInbox();
   const rl = createInterface({ input, crlfDelay: Infinity });
   const send = (o: object) => output.write(JSON.stringify(o) + "\n");
   let queue = Promise.resolve();
@@ -535,4 +589,5 @@ export async function serveStdio(server: StetMcpServer, input: Readable, output:
       .catch(() => undefined);
   }
   await queue;
+  server.stopInbox();
 }

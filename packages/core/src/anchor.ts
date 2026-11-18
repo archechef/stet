@@ -23,6 +23,69 @@ export function captureContext(text: string, start: number, end: number): { befo
   return { before: text.slice(Math.max(0, start - CONTEXT_CHARS), start), after: text.slice(end, end + CONTEXT_CHARS) };
 }
 
+/** A change accepted from the same base: where it was, and the text that replaced it. */
+export interface Neighbour {
+  range: Span;
+  oldText: string;
+  text: string;
+}
+
+/**
+ * `anchor`, and if that fails, again with `neighbours` (changes accepted from the item's base)
+ * made in `ref` too. A change right next to an accepted one has lost the context on that side:
+ * a sentence rewritten up to the line break that the next change removes (bug report
+ * 2026-11-18). With the neighbours in its reference, that context is the accepted text.
+ */
+export function anchorNear(item: Anchorable, target: string, ref: string | undefined, neighbours: Neighbour[]): Span | null {
+  const span = anchor(item, target, ref);
+  if (span || ref === undefined) return span;
+  const { start, end } = item.range;
+  const others = neighbours
+    .filter((n) => n.range.end <= start || n.range.start >= end)
+    .filter((n) => ref.slice(n.range.start, n.range.end) === n.oldText)
+    .sort((a, b) => a.range.start - b.range.start);
+  if (!others.length) return null;
+  let text = "";
+  let pos = 0;
+  let shift = 0;
+  for (const n of others) {
+    if (n.range.start < pos) return null; // neighbours overlapping each other: give up
+    text += ref.slice(pos, n.range.start) + n.text;
+    pos = n.range.end;
+    if (n.range.end <= start) shift += n.text.length - n.oldText.length;
+  }
+  text += ref.slice(pos);
+  const range = { start: start + shift, end: end + shift };
+  if (text.slice(range.start, range.end) !== item.oldText) return null;
+  return anchor({ ...item, range, context: captureContext(text, range.start, range.end) }, target, text);
+}
+
+/**
+ * Several insertions at one spot (entries appended to a .bib file, paragraphs added at the end of
+ * a section) have the same position and surroundings, so once one of them is applied the others
+ * could land before it. Give each later one (in item order) the earlier ones' text as part of
+ * the context before it, so it finds its place after them. Changes `items` in place.
+ */
+export function chainInsertions(
+  items: { id: string; file: string; kind: string; oldText: string; newText: string; range: Span; context: { before: string; after: string } }[],
+  order: (a: string, b: string) => number,
+): void {
+  const spots = new Map<string, typeof items>();
+  for (const it of items) {
+    if (it.kind !== "modify" || it.oldText !== "" || it.range.start !== it.range.end) continue;
+    const key = `${it.file}\0${it.range.start}`;
+    spots.set(key, [...(spots.get(key) ?? []), it]);
+  }
+  for (const list of spots.values()) {
+    list.sort((a, b) => order(a.id, b.id));
+    let earlier = "";
+    for (const it of list) {
+      if (earlier) it.context = { ...it.context, before: (it.context.before + earlier).slice(-CONTEXT_CHARS) };
+      earlier += it.newText;
+    }
+  }
+}
+
 /**
  * Map an offset from `ref` to `target` through a line diff.
  * Returns null when the offset lies inside a changed region.
@@ -105,6 +168,14 @@ export function insideNewText(oldText: string, newText: string, target: string, 
   return false;
 }
 
+/** The one place where the old text appears with its whole context, or null. */
+function exactWithContext({ oldText, context }: Anchorable, target: string): Span | null {
+  const hits = allIndexesOf(target, context.before + oldText + context.after);
+  if (hits.length !== 1) return null;
+  const s = hits[0]! + context.before.length;
+  return { start: s, end: s + oldText.length };
+}
+
 function findOldText(item: Anchorable, target: string, ref?: string): Span | null {
   const { oldText, range, context } = item;
   const check = (s: number, e: number) => target.slice(s, e) === oldText;
@@ -115,22 +186,32 @@ function findOldText(item: Anchorable, target: string, ref?: string): Span | nul
   // 2. Mapped path.
   if (ref !== undefined) {
     const map = makeMapper(ref, target);
-    const s = oldText ? map(range.start, false) : map(range.start, true) ?? map(range.start, false);
-    const e = oldText ? map(range.end, true) : s;
-    if (s !== null && e !== null && e - s === oldText.length && check(s, e)) {
-      // Pure insertions also need their context to still match on at least one side.
-      if (oldText || target.slice(0, s).endsWith(context.before.slice(-20)) || target.slice(s).startsWith(context.after.slice(0, 20)))
-        return { start: s, end: e };
+    if (oldText) {
+      const s = map(range.start, false);
+      const e = map(range.end, true);
+      if (s !== null && e !== null && e - s === oldText.length && check(s, e)) return { start: s, end: e };
+    } else {
+      // A pure insertion where the target has new text of its own lands before or after that
+      // text. Prefer the side its context says (an insertion after another one at the same spot
+      // carries that one's text in its context, see `chainInsertions`); else the side where the
+      // following text still matches. At least one side of the context must still match.
+      const sides = [map(range.start, true), map(range.start, false) ?? (range.start === ref.length ? target.length : null)];
+      const at = [...new Set(sides.filter((s): s is number => s !== null))];
+      const tail = context.before.slice(-20);
+      const head = context.after.slice(0, 20);
+      const s = at.find((s) => tail && target.slice(0, s).endsWith(tail));
+      if (s !== undefined) return { start: s, end: s };
+      // Only the following text matches here: the full context may still be found elsewhere.
+      const exact = exactWithContext(item, target);
+      if (exact) return exact;
+      const t = at.find((s) => target.slice(s).startsWith(head));
+      if (t !== undefined) return { start: t, end: t };
     }
   }
 
   // 3. Exact search with full context.
-  const full = context.before + oldText + context.after;
-  const hits = allIndexesOf(target, full);
-  if (hits.length === 1) {
-    const s = hits[0]! + context.before.length;
-    return { start: s, end: s + oldText.length };
-  }
+  const exact = exactWithContext(item, target);
+  if (exact) return exact;
 
   // 4. Fuzzy: candidate positions scored by context similarity.
   const candidates = new Set<number>();

@@ -119,6 +119,7 @@ Agents normally use the Stet tools through MCP (see [agents.md](agents.md)). The
 | `stet list [--status <s>]` | The agent's own items. |
 | `stet reply <12.3\|N3> -m <text>` | Answers a reviewer comment or note. |
 | `stet withdraw <12.3>… [-m <reason>]` | Withdraws the agent's own pending items. |
+| `stet watch [--once]` | Waits for the reviewer: prints one line whenever something arrives for this agent (feedback, a note, a sync needed), from the workspace's `.stet/inbox`. `--once` exits after the first lines. Read-only, so it works in the agent's sandbox. The inbox is written while the agent's Stet MCP server runs. |
 
 **Grouping hints for `submit --groups`:** a JSON list, from a file or `-` for standard input. Locations are `file`, `file:line` or `file:from-to`, in the workspace after the edits:
 
