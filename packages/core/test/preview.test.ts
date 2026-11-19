@@ -95,8 +95,9 @@ describe("preview: isolation", () => {
     const path = process.env.PATH;
     process.env.PATH = "/nonexistent";
     try {
-      // A container needs Podman first: the image can bring its own TeX.
-      const env = await detectPreviewEnv(DEFAULT_PREVIEW);
+      // A container needs Podman first: the image can bring its own TeX. (No Podman here even if
+      // the machine has one: CI runners often do.)
+      const env = await detectPreviewEnv(DEFAULT_PREVIEW, { podman: null });
       expect(env.status).toBe("unavailable");
       expect(env.message).toMatch(/Podman/);
       expect(env.fix).toMatch(/Install Podman|WSL2/);

@@ -178,7 +178,11 @@ function userTexmf(): string | undefined {
  * What previews can use here. Never installs or downloads anything: when something is missing,
  * it says what and how to get it.
  */
-export async function detectPreviewEnv(cfg: PreviewConfig): Promise<PreviewEnv> {
+export async function detectPreviewEnv(
+  cfg: PreviewConfig,
+  /** `podman`: the Podman program to use, or null for none (tests: independent of what the machine has). */
+  opts: { podman?: string | null } = {},
+): Promise<PreviewEnv> {
   if (!cfg.enabled) return { status: "unavailable", isolation: null, message: "PDF previews are switched off (preview.enabled in .git/stet/config.json)." };
   const trusted = "Or, for material you trust, set preview.isolation to \"process\" in .git/stet/config.json: TeX can then read every file you can.";
 
@@ -197,7 +201,7 @@ export async function detectPreviewEnv(cfg: PreviewConfig): Promise<PreviewEnv> 
   const texmfHome = userTexmf();
 
   if (cfg.isolation !== "process") {
-    const podman = await findPodman();
+    const podman = opts.podman !== undefined ? opts.podman : await findPodman();
     if (!podman) {
       return {
         status: "unavailable",
