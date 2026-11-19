@@ -124,48 +124,51 @@ describe("moves (§6.4.7)", () => {
     else expect(g.items).toContain(m.to[0]);
   });
 
-  it("blocks from different places that land next to each other are one move (bug report 2026-11-13)", async () => {
-    // P1 and P3, apart in the introduction, end up together in the evaluation: one insertion.
+  it("blocks from different places that land next to each other are a move each (bug report 2026-11-13)", async () => {
+    // P1 and P3, apart in the introduction, end up together in the evaluation. Since 2026-11-19
+    // each new paragraph is a change of its own, and paragraphs that only land together (or only
+    // leave together) are separate moves: one block moved is next to each other on both sides.
     const doc = DOC.replace(`${P1}\n\n`, "").replace(`${P3}\n\n`, "").replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n${P3}\n`);
     const { stet, repo, wt, r } = await submitDoc(doc);
-    // Two deletions, and an insertion per paragraph (each new paragraph is a change of its own).
     expect(r.items).toHaveLength(4);
     const del1 = r.items.find((i) => i.oldText.startsWith("We study"))!;
     const del3 = r.items.find((i) => i.oldText.startsWith("The approach"))!;
     const ins1 = r.items.find((i) => !i.oldText.trim() && i.newText.includes("We study"))!;
     const ins3 = r.items.find((i) => !i.oldText.trim() && i.newText.includes("The approach"))!;
-    expect(r.moves).toEqual([{ from: [del1.id, del3.id], to: [ins1.id, ins3.id], changed: 0 }]);
-    expect(r.groups[0]!.title).toMatch(/^Move 2 passages “We study[^”]*”, “The approach[^”]*” \(4 sentences, unchanged\)$/);
+    expect(r.moves).toEqual(expect.arrayContaining([{ from: [del1.id], to: [ins1.id], changed: 0 }, { from: [del3.id], to: [ins3.id], changed: 0 }]));
+    expect(r.moves).toHaveLength(2);
+    // Rejecting one move leaves the other, and the paper stays well formed.
     const rejected = await stet.reject([del3.id]);
-    expect(rejected).toHaveLength(4);
-    expect(read(repo, "main.tex")).toBe(DOC);
+    expect(rejected).toHaveLength(2);
+    await stet.accept([del1.id]);
+    // (The paragraph break that came with P1 stays: one blank line more before \end{document}.)
+    expect(read(repo, "main.tex")).toBe(DOC.replace(`${P1}\n\n`, "").replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n`));
     void wt;
   });
 
-  it("adjacent blocks that go to different places are one move", async () => {
+  it("adjacent blocks that go to different places are a move each", async () => {
     // P2 and P3, next to each other, go to the top of the introduction and to the evaluation.
     const doc = DOC.replace(`${P2}\n\n${P3}\n\n`, "")
       .replace("\\section{Introduction}\n", `\\section{Introduction}\n${P3}\n\n`)
       .replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P2}\n`);
     const { stet, repo, wt, r } = await submitDoc(doc);
-    // Two deleted paragraphs next to each other and two insertions: all of it is one move.
     const del = r.items.filter((i) => !i.newText.trim());
     const ins = r.items.filter((i) => !i.oldText.trim());
     expect(del).toHaveLength(2);
     expect(ins).toHaveLength(2);
-    expect(r.moves).toHaveLength(1);
-    expect([...r.moves[0]!.from].sort()).toEqual(del.map((i) => i.id).sort());
-    expect([...r.moves[0]!.to].sort()).toEqual(ins.map((i) => i.id).sort());
-    await stet.accept([ins[1]!.id]);
+    expect(r.moves).toHaveLength(2);
+    for (const m of r.moves) expect([m.from.length, m.to.length]).toEqual([1, 1]);
+    await stet.accept([...r.moves[0]!.to, ...r.moves[1]!.to]);
     expect(read(repo, "main.tex")).toBe(read(wt, "main.tex"));
   });
 
-  it("a changed word in one of several blocks is shown at that block", async () => {
+  it("a changed word in one of several moved blocks is shown at that block", async () => {
     const doc = DOC.replace(`${P1}\n\n`, "").replace(`${P3}\n\n`, "")
       .replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n${P3.replace("three papers", "four papers")}\n`);
     const { r } = await submitDoc(doc);
-    expect(r.moves).toEqual([expect.objectContaining({ changed: 1 })]);
-    const ins = r.items.find((i) => r.moves[0]!.to.includes(i.id) && i.newText.includes("four papers"))!;
+    expect(r.moves.map((m) => m.changed).sort()).toEqual([0, 1]);
+    const m = r.moves.find((m) => m.changed === 1)!;
+    const ins = r.items.find((i) => m.to.includes(i.id) && i.newText.includes("four papers"))!;
     const c = moveChangesOf(ins, byId(r.items));
     expect(c).toEqual([expect.objectContaining({ was: "three", now: "four" })]);
     expect(ins.newText.slice(c[0]!.start, c[0]!.end)).toBe("four");

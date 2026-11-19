@@ -17,10 +17,10 @@ export interface Edit {
   oldText: string;
   newText: string;
   /**
-   * An unrelated paragraph replacing another is one change, but it can be taken apart into a
-   * deletion and an insertion: when one of them belongs to a move (§6.4.7).
+   * An unrelated paragraph replacing another is one change, but it can be taken apart into its
+   * deletions and insertions, a paragraph each: when one of them belongs to a move (§6.4.7).
    */
-  halves?: [Edit, Edit];
+  halves?: Edit[];
 }
 
 /** Paragraphs this alike (word similarity) are one paragraph edited; less alike, unrelated. */
@@ -388,7 +388,11 @@ const STRUCTURE_LINE = /^\s*\\(?:part|chapter|section|subsection|subsubsection|p
  */
 function joinAdjacent(edits: Edit[]): Edit[] {
   const out: Edit[] = [];
-  const pure = (e: Edit, ins: boolean) => (ins ? !e.oldText && !!e.newText.trim() : !e.newText && !!e.oldText.trim());
+  // Several paragraphs on a side are paragraphs that changed order (see `gap`): kept apart.
+  const pure = (e: Edit, ins: boolean) => {
+    const t = (ins ? e.newText : e.oldText).trim();
+    return (ins ? !e.oldText : !e.newText) && !!t && !/\n[ \t]*\n/.test(t);
+  };
   // A change of whitespace only (a line break that goes with a new line) belongs to its neighbour.
   const blank = (e: Edit) => !e.oldText.trim() && !e.newText.trim();
   for (const e of edits) {
@@ -458,7 +462,13 @@ function perBlock(oldText: string, newText: string, e: Edit): Edit[] {
   const cuts = blockCuts(t, leading);
   if (!cuts.length) return [e];
   const out: Edit[] = [];
+  // A piece of whitespace only (a paragraph break at the start or end) joins its neighbour.
   const bounds = [0, ...cuts, t.length];
+  for (let k = 0; k + 1 < bounds.length; ) {
+    if (bounds.length > 2 && !t.slice(bounds[k]!, bounds[k + 1]!).trim()) bounds.splice(k + 1 < bounds.length - 1 ? k + 1 : k, 1);
+    else k++;
+  }
+  if (bounds.length <= 2) return [e];
   for (let k = 0; k + 1 < bounds.length; k++) {
     const [a, b] = [bounds[k]!, bounds[k + 1]!];
     // The other side's (whitespace) text goes with the first piece.
@@ -514,13 +524,13 @@ function unrelated(oldText: string, newText: string, e: Edit): Edit {
   if (oa && na) {
     const del = makeEdit(oldText, newText, os, oe + oa, ne + na, ne + na);
     const ins = makeEdit(oldText, newText, os, os, ns, ne + na);
-    return { ...whole, halves: [del, ins] };
+    return { ...whole, halves: [...perBlock(oldText, newText, del), ...perBlock(oldText, newText, ins)] };
   }
   const [ob, nb] = [before(oldText, os), before(newText, ns)];
   if (ob && nb) {
     const del = makeEdit(oldText, newText, os - ob, oe, ns - nb, ns - nb);
     const ins = makeEdit(oldText, newText, os - ob, os - ob, ns - nb, ne);
-    return { ...whole, halves: [del, ins] };
+    return { ...whole, halves: [...perBlock(oldText, newText, del), ...perBlock(oldText, newText, ins)] };
   }
   return whole;
 }
@@ -685,8 +695,17 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>): U
   const ob = tokenBlocks(ot);
   const nb = tokenBlocks(nt);
   const pairs = ob.length > 1 || nb.length > 1 ? pairBlocks(ot, nt, ob, nb) : [];
+  // The paragraphs left unpaired on each side, for `gap`: one with a counterpart among the other
+  // side's changed order (pairs keep the order).
+  const wordsOf = (toks: Token[], [a, b]: [number, number]) => toks.slice(a, b).filter((t) => !isBlank(t)).map((t) => t.text);
+  const paired = (k: number, side: "o" | "n") => pairs.some((p) => k >= p[side][0] && k <= p[side][1]);
+  const unpaired = {
+    o: ob.flatMap((b, k) => (paired(k, "o") ? [] : [wordsOf(ot, b)])),
+    n: nb.flatMap((b, k) => (paired(k, "n") ? [] : [wordsOf(nt, b)])),
+  };
   if (!pairs.length) {
-    gap(ot, nt, 0, ot.length, 0, nt.length, same, u, ob.length > 1 || nb.length > 1);
+    // Nothing paired: nothing here changed order either (pairing found nothing alike).
+    gap(ot, nt, 0, ot.length, 0, nt.length, same, u, ob.length > 0 && nb.length > 0, hard, { o: [], n: [] });
     return u;
   }
   let o = 0;
@@ -694,13 +713,13 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>): U
   for (const p of pairs) {
     const [os, oe] = [ob[p.o[0]]![0], ob[p.o[1]]![1]];
     const [ns, ne] = [nb[p.n[0]]![0], nb[p.n[1]]![1]];
-    gap(ot, nt, o, os, n, ns, same, u, true);
+    gap(ot, nt, o, os, n, ns, same, u, true, hard, unpaired);
     hard.add(u.length);
     diffRange(ot, nt, os, oe, ns, ne, same, u);
     hard.add(u.length);
     [o, n] = [oe, ne];
   }
-  gap(ot, nt, o, ot.length, n, nt.length, same, u, true);
+  gap(ot, nt, o, ot.length, n, nt.length, same, u, true, hard, unpaired);
   return u;
 }
 
@@ -710,10 +729,30 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>): U
  * one replacement, not a token diff that matches stray words ("\begin{proof} …" → "The proof
  * is in the appendix").
  */
-function gap(ot: Token[], nt: Token[], oa: number, ob: number, na: number, nb: number, same: Same, u: U[], blocks: boolean): void {
+function gap(
+  ot: Token[], nt: Token[], oa: number, ob: number, na: number, nb: number, same: Same, u: U[], blocks: boolean, hard: Set<number>,
+  unpaired: { o: string[][]; n: string[][] },
+): void {
   const words = (toks: Token[], a: number, b: number) => toks.slice(a, b).filter((t) => !isBlank(t)).map((t) => t.text);
   const [ow, nw] = [words(ot, oa, ob), words(nt, na, nb)];
-  if (!blocks || !ow.length || !nw.length || paragraphSimilarity(ow, nw, PAIR_MIN) >= PAIR_MIN) {
+  if (!blocks || !ow.length || !nw.length) {
+    diffRange(ot, nt, oa, ob, na, nb, same, u);
+    return;
+  }
+  // Paragraphs here with a counterpart among the other side's unpaired ones changed order:
+  // removed and inserted, paragraph by paragraph, so that they are found as moves. Diffed as one
+  // text, a reordered section came out as a few huge changes.
+  const bw = (toks: Token[], a: number, b: number) => tokenBlocks(toks.slice(a, b)).map(([s, e]) => words(toks, a + s, a + e));
+  const [obw, nbw] = [bw(ot, oa, ob), bw(nt, na, nb)];
+  const alike = (x: string[], ys: string[][]) => ys.some((y) => paragraphSimilarity(x, y, PAIR_MIN) >= PAIR_MIN);
+  const reordered = obw.some((x) => alike(x, unpaired.n)) || nbw.some((y) => alike(y, unpaired.o));
+  if (reordered) {
+    for (let k = oa; k < ob; k++) u.push({ o: k, n: -1 });
+    hard.add(u.length);
+    for (let k = na; k < nb; k++) u.push({ o: -1, n: k });
+    return;
+  }
+  if (paragraphSimilarity(ow, nw, PAIR_MIN) >= PAIR_MIN) {
     diffRange(ot, nt, oa, ob, na, nb, same, u);
     return;
   }

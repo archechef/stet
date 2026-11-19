@@ -255,6 +255,16 @@ describe("moves", () => {
     expect(r.moves).toHaveLength(1);
   });
 
+  it("a section's paragraphs put in reverse order: a move per paragraph, not one big change", async () => {
+    const [before, after] = [doc(A, B, C, D, E), doc(E, D, C, B, A)];
+    const r = await submit(before, after);
+    // One paragraph stays where it is; the others are moves of one paragraph each.
+    expect(r.moves.length).toBeGreaterThanOrEqual(3);
+    for (const m of r.moves) expect([m.from.length, m.to.length, m.changed]).toEqual([1, 1, 0]);
+    expect(r.items.every((i) => i.move)).toBe(true);
+    await acceptAll(before, after);
+  });
+
   it("two neighbouring paragraphs moved together are one move", async () => {
     const r = await submit(doc(C, A, B, E, D), doc(C, E, D, A, B));
     expect(r.moves).toHaveLength(1);

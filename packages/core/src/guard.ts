@@ -99,7 +99,8 @@ const discardRedirects = (cmd: string) => cmd.replace(/(?:\d|&)?>{1,2}\s*(?:\/de
 /** Every command of a chain (`a && b | c; d`) only reads: a reading command, or `cd`. */
 function onlyReads(cmd: string): boolean {
   const c = discardRedirects(cmd);
-  if (WRITE_HINT.test(c) || /[`$]\(|`/.test(c)) return false;
+  // Command and process substitution run commands of their own.
+  if (WRITE_HINT.test(c) || /[`$<>]\(|`/.test(c)) return false;
   return c.split(/&&|\|\||;|\|/).every((part) => !part.trim() || READ_ONLY_START.test(part) || /^\s*cd\b/.test(part));
 }
 

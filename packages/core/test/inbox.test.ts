@@ -121,6 +121,7 @@ describe("agent inbox", () => {
     expect(bash("grep x .stet/inbox > .stet/inbox2")).toMatch(/Stet manages/);
     expect(bash("cat .stet/inbox; rm .stet/inbox")).toMatch(/Stet manages/);
     expect(bash("find .stet -name inbox -delete")).toMatch(/Stet manages/);
+    expect(bash("cat .stet/inbox <(python3 -c 1)")).toMatch(/Stet manages/);
     expect(checkToolUse({ cwd: a.worktree, tool_name: "Write", tool_input: { file_path: join(a.worktree, INBOX_FILE) } }, ctx)).toMatch(/managed by Stet/);
   });
 });

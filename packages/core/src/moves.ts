@@ -298,9 +298,14 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
 function mergeNeighbours(moves: MovePair[], abbr: Set<string>): MovePair[] {
   const pos = (i: Item) => [i.file, i.range.start, i.range.end] as const;
   const before = (a: Item, b: Item) => a.file.localeCompare(b.file) || a.range.start - b.range.start || compareIds(a.id, b.id);
-  const touching = (a: MovePair, b: MovePair) =>
-    a.from.some((x) => b.from.some((y) => x.file === y.file && (x.range.end === y.range.start || y.range.end === x.range.start))) ||
-    a.to.some((x) => b.to.some((y) => pos(x)[0] === pos(y)[0] && x.range.start === y.range.start));
+  // Next to each other where they left and where they landed, in the same order: one block moved.
+  // (Only one side next to each other is separate moves: a reordered section is many moves, not
+  // one all-or-nothing change.)
+  const follows = (a: MovePair, b: MovePair) =>
+    a.from.some((x) => b.from.some((y) => x.file === y.file && x.range.end === y.range.start)) &&
+    // Insertions take no room in the old text: at one place, their order is that of their ids.
+    a.to.some((x) => b.to.some((y) => pos(x)[0] === pos(y)[0] && x.range.start === y.range.start && compareIds(x.id, y.id) < 0));
+  const touching = (a: MovePair, b: MovePair) => follows(a, b) || follows(b, a);
   const list = [...moves];
   for (let merged = true; merged; ) {
     merged = false;
@@ -387,18 +392,19 @@ export function separateMoved<T extends Edit>(cands: T[], others: { oldText: str
     if (pureIns(c)) ins.push({ src: c, w: w(c.newText) });
   }
   for (const c of cands) {
-    if (!c.halves) continue;
-    dels.push({ src: c, w: w(c.halves[0].oldText) });
-    ins.push({ src: c, w: w(c.halves[1].newText) });
+    for (const h of c.halves ?? []) {
+      if (pureDel(h)) dels.push({ src: c, w: w(h.oldText) });
+      if (pureIns(h)) ins.push({ src: c, w: w(h.newText) });
+    }
   }
   const matches = (x: string[], pool: { src: unknown; w: string[] }[], self: unknown) =>
     enough(x) && pool.some((p) => p.src !== self && enough(p.w) && wordSimilarity(x, p.w, REWRITTEN_MIN) >= REWRITTEN_MIN);
   return cands.flatMap((c) => {
     if (!c.halves) return [c];
-    const [del, ins2] = c.halves;
-    if (!matches(w(del.oldText), ins, c) && !matches(w(ins2.newText), dels, c)) return [c];
-    const { halves: _, ...rest } = c;
-    return [{ ...rest, ...del }, { ...rest, ...ins2 }] as T[];
+    const moved = c.halves.some((h) => (pureDel(h) && matches(w(h.oldText), ins, c)) || (pureIns(h) && matches(w(h.newText), dels, c)));
+    if (!moved) return [c];
+    const { halves, ...rest } = c;
+    return halves!.map((h) => ({ ...rest, ...h })) as T[];
   });
 }
 
