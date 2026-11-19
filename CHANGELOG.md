@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — 2026-11-19
 
 - **Security review before the release:**
   - Preview containers never download an image (`--pull=never`); a changed `preview.image` could otherwise have fetched and run any image. They are now limited in file size, open files and memory as well as processes.
