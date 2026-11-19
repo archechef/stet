@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-11-19
 
 - **Fix: a paragraph inserted next to one edited in place** showed as "old paragraph → new paragraph" plus the edited paragraph inserted again, so accepting only some of them dropped or duplicated text (bug report C42). Paragraphs are now paired by similarity, not position: you get an insertion, and small edits in place. An unrelated paragraph replacing another is still one replacement, unless the old one moved elsewhere: then it's an insertion and a move.
 - **Moves:** a short paragraph with a changed word, or a single sentence of 7 words or more, is a move now. One changed word per 10 words (at least one) is allowed, with no upper limit. A passage moved and rewritten beyond that is a linked deletion and insertion (*Moved and rewritten*), so accepting one alone can't lose or duplicate it (bug report C38).
