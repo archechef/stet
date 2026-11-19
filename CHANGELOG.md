@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 — 2026-11-19
 
 - **Page view in the Preview panel:** the whole page with the change, opened at it, with the changed words highlighted (inserted in green, removed in red), from a word diff of the two versions that ignores reflowed text. **After | Before** flips at the same zoom and position, ◀ ▶ turn pages (rendered on demand). `stet preview <id> --page <n> [--before]` gives a whole page on the command line. The hover still shows the region.
 - **Fix: previews show the right part of the page.** The region came from SyncTeX, which maps source lines to the page; a LaTeX paragraph is often one source line, so a change deep in a long paragraph got the whole paragraph, from the page where it starts. Stet now finds the change's words on the page (with Poppler's word positions) and crops to them, with a few lines of context, falling back to SyncTeX where the words can't be found. A preview that shows several changes together (a linked part, or the changes completing it) now crops to all of them, in *before* as in *after*.
