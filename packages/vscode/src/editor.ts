@@ -113,7 +113,9 @@ export function usesHints(uri: vscode.Uri): boolean {
  * What to mark for a located item: only the parts that change. A whole formula may be one item,
  * but a changed exponent should not look like a rewritten equation.
  */
-function marks(doc: vscode.TextDocument, item: Item, range: vscode.Range): { removed: vscode.Range[]; inserted: { at: vscode.Position; text: string }[] } {
+function marks(doc: vscode.TextDocument, shownItem: Item, range: vscode.Range): { removed: vscode.Range[]; inserted: { at: vscode.Position; text: string }[] } {
+  // The user's wording, if they have one: that's what accepting it will put here.
+  const item = shownItem.draft !== undefined ? { ...shownItem, newText: shownItem.draft } : shownItem;
   const here = toLf(doc.getText(range));
   // The located text is the item's old text; if not (e.g. while typing), mark the whole span.
   const d =
@@ -306,7 +308,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const ref = (id: string): Ref => ({ path: p.mainPath, id });
     const parts = hits.map(({ item }) => {
       const md = new vscode.MarkdownString(undefined, true);
-      md.isTrusted = { enabledCommands: ["stet.accept", "stet.acceptGroup", "stet.reject", "stet.edit", "stet.revise", "stet.comment", "stet.showDiff", "stet.preview"] };
+      md.isTrusted = { enabledCommands: ["stet.accept", "stet.acceptGroup", "stet.reject", "stet.edit", "stet.revise", "stet.comment", "stet.showDiff", "stet.preview", "stet.reviewFile", "stet.clearDraft"] };
       md.supportHtml = false;
       md.appendMarkdown(itemMarkdown(item, model));
       const pdf = this.host.previewHover?.(p, item);
@@ -314,7 +316,8 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       md.appendMarkdown(
         `\n\n[✓ Accept](${cmd("stet.accept", [ref(item.id)])}) · [✗ Reject](${cmd("stet.reject", [ref(item.id)])}) · ` +
           `[✎ Edit](${cmd("stet.edit", [ref(item.id)])}) · [↻ Revise](${cmd("stet.revise", [ref(item.id)])}) · ` +
-          `[💬 Comment](${cmd("stet.comment", [ref(item.id)])}) · [Diff](${cmd("stet.showDiff", [ref(item.id)])}) · [PDF](${cmd("stet.preview", [ref(item.id)])})`,
+          `[💬 Comment](${cmd("stet.comment", [ref(item.id)])}) · [Diff](${cmd("stet.showDiff", [ref(item.id)])}) · [All changes](${cmd("stet.reviewFile", [ref(item.id)])}) · [PDF](${cmd("stet.preview", [ref(item.id)])})` +
+            (item.draft !== undefined ? ` · [↺ Agent's wording](${cmd("stet.clearDraft", [ref(item.id)])})` : ""),
       );
       return md;
     });
@@ -342,6 +345,7 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   const lines = [`**${item.id}** · ${esc(item.agent)} · ${STATUS_TEXT[item.status]}`];
   if (cs) lines.push(`*${esc(cs.title)}*${cs.rationale ? ` — ${esc(cs.rationale)}` : ""}`);
   if (item.note) lines.push(esc(item.note));
+  if (item.draft !== undefined) lines.push(`✎ **Your wording** (from the review of this file), which Accept uses: ${fence(item.draft, "latex")}`);
   for (const gid of item.groups) {
     const g = model.group(gid);
     if (g && g.kind !== "atomic") lines.push(`${g.kind === "linked" ? "🔗 linked" : "▣ related"}: ${esc(g.title)} (${g.items.join(", ")})${g.state === "broken" ? " ⚠ broken" : ""}`);

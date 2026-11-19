@@ -1,6 +1,7 @@
 /** Stet for VS Code (spec §12.2): review panel, in-editor review, threads and setup without a command line. */
 
 import { inPreviewCache, PreviewPanel, previewNotice, previewPlace } from "./preview.js";
+import { ReviewFiles } from "./review.js";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { doctor, foldPath, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
@@ -60,11 +61,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   readonly locator: Locator;
   /** PDF previews: built in the background, shown when ready. */
   readonly preview: PreviewPanel;
+  /** Review documents: a file with all its pending changes, editable (see review.ts). */
+  readonly review: ReviewFiles;
   private previewFollow: NodeJS.Timeout | undefined;
   private disposables: vscode.Disposable[] = [];
 
   constructor(private ctx: vscode.ExtensionContext) {
     this.locator = new Locator(this);
+    this.review = new ReviewFiles((key) => this.projects.get(key));
     this.preview = new PreviewPanel(
       (p) => this.setupPreview(p),
       (t, n) => {
@@ -107,7 +111,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }),
       vscode.workspace.onDidCloseTextDocument((d) => this.locator.forget(d)),
       this.preview,
-      vscode.window.onDidChangeActiveTextEditor((ed) => ed && void this.checkInline(ed.document)),
+      this.review,
+      vscode.window.onDidChangeActiveTextEditor((ed) => {
+        if (ed) void this.checkInline(ed.document);
+        void this.updateFileContext();
+      }),
       // The preview follows the change under the cursor while it is open.
       vscode.window.onDidChangeTextEditorSelection((e) => {
         if (!this.preview.visible) return;
@@ -208,6 +216,55 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       void vscode.window.showErrorMessage("Stet: building the PDF preview image failed. Details are in the Stet output.", "Show output").then((c) => c && this.output.show());
     }
     this.preview.refresh();
+  }
+
+  /** Whether the active file has pending changes (the editor title's Review button). */
+  private async updateFileContext(): Promise<void> {
+    const uri = vscode.window.activeTextEditor?.document.uri;
+    const p = uri && this.projectFor(uri);
+    const rel = p && p.relPath(uri!);
+    const has = !!rel && p!.snapshot.items.some((i) => i.file === rel && i.kind === "modify" && isLive(i));
+    await vscode.commands.executeCommand("setContext", "stet.fileHasChanges", has);
+  }
+
+  /** Open the review of a file: the file now ↔ the file with all its pending changes, editable. */
+  async reviewFile(arg: unknown): Promise<void> {
+    let p: Project | undefined;
+    let file: string | null | undefined;
+    if (arg instanceof vscode.Uri) {
+      p = this.projectFor(arg);
+      file = p?.relPath(arg);
+    } else if (arg !== undefined) {
+      const t = await this.targetItem(arg);
+      if (t) [p, file] = [t.project, t.item.file];
+    } else {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      p = uri && this.projectFor(uri);
+      file = p && uri ? p.relPath(uri) : undefined;
+    }
+    if (!p || !file) return void vscode.window.showInformationMessage("Open a file of a Stet project, or select one of its changes in the Stet panel.");
+    const live = p.snapshot.items.filter((i) => i.file === file && i.kind === "modify" && isLive(i)).length;
+    if (!live) return void vscode.window.showInformationMessage(`${file} has no pending changes.`);
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      p.fileUri(file),
+      ReviewFiles.uriFor(p, file),
+      `${file}: yours ↔ ${live} proposed change${live === 1 ? "" : "s"} (editable)`,
+      { preview: false },
+    );
+  }
+
+  /** ✓ Accept in a review document: its unsaved edits first, so the accept uses what the user sees. */
+  async reviewAccept(uri: vscode.Uri, ref: unknown): Promise<void> {
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+    if (doc?.isDirty && !(await doc.save())) return; // the save failed (and said why)
+    await this.accept(ref);
+  }
+
+  /** Drop the user's wording for a change: the agent's text again. */
+  async clearDraft(arg: unknown): Promise<void> {
+    const t = await this.targetItem(arg);
+    if (t) await this.run(t.project, () => t.project.stet.clearDraft(t.item.id));
   }
 
   /** Projects asked about the extra fonts in this session (asked once each). */
@@ -326,6 +383,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       : undefined;
     // Redraw first: selecting the next change waits for the tree, not for the context keys.
     this.treeChanged.fire(undefined);
+    void this.review.refresh();
+    void this.updateFileContext();
     this.historyChanged.fire(undefined);
     this.changed.fire();
     this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
@@ -574,7 +633,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const it = n.item;
         const t = new vscode.TreeItem(itemLabel(it, model.get), vscode.TreeItemCollapsibleState.None);
         const line = await this.lineOf(el.project, it);
-        t.description = `${it.file}${it.kind === "modify" ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}`;
+        t.description = `${it.file}${it.kind === "modify" ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}`;
         t.iconPath = itemIcon(it);
         const md = new vscode.MarkdownString(itemMarkdown(it, model));
         t.tooltip = md;
@@ -1504,6 +1563,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.agentPing", (a) => ext.agentPing(a));
   reg("stet.undo", inOrder((a) => ext.undo(a)));
   reg("stet.preview", (a) => ext.showPreview(a));
+  reg("stet.reviewFile", (a) => ext.reviewFile(a));
+  reg("stet.reviewAccept", inOrder((u, a) => ext.reviewAccept(u, a)));
+  reg("stet.clearDraft", (a) => ext.clearDraft(a));
   reg("stet.previewSetup", () => ext.setupPreview());
   // View options: settings you may switch back and forth, from the panel.
   const toggle = (key: string) => () => ext.setOption(key, !vscode.workspace.getConfiguration("stet").get<boolean>(key, true));

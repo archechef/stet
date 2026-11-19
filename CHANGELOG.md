@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Preview zoom like a PDF viewer:** zooming enlarges the page inside its frame instead of the whole panel. Ctrl/Cmd + wheel zooms around the pointer, dragging moves the page (as does the wheel when zoomed in), and double-click zooms in on a spot or back. *After* and *Before* move together.
+- **Review all changes in a file:** a diff of your file against the same file with all its pending changes applied, with real line breaks and word wrap. The right side is editable: saving keeps your wording for those changes, which stay pending; ✓ Accept above each change accepts it with your wording (as does accepting it anywhere else), ↺ Agent's wording drops yours, and edits outside the proposed changes are refused. Open it from the editor title bar, the editor's context menu, *All changes* in the hover, or the Stet panel.
 - **Missing packages in previews:** a preview that fails because LaTeX can't find a file now names it (`dsfont.sty isn't in the preview's TeX`). With the image that brings its own TeX, Stet asks once whether to install TeX's extra fonts (dsfont, bbm, bbold and many more, about 2 GB more; Debian packs them together), and the preview panel offers the same as a button. The image stays small unless you agree. `stet preview setup --extras` does the same on the command line. With your own TeX, the message points to installing the package there.
 - **Fix: release build of 0.11.1.** The same preview-setup test expected Podman in its message on Windows too, where Stet says previews aren't supported yet. It now expects each platform's own message. This release contains all changes of 0.11.0 and 0.11.1, whose release builds stopped at that test.
 

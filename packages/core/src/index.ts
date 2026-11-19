@@ -22,3 +22,4 @@ export { Repo } from "./git.js";
 export { foldPath, isInside, pathExists, samePath } from "./paths.js";
 export { verifyAgentWorktree, WorktreeIntegrityError } from "./worktree.js";
 export { detectEngine, detectRoot, parseSynctex, cropRegion, containerArgs, excerpt, PREVIEW_CONTAINERFILE, PREVIEW_TEX_CONTAINERFILE, previewExtrasContainerfile, missingFiles, type Missing, DEFAULT_PREVIEW, type PreviewConfig, type PreviewEnv, type PreviewResult, type PreviewImage } from "./preview.js";
+export { reviewDocument, mapReviewEdits, type ReviewDocument, type ReviewChange } from "./review.js";

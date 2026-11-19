@@ -55,6 +55,7 @@ import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store, writeJsonAtomic } from "./store.js";
 import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
 import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewChange, type PreviewEnv, type PreviewRequest, type PreviewResult } from "./preview.js";
+import { mapReviewEdits, reviewDocument, type ReviewChange, type ReviewDocument } from "./review.js";
 import { pingInbox } from "./inbox.js";
 import { archivedMessage, STET_MARKER } from "./instructions.js";
 import { installHooks } from "./hooks.js";
@@ -1747,7 +1748,9 @@ export class Stet {
       const dirtyBefore = new Set<string>();
       if (wantCommit) for (const f of files) if ((await this.repo.status([f])).length) dirtyBefore.add(f);
 
-      const overrides = new Map(Object.entries(opts.edited ?? {}).map(([k, v]) => [k.toUpperCase(), toLf(v)]));
+      // The reviewer's drafts (from a file's review document), unless this accept gives other text.
+      const overrides = new Map(items.filter((i) => i.draft !== undefined).map((i) => [i.id, i.draft!]));
+      for (const [k, v] of Object.entries(opts.edited ?? {})) overrides.set(k.toUpperCase(), toLf(v));
       const res = await applyItems(items, view, { refText: this.refText, overrides, neighbours: this.neighbours });
       if (res.failed.length) {
         // Remembered, so rejecting such an item afterwards doesn't block the change for good.
@@ -1789,6 +1792,7 @@ export class Stet {
         const edited = editedOf(a);
         this.setStatus(a.item, "accepted", "user");
         delete a.item.acceptFailed;
+        delete a.item.draft;
         a.item.resolution = { appliedText: appliedText(a), edited, committed: null, headBlob: headBlobs.get(a.item.file) ?? null };
         await this.store.putItem(a.item);
         await this.store.appendEvent({
@@ -1867,6 +1871,7 @@ export class Stet {
       const toReject = opts.mode === "all" ? [...items, ...rest] : items;
       for (const it of toReject) {
         this.setStatus(it, "rejected", "user", opts.reason);
+        delete it.draft;
         if (opts.reason) it.thread.push({ at: now(), author: "user", text: `Rejected: ${opts.reason}` });
         await this.store.putItem(it);
         await this.store.appendEvent({
@@ -2071,6 +2076,59 @@ export class Stet {
     const r = best!.r;
     if (r.status !== "ready") return tries.length > 1 ? { ...r, message: `${r.message} Not together with the other changes of its round either.` } : r;
     return best!.note ? { ...r, note: best!.note } : r;
+  }
+
+  // -------------------------------------------------------------------------
+  // Review document of a file
+
+  /**
+   * `text` (the reviewer's current text of `file`, LF) with every pending change to it applied, in
+   * the reviewer's wording where they have one, and where each change is in the result.
+   */
+  async reviewOf(file: string, text: string): Promise<ReviewDocument & { items: Item[] }> {
+    const items = (await this.store.items()).filter((i) => i.file === file && i.kind === "modify" && isLive(i.status));
+    const changes: ReviewChange[] = [];
+    const unplaced: string[] = [];
+    for (const it of items) {
+      const span = await this.anchorItem(it, text);
+      if (span) changes.push({ id: it.id, start: span.start, end: span.end, text: it.draft ?? it.newText });
+      else unplaced.push(it.id);
+    }
+    const doc = reviewDocument(text, changes);
+    return { ...doc, skipped: [...doc.skipped, ...unplaced], items };
+  }
+
+  /**
+   * The reviewer saved the review document `doc` as `edited`: their edits become their wording for
+   * those changes, which stay pending. Returns the changes whose wording changed, or an error.
+   */
+  async saveReview(doc: ReviewDocument, edited: string): Promise<{ changed: string[] } | { error: string }> {
+    const mapped = mapReviewEdits(doc, toLf(edited));
+    if ("error" in mapped) return mapped;
+    return this.store.withLock(async () => {
+      const changed: string[] = [];
+      for (const [id, text] of mapped.texts) {
+        const it = await this.store.getItem(id);
+        if (!it || !isLive(it.status)) continue;
+        const shown = it.draft ?? it.newText;
+        if (text === shown) continue;
+        if (text === it.newText) delete it.draft;
+        else it.draft = text;
+        await this.store.putItem(it);
+        changed.push(id);
+      }
+      return { changed };
+    });
+  }
+
+  /** Drop the reviewer's wording for a change: the agent's text again. */
+  async clearDraft(id: string): Promise<void> {
+    await this.store.withLock(async () => {
+      const it = await this.store.getItem(id.toUpperCase());
+      if (!it || it.draft === undefined) return;
+      delete it.draft;
+      await this.store.putItem(it);
+    });
   }
 
   /** Choose which kinds of news wake an agent (see `NotifyTrigger`). Returns false if unchanged. */

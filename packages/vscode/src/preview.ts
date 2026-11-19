@@ -134,9 +134,10 @@ export class PreviewPanel implements vscode.Disposable {
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
         (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
-        `<div class="zoom"><button id="out" title="Zoom out (Ctrl/Cmd + wheel)">−</button><button id="fit" title="Fit the panel (double-click an image)">Fit</button><button id="in" title="Zoom in (Ctrl/Cmd + wheel)">+</button><span id="level" class="muted"></span></div>` +
-        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page"><img src="${img(r.after.file)}" alt="after"></div>` +
-        (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><div class="page"><img src="${img(r.before.file)}" alt="before"></div>` : "");
+        `<div class="zoom"><button id="out" title="Zoom out">−</button><button id="fit" title="Whole width">Fit</button><button id="in" title="Zoom in">+</button>` +
+        `<span id="level" class="muted"></span><span class="muted hint">Ctrl/Cmd + wheel zooms, drag moves, double-click zooms in</span></div>` +
+        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page"><img src="${img(r.after.file)}" alt="after" draggable="false"></div>` +
+        (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><div class="page"><img src="${img(r.before.file)}" alt="before" draggable="false"></div>` : "");
     } else if (r.status === "no-spot") body = `<p class="muted">${html(r.message)}</p>`;
     else if (r.status === "failed") body = `<p class="warn">${html(r.message)}</p>${extrasButton(r.missing)}<pre>${html(r.log)}</pre>`;
     else {
@@ -151,9 +152,12 @@ export class PreviewPanel implements vscode.Disposable {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${w.cspSource}; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
 body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 0 12px; }
-.page { overflow: auto; max-width: 100%; }
-img { width: calc(100% * var(--zoom, 1)); max-width: none; background: white; border: 1px solid var(--vscode-panel-border); }
-.zoom { position: sticky; top: 0; padding: 4px 0; background: var(--vscode-editor-background); }
+.page { overflow: hidden; position: relative; background: white; border: 1px solid var(--vscode-panel-border); cursor: grab; touch-action: none; user-select: none; }
+.page.dragging { cursor: grabbing; }
+.page img { display: block; width: 100%; max-width: none; }
+.zoom { position: sticky; top: 0; z-index: 1; padding: 4px 0; background: var(--vscode-editor-background); }
+.zoom .hint { margin-left: 1em; font-size: .9em; }
+#level { margin-left: .6em; }
 .zoom button { min-width: 2.2em; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: none; padding: 2px 6px; cursor: pointer; }
 h2 { font-size: 1.1em; } h3 { font-size: 1em; margin: 1em 0 .4em; }
 .muted { color: var(--vscode-descriptionForeground); } .warn { color: var(--vscode-errorForeground); }
@@ -167,28 +171,101 @@ const b = document.getElementById("setup");
 if (b) b.onclick = () => vscode.postMessage({ type: "setup" });
 const x = document.getElementById("extras");
 if (x) x.onclick = () => vscode.postMessage({ type: "extras" });
-// Zoom: kept in the webview's state, so it stays while you move from change to change.
-let zoom = (vscode.getState() || {}).zoom || 1;
-const apply = () => {
-  zoom = Math.min(4, Math.max(0.5, Math.round(zoom * 100) / 100));
-  document.documentElement.style.setProperty("--zoom", String(zoom));
+// Zoom and position like a PDF viewer: each image stays in its frame, zoom enlarges it inside,
+// dragging moves it. Before and after share zoom and position, so they show the same spot. Both
+// are kept in the webview's state while you move from change to change.
+const frames = [...document.querySelectorAll(".page")];
+const saved = vscode.getState() || {};
+let zoom = saved.zoom || 1;
+let fx = saved.fx || 0; // position as a fraction of how far the image can move
+let fy = saved.fy || 0;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fit = () => {
+  for (const f of frames) {
+    const im = f.querySelector("img");
+    if (im.naturalWidth) f.style.height = Math.round((f.clientWidth * im.naturalHeight) / im.naturalWidth) + "px";
+  }
+};
+const place = () => {
+  for (const f of frames) {
+    f.querySelector("img").style.width = zoom * 100 + "%";
+    f.scrollLeft = fx * Math.max(0, f.scrollWidth - f.clientWidth);
+    f.scrollTop = fy * Math.max(0, f.scrollHeight - f.clientHeight);
+  }
   const l = document.getElementById("level");
   if (l) l.textContent = Math.round(zoom * 100) + "%";
-  vscode.setState({ zoom });
+  vscode.setState({ zoom, fx, fy });
 };
-const by = (f) => () => { zoom *= f; apply(); };
-for (const [id, f] of [["in", by(1.25)], ["out", by(0.8)], ["fit", () => { zoom = 1; apply(); }]]) {
+// Take the position from one frame (after it moved), for all of them.
+const from = (f) => {
+  const mx = f.scrollWidth - f.clientWidth, my = f.scrollHeight - f.clientHeight;
+  fx = mx > 0 ? clamp(f.scrollLeft / mx, 0, 1) : 0;
+  fy = my > 0 ? clamp(f.scrollTop / my, 0, 1) : 0;
+};
+// Zoom by the factor k, keeping the point (px, py) of frame f where it is.
+const zoomAt = (f, k, px, py) => {
+  const next = clamp(Math.round(zoom * k * 100) / 100, 1, 6);
+  const r = next / zoom;
+  const cx = f.scrollLeft + px, cy = f.scrollTop + py;
+  zoom = next;
+  f.querySelector("img").style.width = zoom * 100 + "%";
+  f.scrollLeft = cx * r - px;
+  f.scrollTop = cy * r - py;
+  from(f);
+  place();
+};
+const centre = (f) => [f.clientWidth / 2, f.clientHeight / 2];
+const buttons = { in: (f) => zoomAt(f, 1.25, ...centre(f)), out: (f) => zoomAt(f, 0.8, ...centre(f)), fit: () => { zoom = 1; fx = fy = 0; place(); } };
+for (const [id, act] of Object.entries(buttons)) {
   const e = document.getElementById(id);
-  if (e) e.onclick = f;
+  if (e && frames[0]) e.onclick = () => act(frames[0]);
 }
-document.addEventListener("wheel", (e) => {
-  if (!e.ctrlKey && !e.metaKey) return;
-  e.preventDefault();
-  zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
-  apply();
-}, { passive: false });
-for (const img of document.querySelectorAll("img")) img.ondblclick = () => { zoom = zoom > 1 ? 1 : 2; apply(); };
-apply();
+for (const f of frames) {
+  f.addEventListener("wheel", (e) => {
+    const box = f.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      zoomAt(f, e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - box.left, e.clientY - box.top);
+    } else if (zoom > 1) {
+      // Zoomed in: the wheel moves the page in its frame (like a PDF viewer), not the panel.
+      e.preventDefault();
+      f.scrollLeft += e.deltaX;
+      f.scrollTop += e.deltaY;
+      from(f);
+      place();
+    }
+  }, { passive: false });
+  let drag = null;
+  f.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    drag = { x: e.clientX, y: e.clientY, l: f.scrollLeft, t: f.scrollTop };
+    f.setPointerCapture(e.pointerId);
+    f.classList.add("dragging");
+  });
+  f.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    f.scrollLeft = drag.l - (e.clientX - drag.x);
+    f.scrollTop = drag.t - (e.clientY - drag.y);
+    from(f);
+    place();
+  });
+  const end = (e) => {
+    drag = null;
+    f.classList.remove("dragging");
+    try { f.releasePointerCapture(e.pointerId); } catch {}
+  };
+  f.addEventListener("pointerup", end);
+  f.addEventListener("pointercancel", end);
+  f.addEventListener("dblclick", (e) => {
+    const box = f.getBoundingClientRect();
+    if (zoom > 1) buttons.fit();
+    else zoomAt(f, 2.5, e.clientX - box.left, e.clientY - box.top);
+  });
+  f.querySelector("img").addEventListener("load", () => { fit(); place(); });
+}
+new ResizeObserver(() => { fit(); place(); }).observe(document.body);
+fit();
+place();
 </script>
 </body></html>`;
   }

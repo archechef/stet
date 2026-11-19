@@ -367,6 +367,22 @@
         "title": "PDF previews: off",
         "category": "Stet",
         "toggled": "config.stet.pdfPreviews == 'off'"
+      },
+      {
+        "command": "stet.reviewFile",
+        "title": "Review all changes in this file",
+        "category": "Stet",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "stet.reviewAccept",
+        "title": "Accept (from the review)",
+        "category": "Stet"
+      },
+      {
+        "command": "stet.clearDraft",
+        "title": "Use the agent's wording again",
+        "category": "Stet"
       }
     ],
     "menus": {
@@ -592,6 +608,11 @@
           "command": "stet.agentPing",
           "when": "view == stet.review && viewItem =~ /^agent\\.active/",
           "group": "2_manage@0"
+        },
+        {
+          "command": "stet.reviewFile",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
+          "group": "3_nav@0"
         }
       ],
       "comments/commentThread/context": [
@@ -641,6 +662,10 @@
         {
           "command": "stet.agentNotifyOff",
           "when": "false"
+        },
+        {
+          "command": "stet.reviewAccept",
+          "when": "false"
         }
       ],
       "comments/commentThread/title": [
@@ -655,6 +680,11 @@
           "command": "stet.noteForAgent",
           "group": "stet@1",
           "when": "stet.active && resourceScheme == file"
+        },
+        {
+          "command": "stet.reviewFile",
+          "when": "resourceScheme == file && stet.fileHasChanges",
+          "group": "stet@1"
         }
       ],
       "stet.viewOptions": [
@@ -709,6 +739,13 @@
         {
           "command": "stet.pdfPreviews.off",
           "group": "4_pdf@4"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "stet.reviewFile",
+          "when": "resourceScheme == file && stet.fileHasChanges",
+          "group": "navigation@1"
         }
       ]
     },

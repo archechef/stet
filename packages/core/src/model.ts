@@ -192,6 +192,11 @@ export interface Item {
    * says nothing about the change itself, so it does not count for repeat detection.
    */
   acceptFailed?: { at: string; reason: string };
+  /**
+   * The reviewer's own wording for a pending change, written in the file's review document: still
+   * pending, and used when they accept it (as "Edit and accept" does). Absent: the agent's text.
+   */
+  draft?: string;
 }
 
 /**

@@ -157,14 +157,21 @@ exports.run = async function run() {
     }, 5000).catch(() => []);
     check("with word wrap, new text is an inlay hint", labels.includes("real use"), JSON.stringify(labels));
     const wraps = async () => {
-      ed3.selection = new vscode.Selection(lineNo, 0, lineNo, 0);
+      // cursorMove acts on the active editor, and an editor object goes stale when its editor is
+      // replaced: take the one showTextDocument returns, every time.
+      const ed = await vscode.window.showTextDocument(doc2, { preserveFocus: false, preview: false });
+      ed.selection = new vscode.Selection(lineNo, 0, lineNo, 0);
       await vscode.commands.executeCommand("cursorMove", { to: "down", by: "wrappedLine" });
-      return ed3.selection.active.line === lineNo;
+      return ed.selection.active.line === lineNo;
     };
     const wrappedWithHint = await until("the line to wrap with the hint", wraps, 5000).catch(() => false);
     await vscode.workspace.getConfiguration("stet").update("inlineChanges", false, vscode.ConfigurationTarget.Global);
     const wrappedWithout = await until("the line to fit without the hint", async () => !(await wraps()), 5000).then(() => false, () => true);
-    check("word wrap makes room for the new text", wrappedWithHint && !wrappedWithout, `with hint: ${wrappedWithHint}, without: ${wrappedWithout}`);
+    // Moving the cursor by screen lines needs the window to have the system's focus (it hasn't
+    // while you work in another window during the test): then these can't measure, and say so.
+    const measurable = await until("window focus", async () => vscode.window.state.focused || null, 5000).catch(() => false);
+    if (measurable) check("word wrap makes room for the new text", wrappedWithHint && !wrappedWithout, `with hint: ${wrappedWithHint}, without: ${wrappedWithout}`);
+    else check("word wrap makes room for the new text (skipped: window not focused)", true);
     await vscode.workspace.getConfiguration("stet").update("inlineChanges", true, vscode.ConfigurationTarget.Global);
 
     // A long proposal in a long paragraph line wraps over several screen lines, whole: VS Code
@@ -174,11 +181,12 @@ exports.run = async function run() {
     const wrapEd = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(wrapUri));
     await editorCfg.update("wordWrapColumn", 80, vscode.ConfigurationTarget.Global);
     const screenLines = async () => {
-      wrapEd.selection = new vscode.Selection(0, 0, 0, 0);
+      const ed = await vscode.window.showTextDocument(wrapEd.document, { preserveFocus: false, preview: false });
+      ed.selection = new vscode.Selection(0, 0, 0, 0);
       let n = 1;
       for (; n < 40; n++) {
         await vscode.commands.executeCommand("cursorMove", { to: "down", by: "wrappedLine" });
-        if (wrapEd.selection.active.line !== 0) break;
+        if (ed.selection.active.line !== 0) break;
       }
       return n;
     };
@@ -190,7 +198,8 @@ exports.run = async function run() {
     const withoutLong = await screenLines();
     await vscode.workspace.getConfiguration("stet").update("inlineChanges", true, vscode.ConfigurationTarget.Global);
     const maxLen = vscode.workspace.getConfiguration("editor", { uri: wrapUri, languageId: wrapEd.document.languageId }).get("inlayHints.maximumLength");
-    check("a long proposal wraps over several screen lines", withLong - withoutLong >= 2, JSON.stringify({ withLong, withoutLong, lang: wrapEd.document.languageId, maxLen }));
+    if (vscode.window.state.focused) check("a long proposal wraps over several screen lines", withLong - withoutLong >= 2, JSON.stringify({ withLong, withoutLong, lang: wrapEd.document.languageId, maxLen }));
+    else check("a long proposal wraps over several screen lines (skipped: window not focused)", true);
 
     // The colour button: green parameter hints in the user's settings, and back (keeping their own value).
     const workbench = () => vscode.workspace.getConfiguration("workbench").inspect("colorCustomizations").globalValue || {};
@@ -293,6 +302,31 @@ exports.run = async function run() {
     }, 60000).catch(() => null);
     check("the hover shows the PDF preview once it is built", !!pdfWithImage && /file:\/\/.*after\.png/.test(pdfWithImage), (await pdfHoverText()).slice(0, 300));
 
+    // Review all changes in a file: an editable diff. Saving keeps changes pending with the
+    // user's wording; ✓ Accept there accepts with it.
+    const mainFile = vscode.Uri.file(join(fx.repo, "main.tex"));
+    await vscode.commands.executeCommand("stet.reviewFile", mainFile);
+    const reviewDoc = await until("review document", async () => vscode.workspace.textDocuments.find((d) => d.uri.scheme === "stet-review" && d.uri.path.endsWith("main.tex")) || null, 10000).catch(() => null);
+    check("the review of a file shows its pending changes", !!reviewDoc && reviewDoc.getText().includes("the task of reviewing"), reviewDoc ? reviewDoc.getText().slice(0, 200) : "no review document");
+    if (reviewDoc) {
+      const replaceIn = async (from, to) => {
+        const k = reviewDoc.getText().indexOf(from);
+        const e = new vscode.WorkspaceEdit();
+        e.replace(reviewDoc.uri, new vscode.Range(reviewDoc.positionAt(k), reviewDoc.positionAt(k + from.length)), to);
+        await vscode.workspace.applyEdit(e);
+        return reviewDoc.save();
+      };
+      const item0 = () => JSON.parse(readFileSync(join(store, "items", `${fx.items[0]}.json`), "utf8"));
+      const saved = await replaceIn("the task of", "the hard task of");
+      check("saving the review keeps the change pending with your wording", saved && item0().status === "pending" && item0().draft === "hard task", JSON.stringify({ saved, status: item0().status, draft: item0().draft }));
+      const outside = await replaceIn("In this work", "In this paper").catch(() => false);
+      check("an edit outside the changes isn't saved", outside === false && item0().draft === "hard task", JSON.stringify({ outside }));
+      await vscode.commands.executeCommand("workbench.action.files.revert");
+      await vscode.commands.executeCommand("stet.reviewAccept", reviewDoc.uri, { path: fx.repo, id: fx.items[0] });
+      const accepted = await until("accept from the review", async () => (item0().status === "accepted" ? readFileSync(join(fx.repo, "main.tex"), "utf8") : null), 10000).catch(() => null);
+      check("✓ Accept in the review accepts with your wording", !!accepted && accepted.includes("the hard task of reviewing"), JSON.stringify({ status: item0().status }));
+    }
+
     // View options switch settings from the panel.
     const stetConf = () => vscode.workspace.getConfiguration("stet");
     const inlineBefore = stetConf().get("inlineChanges");
@@ -305,7 +339,7 @@ exports.run = async function run() {
     check("view options switch settings", flipped === !inlineBefore && stetConf().get("inlineChanges") === inlineBefore && long === "hover", JSON.stringify({ inline: inlineBefore, flipped, long }));
 
     const allCommands = await vscode.commands.getCommands(true);
-    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover"];
+    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover", "stet.reviewFile", "stet.clearDraft"];
     check("new commands are registered", wanted.every((c) => allCommands.includes(c)), JSON.stringify(wanted.filter((c) => !allCommands.includes(c))));
   } catch (e) {
     check("no exception", false, e && e.stack);

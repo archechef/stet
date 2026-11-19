@@ -146,6 +146,15 @@ Open a `.tex` file with pending changes:
 
 You can keep typing in the file while changes are pending. Stet finds each change again in your current text, including unsaved edits.
 
+### Reviewing a whole file
+
+**Review all changes in this file** opens VS Code's diff editor: on the left your file, on the right the same file with every pending change in it applied. Real line breaks and word wrap, so long rewrites read like text; VS Code's *Inline View* (the diff's **…** menu) shows both in one column, like tracked changes.
+
+- **Open it from:** the button in the editor's title bar (shown when the file has pending changes), the editor's right-click menu, *All changes* in a change's hover, right-clicking a change in the Stet panel, or the command palette.
+- **Edit the right side** to reword proposals. Saving keeps your wording for those changes (the panel marks them *your wording*); nothing is accepted. Edits outside the proposed changes are refused when you save: make those in your file itself.
+- **Decide** with the buttons above each change on the right: **✓ Accept** (with your wording, if you gave one), **✗ Reject**, and **↺ Agent's wording** to drop yours. Accepting elsewhere (panel, editor, `stet accept`) uses your wording too. The agent is told when you accept a change in your own wording.
+- Changes that overlap another one (two agents on the same text) are not in it; a line at the top names them.
+
 ### 4.3 Actions
 
 | Action | Key in the panel | What happens |
@@ -196,7 +205,7 @@ The agent is told and can propose it again against the current text.
 - Changes with no place of their own on the page (the preamble, a macro definition, bibliography data, files that aren't `.tex`) get no preview, and the panel says so.
 - **LaTeX errors:** previews are built like your own compile, past errors, so a paper with a small error elsewhere still gets them. Errors that only appear with the change are shown as a warning next to the preview. If no PDF comes out, the panel shows the LaTeX error, or says the document doesn't compile without the change either.
 
-**Zoom:** the buttons above the images (−, *Fit*, +), Ctrl/Cmd and the mouse wheel, or a double-click on an image (fit ↔ 200%). The zoom stays while you move from change to change.
+**Zoom** works like a PDF viewer: each image keeps its place in the panel, and zooming enlarges the page inside it. Ctrl/Cmd + wheel zooms around the mouse pointer, dragging moves the page, and when zoomed in the wheel moves it too. Double-click zooms in on a spot, or back to the whole width; the buttons above the images (−, *Fit*, +) do the same. *After* and *Before* keep the same zoom and position, so they show the same spot, and both stay while you move from change to change.
 
 **What it needs:** Podman, and on Linux preferably TeX Live. Previews compile the agents' text in an isolated container, because LaTeX can read any file you can and copy it into the PDF. The container has no network and sees only the build folder.
 - **Linux with a standalone TeX Live** (from tug.org): the container uses your TeX, read-only. Its image is small (**Set up**, about 150 MB: Debian, Perl and Poppler).
