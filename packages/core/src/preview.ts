@@ -24,7 +24,7 @@ import { randomBytes } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, posix } from "node:path";
+import { basename, delimiter, dirname, join, posix, sep } from "node:path";
 import { filterOverrides, Repo } from "./git.js";
 import { writeInside } from "./safefs.js";
 import { fromLf, lineOf, type Eol } from "./text.js";
@@ -481,6 +481,8 @@ export type PreviewResult =
       note?: string;
       /** LaTeX reported errors with the change that the document didn't have without it; the PDF came out anyway. */
       warning?: { message: string; log: string; count: number; missing?: Missing };
+      /** Whole pages with the changed words marked, for a page viewer; other pages via `PreviewBuilder.page`. */
+      pages?: PageView;
     }
   /** The change has no place on the page (preamble, macros, bibliography data, a file not in the document). */
   | { status: "no-spot"; message: string }
@@ -495,6 +497,32 @@ export type PreviewResult =
 export interface Missing {
   files: string[];
   extras: boolean;
+}
+
+/** A rectangle on a page, in PDF points from its top-left corner. */
+export interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** One version's page with the change: its image, size (points), the document's page count, and the marked words. */
+export interface PageSide {
+  page: number;
+  count: number;
+  width: number;
+  height: number;
+  file: string;
+  marks: Box[];
+}
+
+/** The pages of a preview: where the build is (to render other pages), and the change's page in each version. */
+export interface PageView {
+  base: string;
+  key: string;
+  after: PageSide;
+  before: PageSide | null;
 }
 
 /** One change applied for a preview: a file's text at the base (LF), its line endings, and the edit. */
@@ -520,6 +548,7 @@ export interface PreviewRequest {
 }
 
 const RESOLUTION = 200; // dpi of the rendered region: sharp enough to zoom in
+const PAGE_RESOLUTION = 170; // dpi of whole pages in the page viewer
 const KEEP_BASES = 3;
 
 /** Builds previews for one project, with a cache under `root` (`<store>/previews`). */
@@ -543,7 +572,9 @@ export class PreviewBuilder {
     const itemDir = join(baseDir, "items", req.key);
     const cached = await readFile(join(itemDir, "result.json"), "utf8").then((t) => JSON.parse(t) as PreviewResult, () => null);
     // Only images in this change's own folder: a tampered record must not point anywhere else.
-    if (cached && (cached.status !== "ready" || (insideDir(cached.after?.file, itemDir) && (cached.before === null || insideDir(cached.before?.file, itemDir))))) return cached;
+    const pagesOk = (r: PreviewResult) =>
+      r.status !== "ready" || !r.pages || [r.pages.after.file, r.pages.before?.file].every((f) => f === undefined || insideTree(f, this.root));
+    if (cached && pagesOk(cached) && (cached.status !== "ready" || (insideDir(cached.after?.file, itemDir) && (cached.before === null || insideDir(cached.before?.file, itemDir))))) return cached;
     return this.once(itemDir, async () => {
       const base = await this.once(join(baseDir, "base"), () => this.buildBase(req.base, baseDir));
       const result = await this.buildItem(req, base, baseDir, itemDir);
@@ -628,10 +659,16 @@ export class PreviewBuilder {
 
     const after = applied.files.get(target.file)!;
     const lines = (text: string, from: number, to: number) => [lineOf(text, from), lineOf(text, Math.max(from, to - 1))];
-    const afterImg = await this.region(work, built.pdf, target.file, lines(after, applied.start, applied.start + target.newText.length), join(itemDir, "after.png"));
+    // Every change shown in this file, in each version's own text: the one asked for first.
+    const same = req.changes.map((c, k) => ({ c, k })).filter((x) => x.c.file === target.file).sort((a, b) => (a.k === req.target ? -1 : b.k === req.target ? 1 : 0));
+    const spansAfter = same.map(({ c, k }) => around(after, applied.starts[k]!, applied.starts[k]! + c.newText.length));
+    const spansBefore = same.map(({ c }) => around(c.baseText, c.range.start, c.range.end));
+    const afterImg = await this.region(work, built.pdf, target.file, lines(after, applied.start, applied.start + target.newText.length), join(itemDir, "after.png"), spansAfter);
     if (!afterImg) return noSpot;
-    const beforeImg = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), target.file, lines(target.baseText, target.range.start, target.range.end), join(itemDir, "before.png"));
-    await rm(work, { recursive: true, force: true }); // keep the images only
+    const beforeImg = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), target.file, lines(target.baseText, target.range.start, target.range.end), join(itemDir, "before.png"), spansBefore);
+    // Whole pages with the changed words marked (a word diff of the two versions around the change).
+    const pages = await this.pageView(work, built.pdf, afterImg.page, base, beforeImg?.page ?? null, req, itemDir, baseDir).catch(() => undefined);
+    await rm(work, { recursive: true, force: true }); // keep the images and this version's PDF only
     await utimes(baseDir, new Date(), new Date()).catch(() => undefined);
     // Errors only this version has: the PDF is there, but the reviewer should know.
     const known = new Set(errorsOf(base.log));
@@ -640,6 +677,7 @@ export class PreviewBuilder {
       status: "ready",
       before: beforeImg,
       after: afterImg,
+      ...(pages ? { pages } : {}),
       ...(fresh.length
         ? {
             warning: {
@@ -651,6 +689,86 @@ export class PreviewBuilder {
           }
         : {}),
     };
+  }
+
+  /** Keep this version's PDF, and make the page view: the change's page in each version, with marks. */
+  private async pageView(
+    work: string,
+    afterPdf: string,
+    aPage: number,
+    base: { dir: string; pdf: string | null },
+    bPage: number | null,
+    req: PreviewRequest,
+    itemDir: string,
+    baseDir: string,
+  ): Promise<PageView | undefined> {
+    await cp(afterPdf, join(itemDir, "after.pdf"), { mode: constants.COPYFILE_FICLONE });
+    const bWork = join(base.dir, "src");
+    const aInfo = await this.pdfInfo(itemDir, "after.pdf", aPage);
+    const bInfo = bPage && base.pdf ? await this.pdfInfo(bWork, base.pdf, bPage) : null;
+    if (!aInfo) return undefined;
+    // Three pages on each side: text that moves to the next page isn't a change.
+    const aWords = await this.pageWords(itemDir, "after.pdf", Math.max(1, aPage - 1), Math.min(aInfo.count, aPage + 1));
+    const bWords = bInfo && base.pdf ? await this.pageWords(bWork, base.pdf, Math.max(1, bPage! - 1), Math.min(bInfo.count, bPage! + 1)) : [];
+    const { inserted, removed } = wordDiff(bWords, aWords);
+    const after: PageSide = {
+      page: aPage, ...aInfo,
+      file: await this.renderPage(itemDir, "after.pdf", aPage, join(itemDir, "pages", `after-${aPage}.png`)),
+      marks: markRuns(inserted.filter((w) => w.page === aPage)),
+    };
+    const before: PageSide | null =
+      bInfo && base.pdf
+        ? {
+            page: bPage!, ...bInfo,
+            file: await this.renderPage(bWork, base.pdf, bPage!, join(baseDir, "pages", `${bPage}.png`)),
+            marks: markRuns(removed.filter((w) => w.page === bPage)),
+          }
+        : null;
+    return { base: req.base, key: req.key, after, before };
+  }
+
+  /**
+   * Another page of a preview (the reviewer scrolled on): its image, rendered once and cached.
+   * Null for a page that doesn't exist or a preview that isn't built.
+   */
+  async page(base: string, key: string, version: "after" | "before", n: number): Promise<{ file: string; width: number; height: number } | null> {
+    if (this.env.status !== "ready" || !/^[0-9a-f]{40,64}$/.test(base) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(key) || !Number.isInteger(n) || n < 1) return null;
+    const baseDir = join(this.root, base);
+    const itemDir = join(baseDir, "items", key);
+    if (version === "after") {
+      const info = existsSync(join(itemDir, "after.pdf")) ? await this.pdfInfo(itemDir, "after.pdf", n) : null;
+      if (!info || n > info.count) return null;
+      return { file: await this.renderPage(itemDir, "after.pdf", n, join(itemDir, "pages", `after-${n}.png`)), width: info.width, height: info.height };
+    }
+    const build = await readFile(join(baseDir, "base", "build.json"), "utf8").then((t) => JSON.parse(t) as { pdf: string | null }, () => null);
+    if (!build?.pdf || !/^stet-build\/[^/]+\.pdf$/.test(build.pdf.replace(/\\/g, "/"))) return null;
+    const work = join(baseDir, "base", "src");
+    const info = await this.pdfInfo(work, build.pdf, n);
+    if (!info || n > info.count) return null;
+    return { file: await this.renderPage(work, build.pdf, n, join(baseDir, "pages", `${n}.png`)), width: info.width, height: info.height };
+  }
+
+  private async pdfInfo(work: string, pdfRel: string, page: number): Promise<{ count: number; width: number; height: number } | null> {
+    const r = await runIsolated(this.env, this.cfg, work, ["pdfinfo", "-f", String(page), "-l", String(page), pdfRel]);
+    const count = Number(/^Pages:\s+(\d+)/m.exec(r.stdout)?.[1] ?? 0);
+    const size = /Page\s+\d+\s+size:\s+([\d.]+)\s+x\s+([\d.]+)/.exec(r.stdout);
+    return count && size ? { count, width: Number(size[1]), height: Number(size[2]) } : null;
+  }
+
+  private async pageWords(work: string, pdfRel: string, first: number, last: number): Promise<PdfWord[]> {
+    const r = await runIsolated(this.env, this.cfg, work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
+    return r.code === 0 ? parseWords(r.stdout, first) : [];
+  }
+
+  /** A whole page as an image (once: it's cached at `out`). */
+  private async renderPage(work: string, pdfRel: string, n: number, out: string): Promise<string> {
+    if (existsSync(out)) return out;
+    await mkdir(dirname(out), { recursive: true });
+    const name = `.page-${randomBytes(4).toString("hex")}`;
+    const r = await runIsolated(this.env, this.cfg, work, ["pdftoppm", "-f", String(n), "-l", String(n), "-r", String(PAGE_RESOLUTION), "-png", "-singlefile", pdfRel, name]);
+    if (r.code !== 0) throw new Error(`pdftoppm failed: ${r.stderr.slice(0, 200)}`);
+    await rename(join(work, `${name}.png`), out);
+    return out;
   }
 
   /** A failed build, with what's missing if a file couldn't be found (a package not in the preview's TeX). */
@@ -670,7 +788,7 @@ export class PreviewBuilder {
   }
 
   /** Locate source lines in a PDF with SyncTeX and render that region to `out`. */
-  private async region(work: string, pdf: string, file: string, lines: number[], out: string): Promise<PreviewImage | null> {
+  private async region(work: string, pdf: string, file: string, lines: number[], out: string, spans: Span3[] = []): Promise<PreviewImage | null> {
     const pdfRel = relTo(work, pdf);
     const boxes: SyncBox[] = [];
     for (const line of [...new Set(lines)]) {
@@ -685,10 +803,26 @@ export class PreviewBuilder {
     const back = await runIsolated(this.env, this.cfg, work, ["synctex", "edit", "-o", `${page}:${(b.h + b.W / 2).toFixed(1)}:${(b.v - b.H / 2).toFixed(1)}:${pdfRel}`]);
     const input = /^Input:(.*)$/m.exec(back.stdout)?.[1]?.trim();
     if (input && !sameSource(input, file)) return null;
-    const info = await runIsolated(this.env, this.cfg, work, ["pdfinfo", "-f", String(page), "-l", String(page), pdfRel]);
+
+    // The words of the changes, on SyncTeX's pages and the one after (a paragraph may go on).
+    let shown = boxes;
+    let at = page;
+    if (spans.length) {
+      const pages = boxes.map((b) => b.page);
+      const first = Math.min(...pages), last = Math.max(...pages) + 1;
+      const text = await runIsolated(this.env, this.cfg, work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
+      const words = text.code === 0 ? parseWords(text.stdout, first) : [];
+      const found = spans.map((s) => findWords(words, plainWords(s.before).slice(-6), plainWords(s.text), plainWords(s.after).slice(0, 6), page));
+      if (found[0]) {
+        at = found[0][0]!.page;
+        // The others shown with it, where they are on the same page.
+        shown = found.filter((f): f is PdfWord[] => !!f && f.some((w) => w.page === at)).flatMap((f) => wordBoxes(f.filter((w) => w.page === at)));
+      }
+    }
+    const info = await runIsolated(this.env, this.cfg, work, ["pdfinfo", "-f", String(at), "-l", String(at), pdfRel]);
     const size = /Page\s+\d+\s+size:\s+([\d.]+)\s+x\s+([\d.]+)/.exec(info.stdout) ?? /Page size:\s+([\d.]+)\s+x\s+([\d.]+)/.exec(info.stdout);
     if (!size) return null;
-    const crop = cropRegion(boxes, { width: Number(size[1]), height: Number(size[2]) });
+    const crop = cropRegion(shown, { width: Number(size[1]), height: Number(size[2]) });
     if (!crop) return null;
     const px = (pt: number) => String(Math.round((pt * RESOLUTION) / 72));
     const name = `.region-${randomBytes(4).toString("hex")}`;
@@ -755,22 +889,24 @@ export class PreviewBuilder {
  * Apply `changes` (several files, each change against its file's base text) and say where the
  * target change starts in its file's new text. Null if two changes in a file overlap.
  */
-export function applyChanges(changes: PreviewChange[], target: number): { files: Map<string, string>; start: number } | null {
+export function applyChanges(changes: PreviewChange[], target: number): { files: Map<string, string>; start: number; starts: number[] } | null {
   const files = new Map<string, string>();
   let start = -1;
+  const starts: number[] = changes.map(() => -1);
   for (const file of new Set(changes.map((c) => c.file))) {
     const list = changes.map((c, k) => ({ c, k })).filter((x) => x.c.file === file).sort((a, b) => a.c.range.start - b.c.range.start || a.k - b.k);
     for (let i = 1; i < list.length; i++) if (list[i]!.c.range.start < list[i - 1]!.c.range.end) return null;
     let text = list[0]!.c.baseText;
     let shift = 0;
     for (const { c, k } of list) {
+      starts[k] = c.range.start + shift;
       if (k === target) start = c.range.start + shift;
       shift += c.newText.length - (c.range.end - c.range.start);
     }
     for (const { c } of [...list].reverse()) text = text.slice(0, c.range.start) + c.newText + text.slice(c.range.end);
     files.set(file, text);
   }
-  return start < 0 ? null : { files, start };
+  return start < 0 ? null : { files, start, starts };
 }
 
 /**
@@ -797,6 +933,143 @@ export function errorsOf(log: string): string[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Finding a change's words on the page. SyncTeX maps source *lines* to the page, and a paragraph
+// is often one source line: it returns the whole paragraph, starting on the page where the
+// paragraph starts. The words themselves say where the change is.
+
+export interface PdfWord {
+  text: string;
+  page: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** The words of `pdftotext -bbox-layout` output, in reading order; a word hyphenated at a line end is joined. */
+export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
+  const out: PdfWord[] = [];
+  let page = firstPage - 1;
+  const re = /<page\b|<line\b[^>]*>|<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g;
+  let lineStart = 0;
+  for (let m = re.exec(xhtml); m; m = re.exec(xhtml)) {
+    if (m[0] === "<page") page++;
+    else if (m[0].startsWith("<line")) lineStart = out.length;
+    else {
+      const text = decodeXml(m[5]!);
+      const prev = out[out.length - 1];
+      // "repre-" at the end of the line before, then "sentation": one word.
+      if (prev && out.length === lineStart && prev.page === page && /[A-Za-z]-$/.test(prev.text)) {
+        prev.text = prev.text.slice(0, -1) + text;
+        continue;
+      }
+      out.push({ text, page, x0: Number(m[1]), y0: Number(m[2]), x1: Number(m[3]), y1: Number(m[4]) });
+    }
+  }
+  return out;
+}
+
+const decodeXml = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+
+/** A word as it compares: letters and digits only, lower case, ligatures (ﬁ) taken apart. */
+const norm = (w: string) => w.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+
+/** The words LaTeX source typesets, roughly: no comments, commands, braces or maths. */
+export function plainWords(latex: string): string[] {
+  const t = latex
+    .replace(/(^|[^\\])%.*$/gm, "$1")
+    .replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g, " ")
+    .replace(/\\(?:label|ref|eqref|cref|Cref|cite\w*|begin|end|includegraphics|input|include)\*?(?:\[[^\]]*\])?\{[^}]*\}/g, " ")
+    .replace(/\\[A-Za-z@]+\*?/g, " ")
+    .replace(/[{}~]/g, " ");
+  return t.split(/\s+/).map(norm).filter((w) => w.length >= 2);
+}
+
+/** The longest common subsequence of `a` and `b`, as pairs of indices. */
+function lcs(a: string[], b: string[]): [number, number][] {
+  const n = a.length, m = b.length;
+  const d: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) d[i]![j] = a[i] === b[j] ? d[i + 1]![j + 1]! + 1 : Math.max(d[i + 1]![j]!, d[i]![j + 1]!);
+  const out: [number, number][] = [];
+  for (let i = 0, j = 0; i < n && j < m; ) {
+    if (a[i] === b[j]) {
+      out.push([i, j]);
+      i++;
+      j++;
+    } else if (d[i + 1]![j]! >= d[i]![j + 1]!) i++;
+    else j++;
+  }
+  return out;
+}
+
+/**
+ * Where `target` (with the words `before` and `after` it, which tell its place among the same
+ * words elsewhere) is in `words`: the PDF words of the target, or for a deletion the two words
+ * around it. Null if it can't be found with some confidence. `hint`: SyncTeX's page, preferred.
+ */
+export function findWords(words: PdfWord[], before: string[], target: string[], after: string[], hint?: number): PdfWord[] | null {
+  // Long changes: their beginning and end are enough.
+  const t = target.length > 40 ? [...target.slice(0, 20), ...target.slice(-20)] : target;
+  const seq = [...before, ...t, ...after];
+  if (seq.length < 2) return null;
+  const pdf = words.map((w) => norm(w.text));
+  const span = seq.length + Math.max(6, Math.ceil(seq.length / 2));
+  let best: { score: number; pairs: [number, number][]; at: number } | null = null;
+  for (let s = 0; s < pdf.length; s++) {
+    if (!seq.slice(0, 4).includes(pdf[s]!) && !t.includes(pdf[s]!)) continue; // windows start at a likely word
+    const pairs = lcs(seq, pdf.slice(s, s + span)).map(([i, j]) => [i, j + s] as [number, number]);
+    // Matched words, a little less when far from SyncTeX's page.
+    const score = pairs.length - (hint !== undefined && words[s]!.page !== hint ? 0.5 : 0);
+    if (!best || score > best.score) best = { score, pairs, at: s };
+  }
+  if (!best || best.pairs.length < Math.max(2, Math.ceil(seq.length * 0.5))) return null;
+  const inTarget = best.pairs.filter(([i]) => i >= before.length && i < before.length + t.length).map(([, j]) => words[j]!);
+  if (inTarget.length) return inTarget;
+  // A deletion (or a change whose words didn't match): the words on either side of it.
+  const lastBefore = best.pairs.filter(([i]) => i < before.length).at(-1);
+  const firstAfter = best.pairs.find(([i]) => i >= before.length + t.length);
+  const around = [lastBefore, firstAfter].filter((x): x is [number, number] => !!x).map(([, j]) => words[j]!);
+  return around.length ? around : null;
+}
+
+/**
+ * The words that differ between two versions: those of `after` not in `before` (inserted), and
+ * the other way round (removed). Compared as plain words, so a reflowed paragraph isn't a change.
+ */
+export function wordDiff(before: PdfWord[], after: PdfWord[]): { inserted: PdfWord[]; removed: PdfWord[] } {
+  // Between two PDFs a change of case is a change (unlike matching source words to the page).
+  const exact = (w: string) => w.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
+  const b = before.filter((w) => exact(w.text));
+  const a = after.filter((w) => exact(w.text));
+  const pairs = lcs(b.map((w) => exact(w.text)), a.map((w) => exact(w.text)));
+  const inB = new Set(pairs.map(([i]) => i));
+  const inA = new Set(pairs.map(([, j]) => j));
+  return { inserted: a.filter((_, j) => !inA.has(j)), removed: b.filter((_, i) => !inB.has(i)) };
+}
+
+/** Marked words as boxes, neighbours on one line joined into one. */
+export function markRuns(words: PdfWord[]): Box[] {
+  const out: Box[] = [];
+  let last: (PdfWord & Box) | null = null;
+  for (const w of words) {
+    if (last && Math.abs(w.y0 - last.y0) < 2 && w.x0 - last.x1 < 12 && w.x0 >= last.x0) {
+      last.x1 = Math.max(last.x1, w.x1);
+      last.y1 = Math.max(last.y1, w.y1);
+      continue;
+    }
+    last = { ...w };
+    out.push(last);
+  }
+  return out.map(({ x0, y0, x1, y1 }) => ({ x0, y0, x1, y1 }));
+}
+
+/** The SyncTeX-style boxes of words (for `cropRegion`), on the page of the first. */
+export function wordBoxes(found: PdfWord[]): SyncBox[] {
+  const page = found[0]!.page;
+  return found.filter((w) => w.page === page).map((w) => ({ page, h: w.x0, v: w.y1, W: w.x1 - w.x0, H: w.y1 - w.y0 }));
+}
+
 /** Files LaTeX looked for and didn't find (`File \`dsfont.sty' not found`, `I can't find file`). */
 export function missingFiles(log: string): string[] {
   const out = new Set<string>();
@@ -818,6 +1091,19 @@ export function sameSource(input: string, file: string): boolean {
   const a = norm(input);
   const f = norm(file);
   return a === f || a.endsWith("/" + f) || a === f.replace(/\.tex$/i, "") || a.endsWith("/" + f.replace(/\.tex$/i, ""));
+}
+
+/** A change in one version's text: its text, and some text on either side. */
+interface Span3 {
+  before: string;
+  text: string;
+  after: string;
+}
+const around = (text: string, start: number, end: number): Span3 => ({ before: text.slice(Math.max(0, start - 300), start), text: text.slice(start, end), after: text.slice(end, end + 300) });
+
+/** Whether `file` is somewhere below `root` (no `..`). */
+function insideTree(file: unknown, root: string): boolean {
+  return typeof file === "string" && file.startsWith(root + sep) && !file.slice(root.length).split(/[\\/]/).includes("..");
 }
 
 /** Whether `file` is a file directly in `dir` (no other folder, no `..`). */

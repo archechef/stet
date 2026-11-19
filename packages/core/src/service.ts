@@ -2131,6 +2131,12 @@ export class Stet {
     });
   }
 
+  /** Another page of a built preview (the page viewer scrolled on), or null. */
+  async previewPage(base: string, key: string, version: "after" | "before", n: number): Promise<{ file: string; width: number; height: number } | null> {
+    await this.previewStatus();
+    return this.previews!.builder.page(base, key, version, n);
+  }
+
   /** Choose which kinds of news wake an agent (see `NotifyTrigger`). Returns false if unchanged. */
   async setNotifyOn(agentId: string, triggers: NotifyTrigger[]): Promise<boolean> {
     const bad = triggers.filter((t) => !NOTIFY_TRIGGERS.includes(t));

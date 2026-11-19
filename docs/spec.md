@@ -663,6 +663,10 @@ The web UI will expose this API as REST plus Server-Sent Events on `localhost`, 
 4. The matching region is rendered from both PDFs (pdf.js in the UI) and shown before/after.
 5. Results are cached by (base sha, item id). If a build fails, the LaTeX error log is shown; that alone is useful ("this change breaks compilation").
 
+**Page view (built):** the Preview panel shows the change's whole page, rendered by Poppler in the container like everything else, with the changed words marked from a word diff of the two versions (`pdftotext -bbox`, three pages on each side so text moving across a page break isn't marked). Other pages are rendered on demand and cached; the base's pages are shared by every change on that base.
+
+**Later, optional: a real PDF viewer (pdf.js).** Instead of page images, the panel could embed pdf.js: vector rendering sharp at any zoom, smooth scrolling through the whole document, text selection and search, with the same marks on top. It is a new dependency (~2 MB) and would parse the agent-influenced PDF in the webview rather than in the container (pdf.js had a code-execution bug in 2024, CVE-2024-4367), so it would be opt-in, kept current, with scripting off. Decided 2026-11-19: page images (A) now, pdf.js (B) as a possible opt-in later.
+
 Agents could later get a `stet_build` tool to compile their own worktree before submitting.
 
 ---

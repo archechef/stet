@@ -70,6 +70,7 @@ Run these in your project folder. Changes have ids like `12.3`: change 3 of roun
 | `stet reject <12.3\|G3\|G3.2>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
 | `stet undo <12.3>` | Undoes a rejection, or an accept until you commit it (the change is taken out of your file again): the change is pending again, and so are changes the accept made stale. Changes decided together (a linked group, a move) are undone together. The agent is told. |
 | `stet preview <12.3>` | PDF preview of a change: writes images of the page region after and before the change and prints their paths. Says so when the change has no place on the page, or when the document doesn't compile. |
+| `stet preview <12.3> --page <n> [--before]` | A whole page of the preview as an image: of the version with the change, or `--before` it. |
 | `stet preview status` | What PDF previews can use here, and what is missing. |
 | `stet preview setup` | Builds the container image previews compile in (downloads Debian, Perl and Poppler, about 150 MB). Only ever on this command. |
 | `stet preview setup --extras` | Adds TeX's extra fonts (dsfont, bbm, bbold, …, about 2 GB) to the preview image with its own TeX, and uses it from then on. A preview that fails over a missing file suggests it. |

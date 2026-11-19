@@ -75,7 +75,9 @@ Review:
   stet accept <12.3|G3|G3.2>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
   stet reject <12.3|G3|G3.2>... [-m <reason>] [--all | --revise-rest | --only]
   stet undo <12.3>                      undo an accept (until committed) or a rejection: pending again
-  stet preview <12.3>                   PDF preview: images of the page region before and after the change
+  stet preview <12.3> [--page <n> [--before]]
+                                        PDF preview: images of the page region before and after the change
+                                        (--page: a whole page, with the change or --before it)
   stet preview status|setup [--extras]  what previews can use here | build their container image (downloads;
                                         --extras: add TeX's extra fonts to it, about 2 GB)
   stet revise <12.3> -m <what to change>
@@ -135,6 +137,8 @@ const { values: opt, positionals: pos } = parseArgs({
     once: { type: "boolean" },
     on: { type: "string" },
     extras: { type: "boolean" },
+    page: { type: "string" },
+    before: { type: "boolean" },
     print: { type: "boolean" },
   },
 });
@@ -664,6 +668,14 @@ async function main() {
         return out(() => `${green("Done.")} ${r.status.message}${r.status.fix ? `\n  ${r.status.fix}` : ""}`, r.status);
       }
       const r = await stet.preview(what);
+      // A whole page of the preview (the page viewer's): --page <n>, of the version --before or after.
+      if (opt.page !== undefined) {
+        if (r.status !== "ready" || !r.pages) throw new StetError(`No page view for ${what.toUpperCase()}: ${"message" in r ? r.message : "it has no pages"}`);
+        const n = Number(opt.page);
+        const pg = await stet.previewPage(r.pages.base, r.pages.key, opt.before ? "before" : "after", n);
+        if (!pg) throw new StetError(`Page ${opt.page} doesn't exist in the ${opt.before ? "version without" : "version with"} the change.`);
+        return out(() => `${what.toUpperCase()} ${opt.before ? "before" : "after"}, page ${n}: ${pg.file}`, pg);
+      }
       return out(() => {
         switch (r.status) {
           case "ready":

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
-import { applyChanges, containerArgs, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
+import { applyChanges, containerArgs, findWords, markRuns, parseWords, plainWords, wordDiff, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -175,5 +175,66 @@ describe("preview: missing packages", () => {
     expect(f).toMatch(/^FROM localhost\/stet-preview-tex:1$/m);
     expect(f).toMatch(/texlive-fonts-extra/);
     expect(DEFAULT_PREVIEW.texExtras).toBe(false); // the small image unless the user agrees
+  });
+});
+
+describe("preview: finding a change's words on the page", () => {
+  const xhtml = (lines: string[][], page = 1) =>
+    `<doc><page width="612" height="792"><flow><block>` +
+    lines
+      .map((ws, k) => `<line>` + ws.map((w, i) => `<word xMin="${100 + i * 40}" yMin="${100 + k * 12}" xMax="${130 + i * 40}" yMax="${110 + k * 12}">${w}</word>`).join("") + `</line>`)
+      .join("") +
+    `</block></flow></page></doc>`;
+
+  it("reads the words in order and joins a word hyphenated at a line end", () => {
+    const w = parseWords(xhtml([["Sentence", "one", "repre-"], ["sentation", "ends."]]), 3);
+    expect(w.map((x) => x.text)).toEqual(["Sentence", "one", "representation", "ends."]);
+    expect(w[0]!.page).toBe(3);
+  });
+
+  it("turns LaTeX into the words it typesets", () => {
+    expect(plainWords("We \\emph{study} the $x^2$ case~\\cite{knuth} of reviewing % a comment\nchanges.")).toEqual(["we", "study", "the", "case", "of", "reviewing", "changes"]);
+  });
+
+  // The same sentence twice: only the context tells which one changed.
+  const page = parseWords(xhtml([
+    ["Sentence", "12", "says", "something", "about", "reviewing"],
+    ["changes.", "Sentence", "13", "now", "SAYS", "SOMETHING"],
+    ["NEW", "about", "reviewing", "changes.", "Sentence", "14"],
+    ["says", "something", "about", "reviewing", "changes."],
+  ]), 1);
+
+  it("finds the changed words by their context, across lines", () => {
+    const f = findWords(page, ["changes", "sentence", "13"], ["now", "says", "something", "new"], ["about", "reviewing"], 1)!;
+    expect(f.map((w) => w.text)).toEqual(["now", "SAYS", "SOMETHING", "NEW"]);
+    expect(new Set(f.map((w) => w.y0)).size).toBe(2); // two lines
+  });
+
+  it("finds a deletion by the words around it", () => {
+    const f = findWords(page, ["sentence", "14"], [], ["says", "something"], 1)!;
+    expect(f.map((w) => w.text)).toEqual(["14", "says"]);
+  });
+
+  it("gives up when the words aren't there", () => {
+    expect(findWords(page, ["lorem"], ["ipsum", "dolor"], ["amet"], 1)).toBeNull();
+  });
+});
+
+describe("preview: marking the changed words", () => {
+  const w = (text: string, x: number, y: number, page = 1) => ({ text, page, x0: x, y0: y, x1: x + 30, y1: y + 10 });
+  const before = [w("we", 0, 0), w("study", 35, 0), w("the", 70, 0), w("problem.", 105, 0), w("It", 0, 12), w("scales.", 35, 12)];
+  const after = [w("we", 0, 0), w("study", 35, 0), w("the", 70, 0), w("hard", 105, 0), w("TASK.", 140, 0), w("It", 0, 12), w("scales.", 35, 12)];
+
+  it("marks inserted words in the new version and removed ones in the old", () => {
+    const d = wordDiff(before, after);
+    expect(d.inserted.map((x) => x.text)).toEqual(["hard", "TASK."]);
+    expect(d.removed.map((x) => x.text)).toEqual(["problem."]);
+    // A change of case is a change between two versions.
+    expect(wordDiff([w("task", 0, 0)], [w("Task", 0, 0)]).inserted).toHaveLength(1);
+  });
+
+  it("joins neighbouring marked words on a line, not across lines", () => {
+    expect(markRuns([w("hard", 105, 0), w("TASK.", 140, 0)])).toEqual([{ x0: 105, y0: 0, x1: 170, y1: 10 }]);
+    expect(markRuns([w("end", 140, 0), w("start", 0, 12)])).toHaveLength(2);
   });
 });
