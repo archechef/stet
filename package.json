@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc -b packages/core packages/cli && npm run build -w stet-vscode",
     "test": "vitest run",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
     "package:vscode": "npm run package -w stet-vscode"
   },
   "engines": {
