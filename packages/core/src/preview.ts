@@ -21,11 +21,11 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, posix } from "node:path";
-import { Repo } from "./git.js";
+import { filterOverrides, Repo } from "./git.js";
 import { writeInside } from "./safefs.js";
 import { fromLf, lineOf, type Eol } from "./text.js";
 
@@ -80,6 +80,8 @@ export interface PreviewEnv {
   texMount?: string;
   /** The user's own TeX packages (~/texmf), mounted read-only if there are any. */
   texmfHome?: string;
+  /** Whether Podman can limit a container's memory here (needs the cgroup memory controller). */
+  memoryLimit?: boolean;
 }
 
 const run = (cmd: string, args: string[], opts: { input?: string; timeout?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {}) =>
@@ -88,11 +90,20 @@ const run = (cmd: string, args: string[], opts: { input?: string; timeout?: numb
     let stderr = "";
     let child;
     try {
-      child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      // Its own process group (POSIX), so a timeout also stops what it started (latexmk → TeX).
+      child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
     } catch (e: any) {
       return resolve({ code: -1, stdout: "", stderr: String(e?.message ?? e) });
     }
-    const timer = opts.timeout ? setTimeout(() => child!.kill("SIGKILL"), opts.timeout) : undefined;
+    const kill = () => {
+      try {
+        if (process.platform !== "win32" && child!.pid) process.kill(-child!.pid, "SIGKILL");
+        else child!.kill("SIGKILL");
+      } catch {
+        child!.kill("SIGKILL");
+      }
+    };
+    const timer = opts.timeout ? setTimeout(kill, opts.timeout) : undefined;
     child.stdout!.on("data", (d) => (stdout += d));
     child.stderr!.on("data", (d) => (stderr += d));
     child.on("error", (e) => {
@@ -170,6 +181,11 @@ export async function detectPreviewEnv(cfg: PreviewConfig): Promise<PreviewEnv> 
         fix: "Install TeX Live from tug.org. (Or, for material you trust, set preview.isolation to \"process\": TeX can then read every file you can.)",
       };
     }
+    // Podman's mount syntax separates with ':' and ','; such paths would be read wrongly.
+    const odd = [texMount, texmfHome].find((p) => p && /[:,]/.test(p));
+    if (odd) {
+      return { status: "unavailable", isolation: "container", message: `PDF previews can't mount ${odd} into a container: its path contains ':' or ','.`, fix: "Move it to a path without those characters." };
+    }
     const exists = await run(podman, ["image", "exists", cfg.image]);
     if (exists.code !== 0) {
       return {
@@ -182,7 +198,8 @@ export async function detectPreviewEnv(cfg: PreviewConfig): Promise<PreviewEnv> 
         fix: "Build it once with `stet preview setup` or the Set up button (downloads Debian, Perl and Poppler, roughly 100 MB).",
       };
     }
-    return { status: "ready", isolation: "container", texBin, texMount, ...(texmfHome ? { texmfHome } : {}), message: "PDF previews run in an isolated container." };
+    const memoryLimit = /\bmemory\b/.test((await run(podman, ["info", "--format", "{{.Host.CgroupControllers}}"])).stdout);
+    return { status: "ready", isolation: "container", texBin, texMount, ...(texmfHome ? { texmfHome } : {}), memoryLimit, message: "PDF previews run in an isolated container." };
   }
   const pdftoppm = await which("pdftoppm");
   if (!pdftoppm || !(await which("pdfinfo"))) {
@@ -225,11 +242,17 @@ export function containerArgs(env: PreviewEnv, image: string, work: string, name
   const vars = { PATH: `${env.texBin}:/usr/bin:/bin`, HOME: "/tmp", TEXMFVAR: "/tmp/texmf-var", ...(env.texmfHome ? { TEXMFHOME: "/texmf-home" } : {}), ...TEX_ENV };
   return [
     "run", "--rm", "--name", name,
+    // Only ever the image the user built: a missing one is an error, never a download.
+    "--pull=never",
     "--network=none",
     "--read-only", "--tmpfs", "/tmp:rw,size=256m",
     "--userns=keep-id",
     "--cap-drop=ALL", "--security-opt=no-new-privileges",
+    // A hostile document can loop, write or allocate until the timeout: bound what it can use.
     "--pids-limit=256",
+    "--ulimit", "fsize=536870912:536870912",
+    "--ulimit", "nofile=1024:1024",
+    ...(env.memoryLimit ? ["--memory=2g", "--memory-swap=2g"] : []),
     "--volume", `${env.texMount}:${env.texMount}:ro`,
     ...(env.texmfHome ? ["--volume", `${env.texmfHome}:/texmf-home:ro`] : []),
     "--volume", `${work}:/work`,
@@ -243,6 +266,7 @@ export function containerArgs(env: PreviewEnv, image: string, work: string, name
 async function runIsolated(env: PreviewEnv, cfg: PreviewConfig, work: string, cmd: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const timeout = cfg.timeout * 1000;
   if (env.isolation === "container") {
+    if (/[:,]/.test(work)) return { code: -1, stdout: "", stderr: `Can't mount ${work} into a container: its path contains ':' or ','.` };
     const name = `stet-preview-${randomBytes(6).toString("hex")}`;
     const r = await run("podman", containerArgs(env, cfg.image, work, name, cmd), { timeout });
     if (r.code !== 0) await run("podman", ["rm", "--force", "--ignore", name]); // after a timeout
@@ -376,10 +400,15 @@ export class PreviewBuilder {
 
   async preview(req: PreviewRequest): Promise<PreviewResult> {
     if (this.env.status !== "ready") return { status: "unavailable", message: this.env.message, ...(this.env.fix ? { fix: this.env.fix } : {}) };
+    // Both name folders: a commit hash and an item id with a hash, nothing else.
+    if (!/^[0-9a-f]{40,64}$/.test(req.base) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(req.key)) {
+      return { status: "unavailable", message: "This change's record looks damaged; no preview." };
+    }
     const baseDir = join(this.root, req.base);
     const itemDir = join(baseDir, "items", req.key);
     const cached = await readFile(join(itemDir, "result.json"), "utf8").then((t) => JSON.parse(t) as PreviewResult, () => null);
-    if (cached) return cached;
+    // Only images in this change's own folder: a tampered record must not point anywhere else.
+    if (cached && (cached.status !== "ready" || (insideDir(cached.after?.file, itemDir) && (cached.before === null || insideDir(cached.before?.file, itemDir))))) return cached;
     return this.once(itemDir, async () => {
       const base = await this.once(join(baseDir, "base"), () => this.buildBase(req.base, baseDir));
       const result = await this.buildItem(req, base, baseDir, itemDir);
@@ -449,7 +478,8 @@ export class PreviewBuilder {
     const work = join(itemDir, "build");
     await rm(work, { recursive: true, force: true });
     await mkdir(itemDir, { recursive: true });
-    await cp(join(base.dir, "src"), work, { recursive: true, verbatimSymlinks: true });
+    // Copy-on-write where the filesystem can (btrfs, XFS, APFS): figures aren't duplicated.
+    await cp(join(base.dir, "src"), work, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
     const after = req.baseText.slice(0, req.range.start) + req.newText + req.baseText.slice(req.range.end);
     await writeInside(work, req.file, fromLf(after, req.eol));
     const engine = this.cfg.engine === "auto" ? detectEngine((await readFile(join(work, base.root), "utf8").catch(() => "")) || "") : this.cfg.engine;
@@ -515,7 +545,9 @@ export class PreviewBuilder {
     const index = join(dirname(dir), "index");
     const env = { GIT_INDEX_FILE: index };
     await this.repo.run(["read-tree", rev], { env });
-    await this.repo.run(["-c", "core.symlinks=false", "checkout-index", "--all", "--force", `--prefix=${dir.replace(/\\/g, "/")}/`], { env });
+    // Configured filter programs stay off (as everywhere Stet handles files), and links come out as files.
+    const filters = (await filterOverrides(this.repo)).flatMap((c) => ["-c", c]);
+    await this.repo.run([...filters, "-c", "core.symlinks=false", "checkout-index", "--all", "--force", `--prefix=${dir.replace(/\\/g, "/")}/`], { env });
     await rm(index, { force: true });
   }
 
@@ -556,6 +588,11 @@ export function sameSource(input: string, file: string): boolean {
   const a = norm(input);
   const f = norm(file);
   return a === f || a.endsWith("/" + f) || a === f.replace(/\.tex$/i, "") || a.endsWith("/" + f.replace(/\.tex$/i, ""));
+}
+
+/** Whether `file` is a file directly in `dir` (no other folder, no `..`). */
+export function insideDir(file: unknown, dir: string): boolean {
+  return typeof file === "string" && dirname(file) === dir && !basename(file).startsWith(".");
 }
 
 const relPdf = (pdf: string) => join("stet-build", basename(pdf));

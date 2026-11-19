@@ -118,7 +118,8 @@ export async function appendInside(root: string, rel: string, data: string): Pro
   const st = await lstatOrNull(t.path);
   if (st?.isSymbolicLink()) await removeLink(t.path);
   // O_NOFOLLOW closes the gap between the check and the open where the platform has it.
-  const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0);
+  // O_NONBLOCK: opening a named pipe the agent put here fails at once instead of waiting forever.
+  const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
   const fh = await open(t.path, flags, 0o644);
   try {
     if (!(await fh.stat()).isFile()) throw new UnsafePathError(`${rel} is not a regular file`);
@@ -132,7 +133,16 @@ export async function appendInside(root: string, rel: string, data: string): Pro
 export async function readInside(root: string, rel: string): Promise<Buffer | null> {
   try {
     const t = await inspect(root, rel);
-    return t.exists ? await readFile(t.path) : null;
+    if (!t.exists) return null;
+    // Regular files only, opened without blocking: an agent can put a named pipe where a file
+    // was, and reading one would wait forever (in the reviewer's VS Code, too).
+    const fh = await open(t.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    try {
+      if (!(await fh.stat()).isFile()) return null;
+      return await fh.readFile();
+    } finally {
+      await fh.close();
+    }
   } catch {
     return null;
   }

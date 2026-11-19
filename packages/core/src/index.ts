@@ -10,7 +10,7 @@ export { moveChanges, moveChangesOf, moveTexts, type MoveChange } from "./moves.
 export { splitText, type Edit } from "./split.js";
 export { anchor } from "./anchor.js";
 export { doctor, type DoctorCheck } from "./doctor.js";
-export { isSafeRepoPath, lineOf, oneLine } from "./text.js";
+export { isSafeRepoPath, lineOf, oneLine, printable } from "./text.js";
 export { StetMcpServer, serveStdio, TOOLS, describeFeedback } from "./mcp.js";
 export { describeNote, type DeliveredNote } from "./notes.js";
 export { checkToolUse, type GuardContext, type HookInput } from "./guard.js";

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Security review before the release:**
+  - Preview containers never download an image (`--pull=never`); a changed `preview.image` could otherwise have fetched and run any image. They are now limited in file size, open files and memory as well as processes.
+  - An agent could put a named pipe where its inbox or `AGENTS.md` should be, and Stet (in VS Code, too) would wait on it forever. Agents' files are now opened only if they are regular files, without blocking.
+  - Agent-written text no longer reaches the terminal with control characters or Unicode direction overrides (`stet review`, `show`, feedback), which could rewrite, hide or reorder what the reviewer sees.
+  - Previews: images are shown only from Stet's own cache, cache folders are named only by real commit hashes, git filter programs stay off when exporting the project, and a timeout without a container stops TeX as well as latexmk.
+- **Faster previews on large projects:** a preview's copy of the project uses copy-on-write where the filesystem supports it (btrfs, XFS, APFS), so figures aren't duplicated; the panel no longer redraws while the cursor stays in one change.
 - **Smaller linked groups:** a group's parts could only name changes by line, and a LaTeX paragraph is often one line, so agents couldn't split changes within a paragraph into separate parts: Stet had to join them. Locations now take a quoted snippet of the new text, `main.tex:12 "suggestion"`, which picks one change on a line. Agents are told to use it, and the note when parts are joined says how. Checking that one part doesn't block another now also treats the first part's text as accepted, as a real accept does.
 - **What wakes an agent:** the bell next to an agent opens one checklist: when it is woken (when you pause, or right away) and by what: accepted changes, rejections, revision requests, comments and replies, new notes, commits and shared edits, and saves. Untick everything to turn notifications off. `stet agent notify <name> --on <kinds>` on the command line. Switched-off news still reaches the agent when it next checks.
 - **Notify now:** the megaphone next to an agent (or `stet agent ping <name> -m <text>`) wakes it at once, whatever its settings, with an optional message.

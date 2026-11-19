@@ -5,7 +5,7 @@
  * at a time, the selected change first, then the next few) and appear here when ready. Without
  * TeX or the container image, the panel says what is missing; nothing else depends on it.
  */
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import * as vscode from "vscode";
 import type { Item, PreviewEnv, PreviewResult } from "@stet/core";
 import type { Project } from "./project.js";
@@ -54,6 +54,8 @@ export class PreviewPanel implements vscode.Disposable {
   /** Show `t` if the panel is open (the selection moved). */
   follow(t: Target): void {
     if (!this.panel) return;
+    // The cursor moving within the same change: nothing to redraw or build.
+    if (this.current && keyOf(this.current) === keyOf(t)) return;
     this.current = t;
     this.render();
     this.request(t, true);
@@ -63,7 +65,9 @@ export class PreviewPanel implements vscode.Disposable {
   /** Forget results (after setting previews up, or when the project changed under them). */
   refresh(): void {
     this.results.clear();
-    if (this.current) this.follow(this.current);
+    const t = this.current;
+    this.current = undefined;
+    if (t) this.follow(t);
   }
 
   private request(t: Target, first: boolean): void {
@@ -96,8 +100,14 @@ export class PreviewPanel implements vscode.Disposable {
   private render(): void {
     const t = this.current;
     if (!this.panel || !t) return;
-    const r = this.results.get(keyOf(t));
+    let r = this.results.get(keyOf(t));
     const w = this.panel.webview;
+    // Images only from this project's preview cache.
+    const cache = previewCacheRoot(t.project);
+    const inCache = (f: string | undefined) => !!f && f.startsWith(cache + sep) && !relative(cache, f).split(sep).includes("..");
+    if (r?.status === "ready" && (!inCache(r.after.file) || (r.before && !inCache(r.before.file)))) {
+      r = { status: "unavailable", message: "This preview's files aren't in Stet's preview cache; not shown." };
+    }
     const roots = r?.status === "ready" ? [vscode.Uri.file(dirname(r.after.file))] : [];
     w.options = { enableScripts: true, localResourceRoots: roots };
     this.panel.title = `Preview ${t.item.id}`;

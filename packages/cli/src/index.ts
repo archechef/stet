@@ -44,6 +44,7 @@ import {
   NOTIFY_TRIGGER_TEXT,
   type StetEvent,
   describeNote,
+  printable,
   findInbox,
   followInbox,
   isNoteId,
@@ -143,11 +144,22 @@ const color = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = (code: string) => (s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
 const red = c("31"), green = c("32"), yellow = c("33"), dim = c("2"), bold = c("1"), cyan = c("36");
 
+/**
+ * Text for the terminal: Stet's own colour codes stay, every other control character goes (agent
+ * text could otherwise carry escape sequences that rewrite or hide what the reviewer sees).
+ */
+const OWN_SGR = /\x1b\[(?:0|1|2|31|32|33|36)m/g;
+export function forTerminal(s: string): string {
+  const keep: string[] = [];
+  const marked = s.replace(OWN_SGR, (m) => `\u0000${keep.push(m) - 1}\u0000`);
+  return printable(marked.replace(/\u0000(\d+)\u0000/g, "\uE000$1\uE001")).replace(/\uE000(\d+)\uE001/g, (_, k) => keep[Number(k)]!);
+}
+
 function out(human: () => string | void, data: unknown) {
   if (opt.json) console.log(JSON.stringify(data, null, 2));
   else {
     const s = human();
-    if (s) console.log(s);
+    if (s) console.log(forTerminal(s));
   }
 }
 
@@ -495,7 +507,7 @@ async function main() {
       const shareHint = share?.unshared && share.mode === "manual" ? [dim("Agents don't see your latest saved edits yet: `stet share` shares them.")] : [];
       const missing = await stet.missingFromBase().catch(() => []);
       if (missing.length) shareHint.push(yellow(missingText(missing)));
-      if (!items.length) return console.log(["Nothing to review.", ...shareHint].join("\n"));
+      if (!items.length) return console.log(forTerminal(["Nothing to review.", ...shareHint].join("\n")));
       const lines: string[] = [];
       for (const cs of changesets) {
         const csItems = items.filter((i) => i.changeset === cs.id);
@@ -523,7 +535,7 @@ async function main() {
           lines.push(`    ${itemSummary(i, line)}`);
         }
       }
-      return console.log([...lines, ...shareHint].join("\n"));
+      return console.log(forTerminal([...lines, ...shareHint].join("\n")));
     }
 
     case "show": {
@@ -839,7 +851,7 @@ async function main() {
 main().catch((e) => {
   if (e instanceof StetError) {
     if (opt.json) console.log(JSON.stringify({ error: e.message }));
-    else console.error(red("error: ") + e.message);
+    else console.error(red("error: ") + forTerminal(e.message));
   } else console.error(e);
   process.exitCode = 1;
 });

@@ -89,9 +89,18 @@ export function isSafeRepoPath(p: string): boolean {
   });
 }
 
+/**
+ * `s` without control characters (terminal escape sequences) and Unicode direction overrides
+ * ("Trojan source"): agent-written text is shown to the reviewer, and must not rewrite or
+ * reorder what they see. Line breaks and tabs stay.
+ */
+export function printable(s: string): string {
+  return s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+}
+
 /** Text on one line (whitespace collapsed), cut to `max` characters with an ellipsis. */
 export function oneLine(s: string, max = 120): string {
-  const t = s.replace(/\s+/g, " ").trim();
+  const t = printable(s).replace(/\s+/g, " ").trim();
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 

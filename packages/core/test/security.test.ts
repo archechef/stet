@@ -1,10 +1,13 @@
 /** Findings of the 2026-09-26 security audit: each test reproduces an attack and checks it fails. */
 import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/doctor.js";
-import { isSafeRepoPath } from "../src/text.js";
+import { InboxWriter, INBOX_FILE } from "../src/inbox.js";
+import { containerArgs, DEFAULT_PREVIEW, insideDir, PreviewBuilder } from "../src/preview.js";
+import { readInside } from "../src/safefs.js";
+import { isSafeRepoPath, oneLine, printable } from "../src/text.js";
 import { writeWorkspaceFiles } from "../src/workspace.js";
 import { verifyAgentWorktree } from "../src/worktree.js";
 import { edit, git, PAPER, read, setup } from "./helpers.js";
@@ -162,5 +165,54 @@ describe("store and paths", () => {
     for (const p of ["main.tex", "sections/intro.tex", "a/.gitignore", ".github/x.yml", "fig/git~x.png"]) expect(isSafeRepoPath(p), p).toBe(true);
     for (const p of ["", "../x", "a/../../x", "/etc/x", "C:/x", "c:x", ".git", ".git/config", "a/.GIT/x", ".git./x", ".git /x", "GIT~1/config", "git~2", "a/b:stream", "a//b", "./a"])
       expect(isSafeRepoPath(p), p).toBe(false);
+  });
+});
+
+describe("review before 0.10 (2026-11-19)", () => {
+  it("never blocks on a named pipe the agent puts in place of its inbox or AGENTS.md", async () => {
+    if (process.platform === "win32") return;
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: { command: process.execPath, args: ["/opt/stet/cli.js"] } });
+    const a = await stet.newAgent("a");
+    await stet.setNotify("a", "now");
+    const inbox = join(a.worktree, INBOX_FILE);
+    rmSync(inbox);
+    execFileSync("mkfifo", [inbox]);
+    execFileSync("mkfifo", [join(a.worktree, "AGENTS.md")]);
+    await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Shorter.");
+    const quick = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("hung")), 3000))]);
+    // Each returns (or fails) at once instead of waiting for a reader forever.
+    await quick(new InboxWriter(stet, "a").tick(true).catch(() => []));
+    await quick(stet.pingAgent("a").catch(() => undefined));
+    expect(await quick(readInside(a.worktree, "AGENTS.md"))).toBeNull();
+    await quick(stet.refreshWorkspace("a").catch(() => null));
+  });
+
+  it("strips terminal escapes and direction overrides from agent text it shows", () => {
+    const evil = "fine\u001b[2J\u001b]0;pwned\u0007 text‮ txet⁦";
+    expect(printable(evil)).toBe("fine[2J]0;pwned text txet");
+    expect(oneLine("a\u001b[31mred\nb")).toBe("a[31mred b");
+    expect(printable("line\nbreak\ttab")).toBe("line\nbreak\ttab");
+  });
+
+  it("runs previews only in the user's image, with limits, and never downloads one", () => {
+    const env = { status: "ready" as const, isolation: "container" as const, message: "", texBin: "/tl/bin", texMount: "/tl", memoryLimit: true };
+    const args = containerArgs(env, "localhost/stet-preview:1", "/w", "n", ["latexmk"]);
+    expect(args).toContain("--pull=never");
+    expect(args.join(" ")).toMatch(/--ulimit fsize=\d+:\d+/);
+    expect(args.join(" ")).toMatch(/--ulimit nofile=\d+:\d+/);
+    expect(args).toContain("--memory=2g");
+    expect(containerArgs({ ...env, memoryLimit: false }, "i", "/w", "n", ["x"])).not.toContain("--memory=2g");
+  });
+
+  it("trusts preview images only in the change's own cache folder, and only real commit names", async () => {
+    expect(insideDir("/c/abc/items/1.1-x/after.png", "/c/abc/items/1.1-x")).toBe(true);
+    expect(insideDir("/home/me/.ssh/id_ed25519", "/c/abc/items/1.1-x")).toBe(false);
+    expect(insideDir("/c/abc/items/1.1-x/../../x.png", "/c/abc/items/1.1-x")).toBe(false);
+    const { stet } = await setup({ "main.tex": PAPER });
+    const ready = { status: "ready" as const, isolation: "container" as const, message: "", texBin: "/tl/bin", texMount: "/tl" };
+    const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), DEFAULT_PREVIEW, ready);
+    const req = { base: "../../../../tmp", file: "main.tex", baseText: PAPER, eol: "lf" as const, range: { start: 0, end: 1 }, newText: "x", key: "1.1-abc" };
+    expect((await b.preview(req)).status).toBe("unavailable");
+    expect((await b.preview({ ...req, base: "a".repeat(40), key: "../x" })).status).toBe("unavailable");
   });
 });
