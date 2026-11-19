@@ -78,7 +78,7 @@ function uses(it: Item, name: string, env: boolean): boolean {
 }
 
 /** How a change shifts the nesting of braces, environments, display math and `$`. */
-function imbalance(it: Item): number[] {
+export function imbalance(it: { oldText: string; newText: string }): number[] {
   const counts = (s: string) => {
     const t = s.replace(/\\\\/g, "").replace(/\\[{}$]/g, "");
     const n = (re: RegExp) => (t.match(re) ?? []).length;

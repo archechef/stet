@@ -50,11 +50,11 @@ import {
 } from "./model.js";
 import { detectMoves } from "./moves.js";
 import { describeNote, type DeliveredNote } from "./notes.js";
-import { combineParts, settleParts, type PartDraft } from "./parts.js";
+import { combineParts, imbalance, settleParts, type PartDraft } from "./parts.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store, writeJsonAtomic } from "./store.js";
 import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
-import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewEnv, type PreviewResult } from "./preview.js";
+import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewChange, type PreviewEnv, type PreviewRequest, type PreviewResult } from "./preview.js";
 import { pingInbox } from "./inbox.js";
 import { archivedMessage, STET_MARKER } from "./instructions.js";
 import { installHooks } from "./hooks.js";
@@ -68,6 +68,26 @@ import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normali
 export { StetError };
 
 export const BASE_REF = "refs/stet/base";
+/**
+ * The fewest changes of `pool` (same file, nearest first) that close what `item` opens, or open
+ * what it closes (braces, environments, math). Empty if it is balanced or none complete it.
+ */
+function completing(item: Item, pool: Item[]): Item[] {
+  let acc = imbalance(item);
+  const norm = (v: number[]) => v.reduce((n, x, k) => n + (k === 4 ? x % 2 : Math.abs(x)), 0);
+  if (!norm(acc)) return [];
+  const out: Item[] = [];
+  const near = pool.filter((p) => p.file === item.file).sort((a, b) => Math.abs(a.range.start - item.range.start) - Math.abs(b.range.start - item.range.start));
+  for (const p of near) {
+    const next = acc.map((x, k) => x + imbalance(p)[k]!);
+    if (norm(next) >= norm(acc)) continue;
+    out.push(p);
+    acc = next;
+    if (!norm(acc)) return out;
+  }
+  return [];
+}
+
 /** Changes of a simulated accept, as neighbours of `it` (same file and base). */
 function appliedAsNeighbours(applied: { item: Item; text: string }[], it: Item): Neighbour[] {
   return applied
@@ -1999,19 +2019,49 @@ export class Stet {
     if (!item) throw new StetError(`Unknown item '${id}'.`);
     await this.previewStatus();
     const cfg = await this.config();
-    if (item.kind !== "modify" || this.fileClass(cfg, item.file) !== "tex" || !/\.tex$/i.test(item.file))
-      return { status: "no-spot", message: "Only changes to the text of .tex files have a PDF preview." };
-    const base = await this.textAt(item.baseCommit, item.file);
-    if (!base) return { status: "no-spot", message: `${item.file} isn't in the text this change was proposed against.` };
-    return this.previews!.builder.preview({
-      base: item.baseCommit,
-      file: item.file,
-      baseText: base.text,
-      eol: base.eol,
-      range: item.range,
-      newText: item.newText,
-      key: `${item.id}-${sha256(`${item.range.start}:${item.range.end}:${item.newText}`).replace(/^sha256:/, "").slice(0, 12)}`,
-    });
+    const isTex = (i: Item) => i.kind === "modify" && this.fileClass(cfg, i.file) === "tex" && /\.tex$/i.test(i.file);
+    if (!isTex(item)) return { status: "no-spot", message: "Only changes to the text of .tex files have a PDF preview." };
+    const change = async (i: Item): Promise<PreviewChange | null> => {
+      const t = await this.textAt(i.baseCommit, i.file);
+      return t && { file: i.file, baseText: t.text, eol: t.eol, range: i.range, newText: i.newText };
+    };
+    // Apply what accepting it would apply: one end of a move or of a linked part alone can leave
+    // the document broken (\begin{proof} without its \end, bug report 2026-11-19).
+    const together = (list: Item[]) => list.filter((i) => i.id !== item.id && isTex(i) && i.baseCommit === item.baseCommit);
+    const unit = isLive(item.status) ? together(await this.linkedMembers(await this.withMovePartners([item]))) : [];
+    const request = async (others: Item[], tag: string): Promise<PreviewRequest | null> => {
+      const changes = [await change(item), ...(await Promise.all(others.map(change)))];
+      if (changes.some((c) => !c)) return null;
+      const sig = changes.map((c) => `${c!.file}:${c!.range.start}:${c!.range.end}:${c!.newText}`).join("\u0000");
+      return { base: item.baseCommit, key: `${item.id}${tag}-${sha256(sig).slice(0, 12)}`, changes: changes as PreviewChange[], target: 0 };
+    };
+    const first = await request(unit, "");
+    if (!first) return { status: "no-spot", message: `${item.file} isn't in the text this change was proposed against.` };
+    const list = (xs: Item[]) => xs.map((i) => i.id).join(", ");
+    // Tried in turn, until one compiles without new errors: the change with what is accepted with
+    // it; plus the changes of its round that complete it (an environment opened in one change and
+    // closed in another, bug report 2026-11-19); its whole round. Else the best of them.
+    const round = together((await this.store.items()).filter((i) => i.changeset === item.changeset && isLive(i.status)));
+    const pair = completing(item, round.filter((i) => !unit.includes(i)));
+    const tries: { others: Item[]; tag: string; note: (x: Item[]) => string }[] = [
+      { others: unit, tag: "", note: (x) => `Shown together with ${list(x)}, which ${x.length === 1 ? "is" : "are"} accepted with it.` },
+      ...(pair.length ? [{ others: [...unit, ...pair], tag: "-pair", note: (x: Item[]) => `On its own this change breaks the document, so it is shown with ${list(x)}, which complete${x.length === 1 ? "s" : ""} it. Accept them together.` }] : []),
+      ...(round.length > unit.length + pair.length ? [{ others: round, tag: "-round", note: (x: Item[]) => `On its own this change breaks the document, so it is shown with the rest of its round (${list(x)}).` }] : []),
+    ];
+    let best: { r: PreviewResult; note: string } | null = null;
+    const errors = (x: PreviewResult) => (x.status === "ready" ? (x.warning?.count ?? 0) : Infinity);
+    for (const t of tries) {
+      const req = t === tries[0] ? first : await request(t.others, t.tag);
+      if (!req) continue;
+      const r = await this.previews!.builder.preview(req);
+      if (r.status !== "ready" && (r.status !== "failed" || r.cause !== "change")) return r; // the base itself, or no spot
+      const note = t.others.length ? t.note(t.others) : "";
+      if (!best || errors(r) < errors(best.r)) best = { r, note };
+      if (r.status === "ready" && !r.warning) break;
+    }
+    const r = best!.r;
+    if (r.status !== "ready") return tries.length > 1 ? { ...r, message: `${r.message} Not together with the other changes of its round either.` } : r;
+    return best!.note ? { ...r, note: best!.note } : r;
   }
 
   /** Choose which kinds of news wake an agent (see `NotifyTrigger`). Returns false if unchanged. */

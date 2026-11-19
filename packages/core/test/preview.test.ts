@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
-import { containerArgs, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, excerpt, parseSynctex } from "../src/preview.js";
+import { applyChanges, containerArgs, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -122,5 +122,29 @@ describe("preview: changes without a place on the page", () => {
     const { items } = await stet.submit("a", { title: "t" });
     for (const it of items) expect((await stet.preview(it.id)).status).toBe("no-spot");
     await expect(stet.preview("99.1")).rejects.toThrow(/Unknown item/);
+  });
+});
+
+describe("preview: several changes at once", () => {
+  const base = "\\begin{proof}\nA.\n\\end{proof}\nB.\n";
+  const at = (s: string) => base.indexOf(s);
+  const ch = (from: string, to: string, file = "main.tex") => ({ file, baseText: base, eol: "lf" as const, range: { start: at(from), end: at(from) + from.length }, newText: to });
+
+  it("applies the changes of a file together and finds the shown one in the result", () => {
+    const r = applyChanges([ch("A.", "Proof text."), ch("\\begin{proof}\n", ""), ch("\\end{proof}\n", "")], 0)!;
+    expect(r.files.get("main.tex")).toBe("Proof text.\nB.\n");
+    expect(r.start).toBe(0);
+    const s = applyChanges([ch("\\begin{proof}", "\\begin{proof}[Sketch]"), ch("B.", "C.")], 1)!;
+    expect(s.files.get("main.tex")!.slice(s.start, s.start + 2)).toBe("C.");
+    expect(applyChanges([ch("A.", "x"), ch("A.\n", "y")], 0)).toBeNull(); // overlapping
+  });
+
+  it("compares errors without their line numbers", () => {
+    expect(errorsOf("./main.tex:3344: LaTeX Error: \\begin{proof} on input line 3274 ended by \\end{document}.\n! Undefined control sequence.\nl.17 We conclude that the method is \\newword")).toEqual([
+      "LaTeX Error: \\begin{proof} on input line # ended by \\end{document}.",
+      "Undefined control sequence. @ We conclude that the method is \\newword",
+    ]);
+    // The same message at two places is two errors.
+    expect(new Set(errorsOf("! Undefined control sequence.\nl.3 a \\x\n! Undefined control sequence.\nl.9 b \\y")).size).toBe(2);
   });
 });

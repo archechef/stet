@@ -13,6 +13,8 @@ export interface Host {
   projectFor(uri: vscode.Uri): Project | undefined;
   model(p: Project): TreeModel;
   readonly onDidChange: vscode.Event<void>;
+  /** The PDF preview of a change as hover Markdown, if previews are shown in hovers (starts building it if needed). */
+  previewHover?(p: Project, item: Item): string | undefined;
 }
 
 /** Where pending items sit in open documents (cached per document version). */
@@ -277,6 +279,8 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       md.isTrusted = { enabledCommands: ["stet.accept", "stet.acceptGroup", "stet.reject", "stet.edit", "stet.revise", "stet.comment", "stet.showDiff", "stet.preview"] };
       md.supportHtml = false;
       md.appendMarkdown(itemMarkdown(item, model));
+      const pdf = this.host.previewHover?.(p, item);
+      if (pdf) md.appendMarkdown(`\n\n${pdf}`);
       md.appendMarkdown(
         `\n\n[✓ Accept](${cmd("stet.accept", [ref(item.id)])}) · [✗ Reject](${cmd("stet.reject", [ref(item.id)])}) · ` +
           `[✎ Edit](${cmd("stet.edit", [ref(item.id)])}) · [↻ Revise](${cmd("stet.revise", [ref(item.id)])}) · ` +

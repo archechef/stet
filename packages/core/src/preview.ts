@@ -364,24 +364,41 @@ export interface PreviewImage {
 }
 
 export type PreviewResult =
-  | { status: "ready"; before: PreviewImage | null; after: PreviewImage }
+  | {
+      status: "ready";
+      before: PreviewImage | null;
+      after: PreviewImage;
+      /** Which other changes the preview includes, and why. */
+      note?: string;
+      /** LaTeX reported errors with the change that the document didn't have without it; the PDF came out anyway. */
+      warning?: { message: string; log: string; count: number };
+    }
   /** The change has no place on the page (preamble, macros, bibliography data, a file not in the document). */
   | { status: "no-spot"; message: string }
-  /** The document doesn't compile, with this change or already without it. */
-  | { status: "failed"; message: string; log: string }
+  /** No PDF: with the change (`change`), or already without it (`base`). */
+  | { status: "failed"; message: string; log: string; cause?: "base" | "change" }
   | { status: "unavailable"; message: string; fix?: string };
 
-export interface PreviewRequest {
-  /** The commit the change was proposed against. */
-  base: string;
-  /** Path of the changed file, its text at `base` (LF) and line endings. */
+/** One change applied for a preview: a file's text at the base (LF), its line endings, and the edit. */
+export interface PreviewChange {
   file: string;
   baseText: string;
   eol: Eol;
   range: { start: number; end: number };
   newText: string;
-  /** Key of this change in the cache (item id + a hash of its text). */
+}
+
+export interface PreviewRequest {
+  /** The commit the changes were proposed against. */
+  base: string;
+  /** Key of this preview in the cache (item id + a hash of everything applied). */
   key: string;
+  /**
+   * What is applied: the change shown (`target`) and those it can only be accepted with (the rest
+   * of its move or linked part), or a whole round when the change doesn't compile alone.
+   */
+  changes: PreviewChange[];
+  target: number;
 }
 
 const RESOLUTION = 110; // dpi of the rendered region
@@ -468,31 +485,47 @@ export class PreviewBuilder {
     if (!base.root) {
       return { status: "unavailable", message: "Stet couldn't tell which file is the document to compile.", fix: "Set preview.rootFile in .git/stet/config.json (e.g. \"main.tex\")." };
     }
-    if (!base.pdf) return { status: "failed", message: "Your document doesn't compile without this change either.", log: excerpt(base.log) };
+    if (!base.pdf) return { status: "failed", cause: "base", message: "Your document doesn't compile without this change either.", log: excerpt(base.log) };
     const noSpot: PreviewResult = { status: "no-spot", message: "This change has no place of its own on the page (for example the preamble, a macro or bibliography data)." };
+    const target = req.changes[req.target]!;
     // The main file's preamble: SyncTeX would point at the first text instead.
-    const begin = /\\begin\s*\{document\}/.exec(req.baseText)?.index ?? -1;
-    if (req.file === base.root && begin >= 0 && req.range.start < begin) return noSpot;
+    const begin = /\\begin\s*\{document\}/.exec(target.baseText)?.index ?? -1;
+    if (target.file === base.root && begin >= 0 && target.range.start < begin) return noSpot;
 
-    // The change in the base's copy: reusing its build makes the second run quick.
+    // The changes in the base's copy: reusing its build makes the second run quick.
     const work = join(itemDir, "build");
     await rm(work, { recursive: true, force: true });
     await mkdir(itemDir, { recursive: true });
     // Copy-on-write where the filesystem can (btrfs, XFS, APFS): figures aren't duplicated.
     await cp(join(base.dir, "src"), work, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
-    const after = req.baseText.slice(0, req.range.start) + req.newText + req.baseText.slice(req.range.end);
-    await writeInside(work, req.file, fromLf(after, req.eol));
+    // The base's PDF must not pass for this build's if this one produces none.
+    const stem = posix.basename(base.root).replace(/\.tex$/i, "");
+    for (const ext of ["pdf", "synctex.gz"]) await rm(join(work, "stet-build", `${stem}.${ext}`), { force: true });
+    const applied = applyChanges(req.changes, req.target);
+    if (!applied) return { status: "failed", cause: "change", message: "The changes to preview overlap; Stet can't apply them together.", log: "" };
+    for (const [file, text] of applied.files) await writeInside(work, file, fromLf(text, req.changes.find((c) => c.file === file)!.eol));
     const engine = this.cfg.engine === "auto" ? detectEngine((await readFile(join(work, base.root), "utf8").catch(() => "")) || "") : this.cfg.engine;
     const built = await this.compile(work, base.root, engine);
-    if (!built.pdf) return { status: "failed", message: "The document doesn't compile with this change.", log: excerpt(built.log) };
+    if (!built.pdf) return { status: "failed", cause: "change", message: "The document doesn't compile with this change.", log: excerpt(built.log) };
 
+    const after = applied.files.get(target.file)!;
     const lines = (text: string, from: number, to: number) => [lineOf(text, from), lineOf(text, Math.max(from, to - 1))];
-    const afterImg = await this.region(work, built.pdf, req.file, lines(after, req.range.start, req.range.start + req.newText.length), join(itemDir, "after.png"));
+    const afterImg = await this.region(work, built.pdf, target.file, lines(after, applied.start, applied.start + target.newText.length), join(itemDir, "after.png"));
     if (!afterImg) return noSpot;
-    const beforeImg = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), req.file, lines(req.baseText, req.range.start, req.range.end), join(itemDir, "before.png"));
+    const beforeImg = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), target.file, lines(target.baseText, target.range.start, target.range.end), join(itemDir, "before.png"));
     await rm(work, { recursive: true, force: true }); // keep the images only
     await utimes(baseDir, new Date(), new Date()).catch(() => undefined);
-    return { status: "ready", before: beforeImg, after: afterImg };
+    // Errors only this version has: the PDF is there, but the reviewer should know.
+    const known = new Set(errorsOf(base.log));
+    const fresh = errorsOf(built.log).filter((e) => !known.has(e));
+    return {
+      status: "ready",
+      before: beforeImg,
+      after: afterImg,
+      ...(fresh.length
+        ? { warning: { message: `LaTeX reported ${fresh.length === 1 ? "an error" : `${fresh.length} errors`} with this change that the document doesn't have without it.`, log: excerpt(built.log), count: fresh.length } }
+        : {}),
+    };
   }
 
   /** Locate source lines in a PDF with SyncTeX and render that region to `out`. */
@@ -531,12 +564,14 @@ export class PreviewBuilder {
   private async compile(work: string, root: string, engine: "pdflatex" | "xelatex" | "lualatex"): Promise<{ pdf: string | null; log: string }> {
     const flag = engine === "xelatex" ? "-xelatex" : engine === "lualatex" ? "-lualatex" : "-pdf";
     const r = await runIsolated(this.env, this.cfg, work, [
-      "latexmk", "-norc", flag, "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-synctex=1", "-outdir=stet-build", root,
+      // -f, and no -halt-on-error: a paper with a small error somewhere still gets its PDF (as
+      // when the author compiles it), and so its previews. Errors are reported next to them.
+      "latexmk", "-norc", flag, "-f", "-interaction=nonstopmode", "-file-line-error", "-synctex=1", "-outdir=stet-build", root,
     ]);
     const stem = posix.basename(root).replace(/\.tex$/i, "");
     const pdf = join(work, "stet-build", `${stem}.pdf`);
     const log = await readFile(join(work, "stet-build", `${stem}.log`), "utf8").catch(() => r.stdout + r.stderr);
-    return r.code === 0 && existsSync(pdf) ? { pdf, log } : { pdf: null, log: log || r.stdout + r.stderr };
+    return existsSync(pdf) ? { pdf, log } : { pdf: null, log: log || r.stdout + r.stderr };
   }
 
   /** Check out `rev` into `dir`, with symbolic links as plain files (none may lead out of the build). */
@@ -573,6 +608,52 @@ export class PreviewBuilder {
     bases.sort((a, b) => b.t - a.t);
     for (const b of bases.slice(KEEP_BASES - 1)) await rm(b.p, { recursive: true, force: true });
   }
+}
+
+/**
+ * Apply `changes` (several files, each change against its file's base text) and say where the
+ * target change starts in its file's new text. Null if two changes in a file overlap.
+ */
+export function applyChanges(changes: PreviewChange[], target: number): { files: Map<string, string>; start: number } | null {
+  const files = new Map<string, string>();
+  let start = -1;
+  for (const file of new Set(changes.map((c) => c.file))) {
+    const list = changes.map((c, k) => ({ c, k })).filter((x) => x.c.file === file).sort((a, b) => a.c.range.start - b.c.range.start || a.k - b.k);
+    for (let i = 1; i < list.length; i++) if (list[i]!.c.range.start < list[i - 1]!.c.range.end) return null;
+    let text = list[0]!.c.baseText;
+    let shift = 0;
+    for (const { c, k } of list) {
+      if (k === target) start = c.range.start + shift;
+      shift += c.newText.length - (c.range.end - c.range.start);
+    }
+    for (const { c } of [...list].reverse()) text = text.slice(0, c.range.start) + c.newText + text.slice(c.range.end);
+    files.set(file, text);
+  }
+  return start < 0 ? null : { files, start };
+}
+
+/**
+ * The errors in a LaTeX log, without line numbers (which a change shifts): each message with the
+ * text TeX was at (its `l.<n> …` line), so "Undefined control sequence" at two places differs.
+ */
+export function errorsOf(log: string): string[] {
+  const out: string[] = [];
+  const lines = log.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^!\s*(.*)$/.exec(lines[i]!) ?? /^\S.*?:\d+:\s*(.*)$/.exec(lines[i]!);
+    if (!m) continue;
+    let at = "";
+    for (let j = i + 1; j < Math.min(lines.length, i + 12); j++) {
+      if (/^!|^\S.*?:\d+:/.test(lines[j]!)) break; // the next error: this one has no context
+      const l = /^l\.\d+\s?(.*)$/.exec(lines[j]!);
+      if (l) {
+        at = l[1]!.trim().slice(-60);
+        break;
+      }
+    }
+    out.push(`${m[1]!.replace(/\d+/g, "#").trim()}${at ? ` @ ${at}` : ""}`);
+  }
+  return out;
 }
 
 /** The part of a LaTeX log that says what went wrong. */

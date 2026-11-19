@@ -211,7 +211,7 @@ describe("review before 0.10 (2026-11-19)", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const ready = { status: "ready" as const, isolation: "container" as const, message: "", texBin: "/tl/bin", texMount: "/tl" };
     const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), DEFAULT_PREVIEW, ready);
-    const req = { base: "../../../../tmp", file: "main.tex", baseText: PAPER, eol: "lf" as const, range: { start: 0, end: 1 }, newText: "x", key: "1.1-abc" };
+    const req = { base: "../../../../tmp", key: "1.1-abc", target: 0, changes: [{ file: "main.tex", baseText: PAPER, eol: "lf" as const, range: { start: 0, end: 1 }, newText: "x" }] };
     expect((await b.preview(req)).status).toBe("unavailable");
     expect((await b.preview({ ...req, base: "a".repeat(40), key: "../x" })).status).toBe("unavailable");
   });

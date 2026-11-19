@@ -343,6 +343,30 @@
         "title": "Notify agent now…",
         "category": "Stet",
         "icon": "$(megaphone)"
+      },
+      {
+        "command": "stet.pdfPreviews.both",
+        "title": "PDF previews: in the hover and the panel",
+        "category": "Stet",
+        "toggled": "config.stet.pdfPreviews == 'both'"
+      },
+      {
+        "command": "stet.pdfPreviews.hover",
+        "title": "PDF previews: in the hover only",
+        "category": "Stet",
+        "toggled": "config.stet.pdfPreviews == 'hover'"
+      },
+      {
+        "command": "stet.pdfPreviews.panel",
+        "title": "PDF previews: in the panel only",
+        "category": "Stet",
+        "toggled": "config.stet.pdfPreviews == 'panel'"
+      },
+      {
+        "command": "stet.pdfPreviews.off",
+        "title": "PDF previews: off",
+        "category": "Stet",
+        "toggled": "config.stet.pdfPreviews == 'off'"
       }
     ],
     "menus": {
@@ -669,6 +693,22 @@
         {
           "command": "stet.shareEdits.committed",
           "group": "3_share@3"
+        },
+        {
+          "command": "stet.pdfPreviews.both",
+          "group": "4_pdf@1"
+        },
+        {
+          "command": "stet.pdfPreviews.hover",
+          "group": "4_pdf@2"
+        },
+        {
+          "command": "stet.pdfPreviews.panel",
+          "group": "4_pdf@3"
+        },
+        {
+          "command": "stet.pdfPreviews.off",
+          "group": "4_pdf@4"
         }
       ]
     },
@@ -801,6 +841,23 @@
             "Agents see only committed text (and the changes you accepted)."
           ],
           "markdownDescription": "Which of your own edits AI agents see. Changes you accepted always reach them. Stored in the project (`.git/stet/config.json`), so it also applies to `stet` on the command line."
+        },
+        "stet.pdfPreviews": {
+          "type": "string",
+          "enum": [
+            "both",
+            "hover",
+            "panel",
+            "off"
+          ],
+          "default": "both",
+          "enumDescriptions": [
+            "In a change's hover once it is built, and in the Preview panel (Preview in PDF).",
+            "Only in the hover.",
+            "Only in the Preview panel.",
+            "Not at all: nothing is compiled."
+          ],
+          "description": "Where PDF previews of changes are shown. They are built in the background; the change itself shows at once."
         }
       }
     },

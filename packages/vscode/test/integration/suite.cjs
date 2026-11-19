@@ -250,6 +250,23 @@ exports.run = async function run() {
     check("a PDF preview is built in the background", result && ["ready", "no-spot", "unavailable", "failed"].includes(result.status), JSON.stringify(result && { status: result.status, message: result.message }));
     console.log("preview result: " + (result && result.status));
 
+    // The hover shows the PDF preview once built (setting stet.pdfPreviews: "both" by default).
+    // The position is looked up each time: the undo above changed the file on disk, and the
+    // editor reloads it in its own time.
+    const pdfUri = vscode.Uri.file(join(fx.repo, "main.tex"));
+    const pdfHoverText = async () => {
+      const doc = await vscode.workspace.openTextDocument(pdfUri);
+      const k = doc.getText().indexOf("problem");
+      if (k < 0) return "";
+      const hs = (await vscode.commands.executeCommand("vscode.executeHoverProvider", pdfUri, doc.positionAt(k + 2))) || [];
+      return hs.flatMap((h) => h.contents.map((c) => (typeof c === "string" ? c : c.value))).join("\n");
+    };
+    const pdfWithImage = await until("hover preview", async () => {
+      const t = await pdfHoverText();
+      return /!\[PDF preview of /.test(t) ? t : null;
+    }, 60000).catch(() => null);
+    check("the hover shows the PDF preview once it is built", !!pdfWithImage && /file:\/\/.*after\.png/.test(pdfWithImage), (await pdfHoverText()).slice(0, 300));
+
     // View options switch settings from the panel.
     const stetConf = () => vscode.workspace.getConfiguration("stet");
     const inlineBefore = stetConf().get("inlineChanges");
@@ -262,7 +279,7 @@ exports.run = async function run() {
     check("view options switch settings", flipped === !inlineBefore && stetConf().get("inlineChanges") === inlineBefore && long === "hover", JSON.stringify({ inline: inlineBefore, flipped, long }));
 
     const allCommands = await vscode.commands.getCommands(true);
-    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup"];
+    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover"];
     check("new commands are registered", wanted.every((c) => allCommands.includes(c)), JSON.stringify(wanted.filter((c) => !allCommands.includes(c))));
   } catch (e) {
     check("no exception", false, e && e.stack);

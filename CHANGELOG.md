@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: previews of changes that only work together.** A preview applied the change alone, so one end of a pair (a `\begin{proof}` removed in one change and its `\end{proof}` in another, or the two ends of a move) failed with "\begin{proof} … ended by \end{document}". A preview now applies what accepting the change would apply, then the changes of its round that complete it, then the whole round, and says which it shows.
+- **Fix: previews of papers with an error elsewhere.** Builds stopped at the first LaTeX error, so a document with any error got no previews at all. They now continue like a normal compile; errors that only the change brings are shown next to its preview.
+- **Previews in the hover:** a change's hover shows its PDF preview once it is built (selecting a change starts building it). The setting `stet.pdfPreviews` (also under View options) chooses where previews appear: hover and panel, one of them, or off.
+
 ## 0.10.0 — 2026-11-19
 
 - **Security review before the release:**

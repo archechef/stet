@@ -42,6 +42,7 @@ export class PreviewPanel implements vscode.Disposable {
       });
       this.panel.onDidDispose(() => {
         this.panel = undefined;
+        this.current = undefined;
         this.queue.length = 0; // nothing to build ahead for while it's closed
       });
       this.panel.webview.onDidReceiveMessage((m) => {
@@ -49,6 +50,16 @@ export class PreviewPanel implements vscode.Disposable {
       });
     }
     this.follow(t);
+  }
+
+  /** The result for `t` if it is built (nothing is started). */
+  peek(t: Target): PreviewResult | undefined {
+    return this.results.get(keyOf(t));
+  }
+
+  /** Build `t` in the background (for the hover), unless it is built or queued. */
+  prefetch(t: Target): void {
+    this.request(t, true);
   }
 
   /** Show `t` if the panel is open (the selection moved). */
@@ -103,8 +114,7 @@ export class PreviewPanel implements vscode.Disposable {
     let r = this.results.get(keyOf(t));
     const w = this.panel.webview;
     // Images only from this project's preview cache.
-    const cache = previewCacheRoot(t.project);
-    const inCache = (f: string | undefined) => !!f && f.startsWith(cache + sep) && !relative(cache, f).split(sep).includes("..");
+    const inCache = (f: string | undefined) => inPreviewCache(t.project, f);
     if (r?.status === "ready" && (!inCache(r.after.file) || (r.before && !inCache(r.before.file)))) {
       r = { status: "unavailable", message: "This preview's files aren't in Stet's preview cache; not shown." };
     }
@@ -116,6 +126,8 @@ export class PreviewPanel implements vscode.Disposable {
     if (!r) body = `<p class="muted">Building the preview… The change is already in the editor; its page appears here when it's compiled.</p>`;
     else if (r.status === "ready") {
       body =
+        (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
+        (r.warning ? `<p class="warn">${html(r.warning.message)}</p><details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
         `<h3>After <span class="muted">(page ${r.after.page})</span></h3><img src="${img(r.after.file)}" alt="after">` +
         (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><img src="${img(r.before.file)}" alt="before">` : "");
     } else if (r.status === "no-spot") body = `<p class="muted">${html(r.message)}</p>`;
@@ -178,3 +190,13 @@ export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, proje
 }
 
 export const previewCacheRoot = (p: Project) => join(p.storeRoot, "previews");
+
+/** Whether `file` is in the project's preview cache (images are shown from nowhere else). */
+export function inPreviewCache(p: Project, file: string | undefined): boolean {
+  const cache = previewCacheRoot(p);
+  return !!file && file.startsWith(cache + sep) && !relative(cache, file).split(sep).includes("..");
+}
+
+/** Where PDF previews are shown (setting stet.pdfPreviews). */
+export type PreviewPlace = "both" | "hover" | "panel" | "off";
+export const previewPlace = (): PreviewPlace => vscode.workspace.getConfiguration("stet").get<PreviewPlace>("pdfPreviews", "both");

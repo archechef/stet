@@ -1,6 +1,6 @@
 /** Stet for VS Code (spec §12.2): review panel, in-editor review, threads and setup without a command line. */
 
-import { PreviewPanel, previewNotice } from "./preview.js";
+import { inPreviewCache, PreviewPanel, previewNotice, previewPlace } from "./preview.js";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { doctor, foldPath, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
@@ -158,6 +158,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
 
   /** Say once what PDF previews need here (nothing when they work). Never sets anything up unasked. */
   private async checkPreviews(p: Project): Promise<void> {
+    if (previewPlace() === "off") return;
     try {
       const env = await p.stet.previewStatus();
       this.output.appendLine(`PDF previews in ${p.name}: ${env.status}. ${env.message}`);
@@ -187,7 +188,31 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** Open the PDF preview of a change. */
   async showPreview(arg: unknown): Promise<void> {
     const t = await this.targetItem(arg);
-    if (t) this.preview.show(t);
+    if (!t) return;
+    if (previewPlace() === "off") return void vscode.window.showInformationMessage("PDF previews are off (setting stet.pdfPreviews, or View options in the Stet panel).");
+    this.preview.show(t);
+  }
+
+  /** The PDF preview for a change's hover: the image once built, else a note while it builds. */
+  previewHover(p: Project, item: Item): string | undefined {
+    const place = previewPlace();
+    if ((place !== "hover" && place !== "both") || item.kind !== "modify" || !/\.tex$/i.test(item.file)) return undefined;
+    const t = { project: p, item };
+    const r = this.preview.peek(t);
+    if (!r) {
+      this.preview.prefetch(t);
+      return "*PDF preview: building… hover again in a moment.*";
+    }
+    if (r.status === "ready") {
+      if (!inPreviewCache(p, r.after.file)) return undefined;
+      return [
+        `**PDF**, page ${r.after.page}${r.note ? ` · *${esc(r.note)}*` : ""}`,
+        ...(r.warning ? [`⚠ ${esc(r.warning.message)}`] : []),
+        `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()})`,
+      ].join("\n\n");
+    }
+    if (r.status === "failed") return `⚠ *${esc(r.message)}* The LaTeX error is in *Preview in PDF*.`;
+    return undefined; // no spot on the page, or previews unavailable (said once, elsewhere)
   }
 
   /** Point agents' tools at the CLI bundled with this extension, unless another `stet` is configured and present. */
@@ -910,6 +935,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const ed = await vscode.window.showTextDocument(doc, { preserveFocus, preview: true });
     ed.selection = new vscode.Selection(range.start, range.end);
     this.preview.follow({ project: p, item });
+    // Ready by the time the pointer reaches it.
+    if (["hover", "both"].includes(previewPlace()) && item.kind === "modify") this.preview.prefetch({ project: p, item });
     ed.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     if (!hit && isLive(item)) vscode.window.setStatusBarMessage(`$(warning) ${item.id}: its text is no longer where it was; showing the last known line.`, 5000);
   }
@@ -1420,6 +1447,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.toggleAutoAdvance", toggle("autoAdvance"));
   for (const v of ["expanded", "collapsed", "hover"]) reg(`stet.longChanges.${v}`, () => ext.setOption("longChanges", v));
   for (const v of ["manual", "saved", "committed"]) reg(`stet.shareEdits.${v}`, () => ext.setOption("shareEdits", v));
+  for (const v of ["both", "hover", "panel", "off"]) reg(`stet.pdfPreviews.${v}`, () => ext.setOption("pdfPreviews", v));
   reg("stet.refresh", () => ext.refresh());
   reg("stet.doctor", () => ext.doctor());
   reg("stet.finishReview", () => ext.finishReview());
