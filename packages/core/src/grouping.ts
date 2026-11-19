@@ -23,14 +23,29 @@ export interface Where {
   /** 1-based inclusive line range; absent = whole file. */
   from?: number;
   to?: number;
+  /**
+   * Only changes whose new text (or, for a deletion, old text) contains this: picks one change
+   * among several on a line. A LaTeX paragraph is often a single line, so lines alone can't
+   * separate the parts of a group within it.
+   */
+  text?: string;
 }
 
+/** `file`, `file:line`, `file:from-to`, each optionally followed by a quoted snippet: `main.tex:12 "suggestion"`. */
 export function parseWhere(w: string): Where {
-  const s = w.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  let s = w.trim();
+  let text: string | undefined;
+  const q = /\s+"((?:[^"\\]|\\.)*)"\s*$/.exec(s);
+  if (q) {
+    text = q[1]!.replace(/\\(.)/g, "$1");
+    s = s.slice(0, q.index).trim();
+  }
+  s = s.replace(/\\/g, "/").replace(/^\.\//, "");
+  const withText = text ? { text } : {};
   const m = /^(.*?):(\d+)(?:-(\d+))?$/.exec(s);
-  if (!m) return { file: s };
+  if (!m) return { file: s, ...withText };
   const from = Number(m[2]);
-  return { file: m[1]!, from, to: m[3] ? Number(m[3]) : from };
+  return { file: m[1]!, from, to: m[3] ? Number(m[3]) : from, ...withText };
 }
 
 /** A unit a hint can match: an item (or candidate) with its range in the agent's tip. */
@@ -42,11 +57,19 @@ export interface HintUnit {
   /** Character range in the tip text of `file`. */
   newStart: number;
   newEnd: number;
+  /** The change's texts, for locations with a snippet. */
+  oldText?: string;
+  newText?: string;
 }
 
-/** Does `unit` match a where-range (already converted to tip character offsets)? */
-export function unitMatches(unit: HintUnit, file: string, range: { start: number; end: number } | null): boolean {
+/** Does `unit` match a where-range (already converted to tip character offsets) and snippet? */
+export function unitMatches(unit: HintUnit, file: string, range: { start: number; end: number } | null, text?: string): boolean {
   if (unit.file !== file && unit.oldFile !== file) return false;
+  if (text !== undefined) {
+    const t = normalizeWs(text);
+    const has = (s: string | undefined) => s !== undefined && normalizeWs(s).includes(t);
+    if (!(has(unit.newText) || (!normalizeWs(unit.newText ?? "") && has(unit.oldText)))) return false;
+  }
   if (!range || unit.wholeFile) return true;
   if (unit.newStart === unit.newEnd) return unit.newStart >= range.start && unit.newStart <= range.end;
   return unit.newStart < range.end && range.start < unit.newEnd;

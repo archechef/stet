@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Smaller linked groups:** a group's parts could only name changes by line, and a LaTeX paragraph is often one line, so agents couldn't split changes within a paragraph into separate parts: Stet had to join them. Locations now take a quoted snippet of the new text, `main.tex:12 "suggestion"`, which picks one change on a line. Agents are told to use it, and the note when parts are joined says how. Checking that one part doesn't block another now also treats the first part's text as accepted, as a real accept does.
+- **What wakes an agent:** the bell next to an agent opens one checklist: when it is woken (when you pause, or right away) and by what: accepted changes, rejections, revision requests, comments and replies, new notes, commits and shared edits, and saves. Untick everything to turn notifications off. `stet agent notify <name> --on <kinds>` on the command line. Switched-off news still reaches the agent when it next checks.
+- **Notify now:** the megaphone next to an agent (or `stet agent ping <name> -m <text>`) wakes it at once, whatever its settings, with an optional message.
+- **PDF previews:** *Preview in PDF* (VS Code) or `stet preview <id>` shows the region of the compiled paper where a change lands, after and before. Changes appear at once; previews compile in the background and fill in a second or two later. Changes with no place on the page get none, and a change that breaks compilation shows the LaTeX error. Builds run in an isolated Podman container with your own TeX Live, because LaTeX can read any file you can. Stet offers to build the container image once (`stet preview setup`, about 150 MB) and otherwise says what is missing; everything else works without previews.
+
 ## 0.9.0 — 2026-11-18
 
 - **Undo in the History:** the new ↶ button (or `stet undo <id>`) undoes a rejection, or an accept until you finish the review. The change is pending again, an undone accept is taken out of your file, and changes the accept had made stale are pending again too. Changes decided together (a linked group, a move) are undone together, and the agent is told.

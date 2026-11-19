@@ -232,6 +232,24 @@ exports.run = async function run() {
       JSON.stringify({ status: statusOf(fx.items[0]) }),
     );
 
+    // PDF preview: opens at once, and the compiled region arrives afterwards (when TeX and the
+    // preview image are there; otherwise the panel says what is missing).
+    await vscode.commands.executeCommand("stet.preview", fx.items[0]);
+    const { readdirSync, existsSync: exists } = require("node:fs");
+    const previewDir = join(store, "previews");
+    const result = await until("preview", async () => {
+      if (!exists(previewDir)) return null;
+      for (const base of readdirSync(previewDir)) {
+        const items = join(previewDir, base, "items");
+        if (!exists(items)) continue;
+        const hit = readdirSync(items).find((d) => d.startsWith(fx.items[0] + "-") && exists(join(items, d, "result.json")));
+        if (hit) return JSON.parse(readFileSync(join(items, hit, "result.json"), "utf8"));
+      }
+      return null;
+    }, 60000).catch(() => null);
+    check("a PDF preview is built in the background", result && ["ready", "no-spot", "unavailable", "failed"].includes(result.status), JSON.stringify(result && { status: result.status, message: result.message }));
+    console.log("preview result: " + (result && result.status));
+
     // View options switch settings from the panel.
     const stetConf = () => vscode.workspace.getConfiguration("stet");
     const inlineBefore = stetConf().get("inlineChanges");
@@ -244,7 +262,7 @@ exports.run = async function run() {
     check("view options switch settings", flipped === !inlineBefore && stetConf().get("inlineChanges") === inlineBefore && long === "hover", JSON.stringify({ inline: inlineBefore, flipped, long }));
 
     const allCommands = await vscode.commands.getCommands(true);
-    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved"];
+    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup"];
     check("new commands are registered", wanted.every((c) => allCommands.includes(c)), JSON.stringify(wanted.filter((c) => !allCommands.includes(c))));
   } catch (e) {
     check("no exception", false, e && e.stack);

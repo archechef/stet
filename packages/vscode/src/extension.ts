@@ -1,8 +1,9 @@
 /** Stet for VS Code (spec §12.2): review panel, in-editor review, threads and setup without a command line. */
 
+import { PreviewPanel, previewNotice } from "./preview.js";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, foldPath, isNoteId, notifyMode, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
+import { doctor, foldPath, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
 import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -57,10 +58,21 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   private readonly output = vscode.window.createOutputChannel("Stet");
   readonly locator: Locator;
+  /** PDF previews: built in the background, shown when ready. */
+  readonly preview: PreviewPanel;
+  private previewFollow: NodeJS.Timeout | undefined;
   private disposables: vscode.Disposable[] = [];
 
   constructor(private ctx: vscode.ExtensionContext) {
     this.locator = new Locator(this);
+    this.preview = new PreviewPanel(
+      (p) => this.setupPreview(p),
+      (t, n) => {
+        const live = this.itemsInOrder().filter((e) => e.project === t.project && e.node?.type === "item" && isLive(e.node.item));
+        const i = live.findIndex((e) => e.node?.type === "item" && e.node.item.id === t.item.id);
+        return live.slice(i + 1, i + 1 + n).map((e) => ({ project: e.project, item: (e.node as { item: Item }).item }));
+      },
+    );
     this.tree = vscode.window.createTreeView("stet.review", { treeDataProvider: this, showCollapseAll: true });
     this.history = vscode.window.createTreeView("stet.history", {
       showCollapseAll: true,
@@ -92,6 +104,18 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         if (s.focused) for (const p of this.projects.values()) p.scheduleRefresh(0);
       }),
       vscode.workspace.onDidCloseTextDocument((d) => this.locator.forget(d)),
+      this.preview,
+      // The preview follows the change under the cursor while it is open.
+      vscode.window.onDidChangeTextEditorSelection((e) => {
+        if (!this.preview.visible) return;
+        clearTimeout(this.previewFollow);
+        this.previewFollow = setTimeout(async () => {
+          const p = this.projectFor(e.textEditor.document.uri);
+          const pos = e.textEditor.selection.active;
+          const hit = p && (await this.locator.locate(e.textEditor.document)).find((l) => l.range.contains(pos));
+          if (p && hit) this.preview.follow({ project: p, item: hit.item });
+        }, 300);
+      }),
       vscode.workspace.onDidSaveTextDocument((d) => this.projectFor(d.uri)?.scheduleChecks()),
     );
   }
@@ -127,8 +151,43 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       await this.ensureRuntime(p).catch((e) => this.output.appendLine(`Runtime setup for ${p.mainPath}: ${e?.message ?? e}`));
       await this.applyShareMode(p, false);
       await p.refresh().catch((e) => this.output.appendLine(`Loading ${p.mainPath}: ${e?.message ?? e}`));
+      void this.checkPreviews(p);
     }
     await this.onProjectChanged();
+  }
+
+  /** Say once what PDF previews need here (nothing when they work). Never sets anything up unasked. */
+  private async checkPreviews(p: Project): Promise<void> {
+    try {
+      const env = await p.stet.previewStatus();
+      this.output.appendLine(`PDF previews in ${p.name}: ${env.status}. ${env.message}`);
+      if (await previewNotice(env, this.ctx.globalState, p.name)) await this.setupPreview(p);
+    } catch (e: any) {
+      this.output.appendLine(`PDF previews in ${p.name}: ${e?.message ?? e}`);
+    }
+  }
+
+  /** Build the preview image: downloads packages, so only on the user's click. */
+  async setupPreview(p?: Project): Promise<void> {
+    p ??= await this.pickProject();
+    if (!p) return;
+    const project = p;
+    const r = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Stet: building the PDF preview image (downloads Debian, Perl and Poppler)…" },
+      () => project.stet.setupPreview().catch((e: any) => ({ ok: false, log: String(e?.message ?? e), status: undefined })),
+    );
+    if (r.ok) void vscode.window.showInformationMessage(`Stet: ${r.status?.message ?? "PDF previews are set up."}`);
+    else {
+      this.output.appendLine(r.log);
+      void vscode.window.showErrorMessage("Stet: building the PDF preview image failed. Details are in the Stet output.", "Show output").then((c) => c && this.output.show());
+    }
+    this.preview.refresh();
+  }
+
+  /** Open the PDF preview of a change. */
+  async showPreview(arg: unknown): Promise<void> {
+    const t = await this.targetItem(arg);
+    if (t) this.preview.show(t);
   }
 
   /** Point agents' tools at the CLI bundled with this extension, unless another `stet` is configured and present. */
@@ -348,7 +407,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         t.tooltip = new vscode.MarkdownString(
           `**${esc(n.agent.id)}** (${n.agent.kind})\n\nWorkspace: ${esc(n.agent.worktree)}` +
             (snap.syncNeeded.has(n.agent.id) ? "\n\nThe agent works on an older version of your text; it catches up when it calls `stet_sync`." : "") +
-            (n.agent.state === "active" ? `\n\nNotifications: ${NOTIFY_PICKS.find((x) => x.mode === notify)!.label.toLowerCase()} (bell button).` : ""),
+            (n.agent.state === "active"
+              ? `\n\nNotifications: ${NOTIFY_PICKS.find((x) => x.mode === notify)!.label.toLowerCase()}` +
+                (notifyTriggers(n.agent).length < NOTIFY_TRIGGERS.length
+                  ? `, for ${notifyTriggers(n.agent).map((t) => NOTIFY_TRIGGER_TEXT[t].toLowerCase()).join(", ") || "nothing"}`
+                  : "") +
+                " (bell button). The megaphone wakes it now."
+              : ""),
         );
         t.contextValue = n.agent.state === "active" ? `agent.active.notify-${notify}` : "agent.archived";
         return t;
@@ -844,6 +909,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const range = hit?.range ?? new vscode.Range(line, 0, line, 0);
     const ed = await vscode.window.showTextDocument(doc, { preserveFocus, preview: true });
     ed.selection = new vscode.Selection(range.start, range.end);
+    this.preview.follow({ project: p, item });
     ed.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     if (!hit && isLive(item)) vscode.window.setStatusBarMessage(`$(warning) ${item.id}: its text is no longer where it was; showing the last known line.`, 5000);
   }
@@ -1014,17 +1080,66 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (a) await copyPath(a.agent.worktree);
   }
 
-  /** How an agent that waits with `stet watch` hears about your decisions. */
+  /**
+   * When and about what an agent waiting with `stet watch` is woken, in one checklist: the timing
+   * (one of two) and the kinds of news. Nothing ticked below means off.
+   */
   async agentNotify(arg: unknown): Promise<void> {
     const a = await this.pickAgent(arg);
     if (!a) return;
-    const current = notifyMode(a.agent);
-    const pick = await vscode.window.showQuickPick(
-      NOTIFY_PICKS.map((x) => ({ ...x, label: `${x.mode === current ? "$(check) " : ""}${x.label}` })),
-      { title: `Notifications for ${a.agent.id}`, placeHolder: "When should a waiting agent hear about your decisions?" },
-    );
-    if (!pick || pick.mode === current) return;
-    await this.run(a.project, () => a.project.stet.setNotify(a.agent.id, pick.mode));
+    type Item = vscode.QuickPickItem & { timing?: NotifyMode; news?: NotifyTrigger };
+    const mode = notifyMode(a.agent);
+    const timings: Item[] = NOTIFY_PICKS.filter((x) => x.mode !== "off").map((x) => ({ label: x.label, detail: x.detail, timing: x.mode }));
+    const kinds: Item[] = NOTIFY_TRIGGERS.map((t) => ({ label: NOTIFY_TRIGGER_TEXT[t], news: t }));
+    const qp = vscode.window.createQuickPick<Item>();
+    qp.title = `Notifications for ${a.agent.id}`;
+    qp.placeholder = "Untick every kind of news to turn notifications off. The megaphone wakes the agent at once.";
+    qp.canSelectMany = true;
+    qp.items = [
+      { label: "When", kind: vscode.QuickPickItemKind.Separator },
+      ...timings,
+      { label: "Wake it for", kind: vscode.QuickPickItemKind.Separator },
+      ...kinds,
+    ];
+    let timing = timings.find((t) => t.timing === (mode === "off" ? "batched" : mode))!;
+    const on = new Set(mode === "off" ? [] : notifyTriggers(a.agent));
+    qp.selectedItems = [timing, ...kinds.filter((k) => on.has(k.news!))];
+    // The two timings exclude each other, and one of them is always ticked.
+    qp.onDidChangeSelection((sel) => {
+      const picked = sel.filter((s) => s.timing);
+      const next = picked.find((s) => s !== timing) ?? picked[0] ?? timing;
+      if (picked.length !== 1 || next !== timing) {
+        timing = next;
+        qp.selectedItems = [timing, ...sel.filter((s) => s.news)];
+      }
+    });
+    const chosen = await new Promise<Item[] | undefined>((resolve) => {
+      qp.onDidAccept(() => resolve([...qp.selectedItems]));
+      qp.onDidHide(() => resolve(undefined));
+      qp.show();
+    });
+    qp.dispose();
+    if (!chosen) return;
+    const kindsOn = chosen.filter((c) => c.news).map((c) => c.news!);
+    await this.run(a.project, async () => {
+      if (!kindsOn.length) return a.project.stet.setNotify(a.agent.id, "off");
+      await a.project.stet.setNotifyOn(a.agent.id, kindsOn);
+      return a.project.stet.setNotify(a.agent.id, timing.timing!);
+    });
+  }
+
+  /** *Notify now*: wake a watching agent, whatever its settings, optionally with a message. */
+  async agentPing(arg: unknown): Promise<void> {
+    const a = await this.pickAgent(arg);
+    if (!a) return;
+    const message = await vscode.window.showInputBox({
+      title: `Notify ${a.agent.id} now`,
+      prompt: "Wakes the agent if it is waiting with stet watch. A message is optional.",
+      placeHolder: "e.g. I've finished reviewing round 3",
+    });
+    if (message === undefined) return;
+    const ok = await this.run(a.project, async () => (await a.project.stet.pingAgent(a.agent.id, message), true));
+    if (ok) vscode.window.setStatusBarMessage(`$(megaphone) Asked ${a.agent.id} to check in`, 4000);
   }
 
   /** Undo a decision from the History: the change is pending again (an accept is taken out of your file). */
@@ -1294,7 +1409,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.archiveAgent", (a) => ext.archiveAgent(a));
   reg("stet.agentNotify", (a) => ext.agentNotify(a));
   reg("stet.agentNotifyOff", (a) => ext.agentNotify(a));
+  reg("stet.agentPing", (a) => ext.agentPing(a));
   reg("stet.undo", inOrder((a) => ext.undo(a)));
+  reg("stet.preview", (a) => ext.showPreview(a));
+  reg("stet.previewSetup", () => ext.setupPreview());
   // View options: settings you may switch back and forth, from the panel.
   const toggle = (key: string) => () => ext.setOption(key, !vscode.workspace.getConfiguration("stet").get<boolean>(key, true));
   reg("stet.toggleInlineChanges", toggle("inlineChanges"));

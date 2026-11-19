@@ -8,7 +8,7 @@
  */
 import { open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { FEEDBACK_TYPES, notifyMode, type StetEvent } from "./model.js";
+import { FEEDBACK_TYPES, notifyMode, notifyTriggers, triggerOf, type StetEvent } from "./model.js";
 import { describeFeedback } from "./mcp.js";
 import { pathExists } from "./paths.js";
 import { appendInside, readInside } from "./safefs.js";
@@ -113,6 +113,7 @@ export class InboxWriter {
       agent.baseCommit,
       agent.feedbackCursor,
       mode,
+      notifyTriggers(agent).join(","),
     ].join("|");
     const now = Date.now();
     const changed = signature !== this.signature;
@@ -129,18 +130,32 @@ export class InboxWriter {
     this.waiting = false;
     this.lastFull = now;
 
+    // Only the kinds of news the reviewer chose for this agent. The others aren't written (nor
+    // remembered), so they still arrive if the reviewer switches them on later.
+    const wanted = new Set(notifyTriggers(agent));
     const status = await this.stet.agentStatus(this.agentId);
     const news: Omit<InboxLine, "at">[] = [];
     const events = (await store.events(agent.feedbackCursor)).filter((e: StetEvent) => e.agent === agent.id && FEEDBACK_TYPES.includes(e.type));
     for (const e of events) {
+      if (!wanted.has(triggerOf(e))) continue;
       news.push({ key: `feedback#${e.seq}`, text: `${oneLine(describeFeedback(e), 300)} (read it with stet_get_feedback)` });
     }
-    for (const n of await store.notes()) {
-      if (n.agent !== agent.id || n.state !== "open" || n.deliveredAt) continue;
-      news.push({ key: `note:${n.id}`, text: `note ${n.id} from the reviewer on ${n.file}: "${oneLine(n.body, 160)}" (receive it with stet_sync)` });
+    if (wanted.has("note")) {
+      for (const n of await store.notes()) {
+        if (n.agent !== agent.id || n.state !== "open" || n.deliveredAt) continue;
+        news.push({ key: `note:${n.id}`, text: `note ${n.id} from the reviewer on ${n.file}: "${oneLine(n.body, 160)}" (receive it with stet_sync)` });
+      }
     }
     // Once per base the agent is on: the user's saved edits may change the review base often.
-    if (status.syncNeeded) news.push({ key: `sync:${status.agent.baseCommit}`, text: "the document changed since your last sync (call stet_sync before new work)" });
+    if (status.syncNeeded) {
+      // A save, unless main moved on (a commit or pull) since the agent's base: its parent is
+      // the main commit it was built on, or it is that commit itself.
+      const head = await repo.tryRun(["rev-parse", "-q", "--verify", `refs/heads/${cfg.mainBranch}`]);
+      const parent = await repo.tryRun(["rev-parse", "-q", "--verify", `${status.agent.baseCommit}^1`]);
+      const mainMoved = head !== status.agent.baseCommit && head !== parent;
+      const kind = !mainMoved && cfg.shareEdits === "saved" ? "save" : "document";
+      if (wanted.has(kind)) news.push({ key: `sync:${status.agent.baseCommit}`, text: "the document changed since your last sync (call stet_sync before new work)" });
+    }
     return this.append(worktree, news);
   }
 
@@ -166,6 +181,20 @@ export class InboxWriter {
     for (const l of lines) this.keys.add(l.key);
     return lines;
   }
+}
+
+/**
+ * Wake an agent now, whatever its notification settings: the reviewer's *Notify now*. Written by
+ * the reviewer's process (not the agent's MCP server), so it works even while that one waits.
+ */
+export async function pingInbox(worktree: string, message?: string): Promise<InboxLine> {
+  const line: InboxLine = {
+    at: new Date().toISOString(),
+    key: `ping:${Date.now()}`,
+    text: `the reviewer asks you to check in now${message?.trim() ? `: "${oneLine(message, 300)}"` : ""} (call stet_status, then stet_get_feedback / stet_sync)`,
+  };
+  await appendInside(worktree, INBOX_FILE, `${line.at} ${line.key} ${line.text}\n`);
+  return line;
 }
 
 /** The inbox of the workspace containing `cwd` (the nearest folder with a `.git` entry), or null. */

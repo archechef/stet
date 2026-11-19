@@ -20,6 +20,7 @@ Stet's promise: **an AI agent never changes your project without your approval.*
   - writes into the git folder;
   - git commands that bypass review, such as merge, push, branch switching, `git config` and remote changes.
   - changes to the files Stet manages in the workspace, including the inbox `.stet/inbox`. The one command naming the project's git folder that the guard allows is the workspace's own `stet watch` command exactly as its instructions give it, with no other arguments or shell operators: it only reads the inbox inside the workspace.
+- **PDF previews** compile text an agent proposed, and LaTeX can read any file you can (`\input{/etc/passwd}` works whatever `openin_any` says). So every build runs in a rootless Podman container: no network, a read-only system, no privileges, and only the build folder (writable), your TeX Live and `~/texmf` (read-only) mounted. Shell escape is off, writes are restricted, latexmk's rc files (Perl) are ignored, and the project is exported with symbolic links as plain files. Without Podman, previews are off unless you set `preview.isolation` to `"process"`, and Stet then warns that TeX can read your files.
 - **Git hooks in your project:** `reference-transaction` and `pre-push` refuse to bring agent commits into the main branch or push agent branches.
 - **Stet's own checks** (these hold even if the guard is bypassed):
   - Agent files are handled through your project's repository, with Stet's own index. Stet never uses the agent worktree's git link, config or index, so swapping them has no effect.

@@ -1,5 +1,6 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
+import { DEFAULT_PREVIEW, type PreviewConfig } from "./preview.js";
 
 export interface SplitConfig {
   mergeGap: number;
@@ -48,6 +49,8 @@ export interface StetConfig {
   split: SplitConfig;
   grouping: GroupingConfig;
   files: { tex: string[]; bib: string[] };
+  /** PDF previews of changes (spec §14). */
+  preview: PreviewConfig;
 }
 
 export function defaultConfig(mainBranch: string): StetConfig {
@@ -75,6 +78,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
       tex: ["*.tex", "*.sty", "*.cls", "*.ltx", "*.dtx"],
       bib: ["*.bib"],
     },
+    preview: { ...DEFAULT_PREVIEW },
   };
 }
 
@@ -122,6 +126,15 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (typeof cfg.worktreeRoot !== "string" || !cfg.worktreeRoot) bad("worktreeRoot");
   if (!["on-finish", "when-clean", "never"].includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}'`);
   if (!SHARE_MODES.includes(cfg.shareEdits)) bad(`shareEdits '${cfg.shareEdits}' (use ${SHARE_MODES.join(", ")})`);
+  const pv = cfg.preview;
+  if (typeof pv?.enabled !== "boolean") bad("preview.enabled (true or false)");
+  // The root file becomes a TeX command-line argument: a plain relative .tex path only.
+  if (pv.rootFile !== null && (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+\.tex$/.test(pv.rootFile) || pv.rootFile.startsWith("/")))
+    bad(`preview.rootFile '${pv.rootFile}' (a .tex file relative to the project, or null)`);
+  if (!["auto", "pdflatex", "xelatex", "lualatex"].includes(pv.engine)) bad(`preview.engine '${pv.engine}' (auto, pdflatex, xelatex or lualatex)`);
+  if (!["auto", "container", "process"].includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (auto, container or process)`);
+  if (typeof pv.image !== "string" || !/^[a-z0-9][a-z0-9._\/:@-]*$/i.test(pv.image)) bad(`preview.image '${pv.image}'`);
+  if (typeof pv.timeout !== "number" || !(pv.timeout >= 5 && pv.timeout <= 3600)) bad("preview.timeout (seconds, 5 to 3600)");
   return cfg;
 }
 

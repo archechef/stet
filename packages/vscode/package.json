@@ -326,6 +326,23 @@
         "title": "Agents see only committed text",
         "category": "Stet",
         "toggled": "config.stet.shareEdits == 'committed'"
+      },
+      {
+        "command": "stet.preview",
+        "title": "Preview in PDF",
+        "category": "Stet",
+        "icon": "$(file-pdf)"
+      },
+      {
+        "command": "stet.previewSetup",
+        "title": "Set up PDF previews",
+        "category": "Stet"
+      },
+      {
+        "command": "stet.agentPing",
+        "title": "Notify agent now…",
+        "category": "Stet",
+        "icon": "$(megaphone)"
       }
     ],
     "menus": {
@@ -531,6 +548,26 @@
           "command": "stet.undo",
           "when": "view == stet.review && viewItem =~ /\\.undo$/",
           "group": "1_review@5"
+        },
+        {
+          "command": "stet.preview",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
+          "group": "3_nav@3"
+        },
+        {
+          "command": "stet.preview",
+          "when": "view == stet.history && viewItem =~ /^item\\.done\\.modify/",
+          "group": "1_view@4"
+        },
+        {
+          "command": "stet.agentPing",
+          "when": "view == stet.review && viewItem =~ /^agent\\.active/",
+          "group": "inline@0"
+        },
+        {
+          "command": "stet.agentPing",
+          "when": "view == stet.review && viewItem =~ /^agent\\.active/",
+          "group": "2_manage@0"
         }
       ],
       "comments/commentThread/context": [

@@ -51,7 +51,8 @@ Run these in your LaTeX project, which must be a git repository with at least on
 | `stet agent list` | Lists all agents with their state and folder. |
 | `stet agent refresh <name>` | Rewrites the agent's instructions, tool configuration and guardrails, e.g. after a Stet update. |
 | `stet agent archive <name> [--remove]` | Retires an agent: its pending changes are withdrawn. `--remove` also deletes the folder and branch. The agent is told on its next action. |
-| `stet agent notify <name> [now\|batched\|off]` | When an agent waiting with `stet watch` is woken: `batched` (default) once you have paused for half a minute, `now` at each decision, `off` not at all (switching back on delivers what arrived meanwhile). Without a mode, shows the current one. |
+| `stet agent notify <name> [now\|batched\|off] [--on <kinds>\|all]` | When an agent waiting with `stet watch` is woken: `batched` (default) once you have paused for half a minute, `now` at each decision, `off` not at all (switching back on delivers what arrived meanwhile). `--on` chooses what wakes it, from `accepted`, `rejected`, `revision`, `comment`, `note`, `document` (commits and shared edits) and `save` (saves, when agents see saved edits), comma-separated, or `all`. Without options, shows the current settings. |
+| `stet agent ping <name> [-m <text>]` | Wakes a watching agent now, whatever its notification settings, optionally with a message. |
 
 Names use letters, digits, `.`, `_` and `-`. What happens inside a workspace, and how Claude and Codex are set up, is described in [agents.md](agents.md).
 
@@ -68,6 +69,9 @@ Run these in your project folder. Changes have ids like `12.3`: change 3 of roun
 | `stet accept <12.3\|G3\|G3.2>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
 | `stet reject <12.3\|G3\|G3.2>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
 | `stet undo <12.3>` | Undoes a rejection, or an accept until you commit it (the change is taken out of your file again): the change is pending again, and so are changes the accept made stale. Changes decided together (a linked group, a move) are undone together. The agent is told. |
+| `stet preview <12.3>` | PDF preview of a change: writes images of the page region after and before the change and prints their paths. Says so when the change has no place on the page, or when the document doesn't compile. |
+| `stet preview status` | What PDF previews can use here, and what is missing. |
+| `stet preview setup` | Builds the container image previews compile in (downloads Debian, Perl and Poppler, about 150 MB). Only ever on this command. |
 | | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <12.3\|N3> -m <text>` | Sends a message about a change, or in a note's thread; the agent can reply. |
@@ -123,12 +127,15 @@ Agents normally use the Stet tools through MCP (see [agents.md](agents.md)). The
 | `stet withdraw <12.3>… [-m <reason>]` | Withdraws the agent's own pending items. |
 | `stet watch [--once]` | Waits for the reviewer: prints one line whenever something arrives for this agent (feedback, a note, a sync needed), from the workspace's `.stet/inbox`. `--once` exits after the first lines. Read-only, so it works in the agent's sandbox. The inbox is written while the agent's Stet MCP server runs. |
 
-**Grouping hints for `submit --groups`:** a JSON list, from a file or `-` for standard input. Locations are `file`, `file:line` or `file:from-to`, in the workspace after the edits:
+**Grouping hints for `submit --groups`:** a JSON list, from a file or `-` for standard input. Locations are `file`, `file:line` or `file:from-to`, in the workspace after the edits. A quoted snippet of the new text after a location picks one change on that line, e.g. `main.tex:4 "suggestion"`: a paragraph is often one line, and only the snippet can put two of its changes into different parts:
 
 ```json
 [
   { "kind": "linked", "title": "Rename sec:intro → sec:introduction", "where": ["main.tex:3", "main.tex:12"] },
   { "kind": "atomic", "title": "Rewrite the first sentence", "where": ["main.tex:4-5"] },
+  { "kind": "linked", "title": "Terms", "where": ["main.tex:6"], "parts": [
+    { "title": "base", "where": ["main.tex:6 \"shared base\""] },
+    { "title": "proposal", "where": ["main.tex:6 \"suggestion\""] } ] },
   { "kind": "related", "title": "Consistent spelling", "rationale": "British English", "where": ["main.tex"] }
 ]
 ```

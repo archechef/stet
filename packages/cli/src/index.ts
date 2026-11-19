@@ -37,7 +37,11 @@ import {
   type ItemStatus,
   type NoteHint,
   type NotifyMode,
+  type NotifyTrigger,
   notifyMode,
+  notifyTriggers,
+  NOTIFY_TRIGGERS,
+  NOTIFY_TRIGGER_TEXT,
   type StetEvent,
   describeNote,
   findInbox,
@@ -56,8 +60,10 @@ Project (run in your project folder):
   stet agent list
   stet agent refresh <name>             rewrite the agent's instructions, MCP and guard files
   stet agent archive <name> [--remove]  retire an agent (withdraws its pending items)
-  stet agent notify <name> [now|batched|off]
-                                        when a watching agent hears about your decisions
+  stet agent notify <name> [now|batched|off] [--on <kinds>|all]
+                                        when a watching agent is woken, and by what: accepted,
+                                        rejected, revision, comment, note, document, save
+  stet agent ping <name> [-m <text>]    wake a watching agent now, whatever its settings
   stet setup claude|codex [--print]     register the Stet MCP server with Claude Code / Codex
   stet hooks install|uninstall|status   git hooks that block merges/pushes of agent branches
 
@@ -68,6 +74,8 @@ Review:
   stet accept <12.3|G3|G3.2>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
   stet reject <12.3|G3|G3.2>... [-m <reason>] [--all | --revise-rest | --only]
   stet undo <12.3>                      undo an accept (until committed) or a rejection: pending again
+  stet preview <12.3>                   PDF preview: images of the page region before and after the change
+  stet preview status|setup             what previews can use here | build their container image (downloads)
   stet revise <12.3> -m <what to change>
   stet comment <12.3|N3> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
@@ -123,6 +131,7 @@ const { values: opt, positionals: pos } = parseArgs({
     notes: { type: "string" },
     peek: { type: "boolean" },
     once: { type: "boolean" },
+    on: { type: "string" },
     print: { type: "boolean" },
   },
 });
@@ -445,11 +454,20 @@ async function main() {
         const id = need(name, "agent name");
         const mode = args[2] as NotifyMode | undefined;
         if (mode) await stet.setNotify(id, mode);
+        if (opt.on !== undefined) await stet.setNotifyOn(id, opt.on === "all" ? [...NOTIFY_TRIGGERS] : (opt.on.split(",").map((s) => s.trim()).filter(Boolean) as NotifyTrigger[]));
         const a = (await stet.listAgents()).find((x) => x.id === id);
         if (!a) throw new StetError(`Unknown agent '${id}'.`);
-        return out(() => `${bold(id)}: ${NOTIFY_TEXT[notifyMode(a)]}`, { agent: id, notify: notifyMode(a) });
+        const on = notifyTriggers(a);
+        return out(
+          () => `${bold(id)}: ${NOTIFY_TEXT[notifyMode(a)]}\n  woken by: ${on.length === NOTIFY_TRIGGERS.length ? "everything" : on.length ? on.map((t) => NOTIFY_TRIGGER_TEXT[t].toLowerCase()).join(", ") : dim("nothing")}`,
+          { agent: id, notify: notifyMode(a), notifyOn: on },
+        );
       }
-      throw new StetError("Usage: stet agent new|list|refresh|archive|notify <name>");
+      if (sub === "ping") {
+        await stet.pingAgent(need(name, "agent name"), opt.message);
+        return out(() => `Asked ${bold(name!)} to check in now (if it is watching).`, { ok: true });
+      }
+      throw new StetError("Usage: stet agent new|list|refresh|archive|notify|ping <name>");
     }
 
     case "hooks": {
@@ -607,6 +625,34 @@ async function main() {
         }
         throw e;
       }
+    }
+
+    case "preview": {
+      const what = need(args[0], "item id, `status` or `setup`");
+      if (what === "status") {
+        const s = await stet.previewStatus(true);
+        return out(() => [`${s.status === "ready" ? green("ready") : yellow(s.status)}: ${s.message}`, ...(s.fix ? [`  ${s.fix}`] : [])].join("\n"), s);
+      }
+      if (what === "setup") {
+        // Downloads packages into a container image: only ever on this explicit command.
+        console.error(dim("Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…"));
+        const r = await stet.setupPreview();
+        if (!r.ok) throw new StetError(`Building the preview image failed:\n${r.log.split("\n").slice(-15).join("\n")}`);
+        return out(() => `${green("Done.")} ${r.status.message}${r.status.fix ? `\n  ${r.status.fix}` : ""}`, r.status);
+      }
+      const r = await stet.preview(what);
+      return out(() => {
+        switch (r.status) {
+          case "ready":
+            return [`${bold(what.toUpperCase())} page ${r.after.page}`, `  before: ${r.before ? r.before.file : dim("(not found in the old version)")}`, `  after:  ${r.after.file}`].join("\n");
+          case "failed":
+            return `${red(r.message)}\n${r.log}`;
+          case "unavailable":
+            return `${yellow(r.message)}${r.fix ? `\n  ${r.fix}` : ""}`;
+          default:
+            return dim(r.message);
+        }
+      }, r);
     }
 
     case "undo": {

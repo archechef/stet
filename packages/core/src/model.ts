@@ -20,6 +20,8 @@ export interface Agent {
   archived?: { at: string; withdrawn: string[]; worktreeRemoved: boolean };
   /** When the agent's inbox gets news (it wakes an agent running `stet watch`). Absent: "batched". */
   notify?: NotifyMode;
+  /** Which kinds of news wake it. Absent: all of them. */
+  notifyOn?: NotifyTrigger[];
 }
 
 /**
@@ -31,6 +33,44 @@ export interface Agent {
 export type NotifyMode = "now" | "batched" | "off";
 export const NOTIFY_MODES: readonly NotifyMode[] = ["now", "batched", "off"];
 export const notifyMode = (a: Agent): NotifyMode => a.notify ?? "batched";
+
+/**
+ * Kinds of news that can wake a watching agent, each switched on or off per agent. Kinds left
+ * out don't wake it, but the agent still finds them when it next checks.
+ */
+export type NotifyTrigger = "accepted" | "rejected" | "revision" | "comment" | "note" | "document" | "save";
+export const NOTIFY_TRIGGERS: readonly NotifyTrigger[] = ["accepted", "rejected", "revision", "comment", "note", "document", "save"];
+export const NOTIFY_TRIGGER_TEXT: Record<NotifyTrigger, string> = {
+  accepted: "Accepted changes",
+  rejected: "Rejected changes",
+  revision: "Revision requests",
+  comment: "Comments and replies",
+  note: "New notes",
+  document: "Commits and shared edits",
+  save: "Saves (when agents see your saved edits)",
+};
+export const notifyTriggers = (a: Agent): NotifyTrigger[] => a.notifyOn ?? [...NOTIFY_TRIGGERS];
+
+/** Which kind of news a feedback event is. */
+export function triggerOf(e: { type: EventType; data?: Record<string, unknown> }): NotifyTrigger {
+  switch (e.type) {
+    case "accepted":
+    case "group_partial":
+      return "accepted";
+    case "rejected":
+    case "repeat_rejected":
+    case "group_broken":
+      return "rejected";
+    case "revision_requested":
+      return "revision";
+    case "reopened":
+      return e.data?.was === "accepted" ? "accepted" : e.data?.was === "rejected" ? "rejected" : "document";
+    case "stale":
+      return "document";
+    default:
+      return "comment"; // comment, note_comment, note_resolved
+  }
+}
 
 export type GroupKind = "atomic" | "linked" | "related";
 export type GroupSource = "agent" | "commit" | "auto";

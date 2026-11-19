@@ -130,7 +130,8 @@ export async function settleParts(
   drafts.forEach((d, k) => {
     for (const i of d.items) {
       const prev = partOf.get(i);
-      if (prev !== undefined) join(prev, k, `both contain ${i}`, true);
+      // Usually two parts naming the same line: say how to name one change on it.
+      if (prev !== undefined) join(prev, k, `both contain ${i} (to separate changes on one line, add a snippet of the new text to the location: file:line "snippet")`, true);
       else partOf.set(i, k);
     }
   });

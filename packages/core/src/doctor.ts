@@ -70,7 +70,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   add(
     latexmk
       ? { name: "latexmk", status: "ok", message: latexmk.split("\n").find((l) => /latexmk/i.test(l))?.trim() ?? "found" }
-      : { name: "latexmk", status: "info", message: "not found (only needed for PDF previews, a later feature)" },
+      : { name: "latexmk", status: "info", message: "not found (only needed for PDF previews)" },
   );
 
   // Repository -----------------------------------------------------------------
@@ -191,6 +191,16 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
       add({ name: n, status: "warn", message: `${parts.join(", ")}; missing workspace files: ${missingFiles.join(", ")}`, fix: `stet agent refresh ${a.id}` });
     else add({ name: n, status: "ok", message: parts.join(", ") });
   }
+  const pv = await stet.previewStatus(true).catch(() => null);
+  if (pv) {
+    add({
+      name: "PDF previews",
+      status: pv.status === "ready" ? (pv.isolation === "process" ? "warn" : "ok") : "info",
+      message: pv.message,
+      ...(pv.fix ? { fix: pv.fix } : pv.isolation === "process" ? { fix: "install Podman for builds in an isolated container" } : {}),
+    });
+  }
+
   // Only when something is wrong: accepted changes agents don't get.
   const missing = await stet.missingFromBase().catch(() => []);
   if (missing.length)

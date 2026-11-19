@@ -66,10 +66,12 @@ The agent needs no further setup. The first time it opens the folder, Claude ask
 
 **Working with the agent:** ask it to improve the paper as usual, for example "Tighten the introduction". It edits its own copy and submits the result for review by itself. Several agents can work in parallel, each in its own workspace.
 
-**Notifications** (the bell next to the agent): an agent that waits for you with `stet watch` is woken when something arrives for it. Choose when:
-- **When I pause** (the default): once you have stopped for half a minute, with all your decisions together, not after every click.
-- **Right away**: at each decision, comment or note.
-- **Off**: not woken (the bell is crossed out). The agent hears about your decisions when it next checks; switching back on delivers what arrived meanwhile.
+**Notifications** (the bell next to the agent): an agent that waits for you with `stet watch` is woken when something arrives for it. The bell opens one checklist:
+- **When**, one of two: **When I pause** (the default: once you have stopped for half a minute, with all your decisions together, not after every click) or **Right away** (at each decision, comment or note).
+- **Wake it for:** the kinds of news that should wake it: accepted changes, rejected changes, revision requests, comments and replies, new notes, commits and shared edits, and saves (when agents see your saved edits). News left out doesn't wake the agent, but it still finds it when it next checks, and it arrives if you tick that kind again.
+- Untick every kind to turn notifications **off** (the bell is crossed out).
+
+**Notify now** (the megaphone next to the agent): wakes the agent at once, whatever the settings above, with an optional message such as *I've finished reviewing round 3*.
 
 A woken agent starts working without you prompting it, so *Off* is also the way to keep it waiting for you.
 
@@ -184,6 +186,17 @@ After you accept, reject, edit or request a revision, Stet **moves on to the nex
 - it overlaps a change you accepted.
 
 The agent is told and can propose it again against the current text.
+
+### PDF previews
+
+**Preview in PDF** (the *PDF* link in a change's hover, or right-click a change) opens a panel next to the editor. It shows the region of the compiled paper where the change lands, after and before. The change itself is in the editor at once; the panel says *Building the preview…* and fills in a second or two later. While the panel is open it follows the change you select or put the cursor on, and prepares the next two changes in the background, so moving through a review stays quick.
+
+- Changes with no place of their own on the page (the preamble, a macro definition, bibliography data, files that aren't `.tex`) get no preview, and the panel says so.
+- If the document doesn't compile with the change, the panel shows the LaTeX error. If it doesn't compile without the change either, it says that instead.
+
+**What it needs:** TeX Live (with `latexmk`) and Podman, on Linux. Previews compile the agents' text in an isolated container, because LaTeX can read any file you can and copy it into the PDF. The container has no network and sees only the build folder and, read-only, your TeX Live. The first time, Stet offers to build the container image (**Set up**, about 150 MB: Debian, Perl and Poppler). It never downloads anything without that click. If something is missing, Stet says once what and how to fix it; everything else works as usual. *Stet: Set up PDF previews* builds the image at any time.
+
+Without Podman, previews stay off. For material you trust, you can set `"preview": { "isolation": "process" }` in `.git/stet/config.json` to compile without a container. TeX can then read every file you can.
 
 ### 4.4 Threads
 

@@ -21,3 +21,4 @@ export { agentInstructions, archivedMessage, MCP_INSTRUCTIONS } from "./instruct
 export { Repo } from "./git.js";
 export { foldPath, isInside, pathExists, samePath } from "./paths.js";
 export { verifyAgentWorktree, WorktreeIntegrityError } from "./worktree.js";
+export { detectEngine, detectRoot, parseSynctex, cropRegion, containerArgs, excerpt, PREVIEW_CONTAINERFILE, DEFAULT_PREVIEW, type PreviewConfig, type PreviewEnv, type PreviewResult, type PreviewImage } from "./preview.js";

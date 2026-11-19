@@ -29,7 +29,9 @@ process.exitCode = failedRuns ? 1 : 0;
 function runOnce(runtime) {
 const tmp = mkdtempSync(join(tmpdir(), "stet-vscode-it-"));
 try {
-  const fixture = execFileSync(process.execPath, [join(here, "fixture.mjs"), tmp], { cwd: extDir, encoding: "utf8" }).trim().split("\n").pop();
+  // The bundled fixture (from `npm run build`) runs without node_modules.
+  const fixtureScript = existsSync(join(extDir, "dist", "it-fixture.mjs")) ? join(extDir, "dist", "it-fixture.mjs") : join(here, "fixture.mjs");
+  const fixture = execFileSync(process.execPath, [fixtureScript, tmp], { cwd: extDir, encoding: "utf8" }).trim().split("\n").pop();
   const { repo } = JSON.parse(fixture);
   const out = join(tmp, "results.json");
   // When started from another Electron app, this variable would make VS Code run as plain Node.

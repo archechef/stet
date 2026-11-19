@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkToolUse } from "../src/guard.js";
 import { findInbox, followInbox, InboxWriter, INBOX_FILE, INBOX_TIMING, parseInboxLine } from "../src/inbox.js";
-import { notifyMode } from "../src/model.js";
+import { notifyMode, NOTIFY_TRIGGERS, triggerOf } from "../src/model.js";
 import { PassThrough } from "node:stream";
 import { serveStdio, StetMcpServer } from "../src/mcp.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
@@ -155,6 +155,71 @@ describe("notification modes", () => {
     await stet.setNotify("a", "now");
     expect((await w.tick()).map((l) => l.key)).toEqual(["note:N1"]);
     await expect(stet.setNotify("a", "loud" as any)).rejects.toThrow(/Unknown notification mode/);
+  });
+});
+
+describe("what wakes an agent", () => {
+  it("writes only the kinds of news chosen; the others arrive once switched on", async () => {
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    await stet.setNotify("a", "now");
+    expect(await stet.setNotifyOn("a", ["note"])).toBe(true);
+    const w = new InboxWriter(stet, "a");
+    edit(a.worktree, "main.tex", "the problem", "the task");
+    const { items } = await stet.submit("a", { title: "t" });
+    await stet.reject([items[0]!.id]);
+    expect(await w.tick(true)).toEqual([]);
+    await stet.addNote("a", { file: "main.tex", fromLine: 6 }, "Shorter.");
+    expect((await w.tick(true)).map((l) => l.key)).toEqual(["note:N1"]);
+    await stet.setNotifyOn("a", [...NOTIFY_TRIGGERS]);
+    expect((await w.tick(true)).map((l) => l.text)).toEqual([expect.stringMatching(/^REJECTED/)]);
+    await expect(stet.setNotifyOn("a", ["everything" as any])).rejects.toThrow(/Unknown kind/);
+  });
+
+  it("tells saves from commits", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    await stet.setNotify("a", "now");
+    await stet.setShareEdits("saved");
+    await stet.setNotifyOn("a", ["document"]);
+    const w = new InboxWriter(stet, "a");
+    edit(repo, "main.tex", "It scales", "It also scales"); // a save, seen by agents
+    expect(await w.tick(true)).toEqual([]);
+    await stet.setNotifyOn("a", ["save"]);
+    expect((await w.tick(true)).map((l) => l.key)).toEqual([expect.stringMatching(/^sync:/)]);
+
+    await stet.sync("a");
+    await stet.setNotifyOn("a", ["document"]);
+    git(repo, "commit", "-qam", "edit"); // the same text, committed: no news
+    write(repo, "other.tex", "x\n");
+    git(repo, "add", "other.tex");
+    git(repo, "commit", "-qm", "other"); // main moved on: a document change
+    expect((await w.tick(true)).map((l) => l.key)).toEqual([expect.stringMatching(/^sync:/)]);
+  });
+
+  it("Notify now wakes the agent whatever its settings", async () => {
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    await stet.setNotify("a", "off");
+    const got = (async () => {
+      for await (const l of followInbox(join(a.worktree, INBOX_FILE), { once: true, poll: 20, settle: 30 })) return l;
+    })();
+    await new Promise((r) => setTimeout(r, 50));
+    await stet.pingAgent("a", "Round 3 is reviewed.");
+    const line = await got;
+    expect(line!.key).toMatch(/^ping:/);
+    expect(line!.text).toMatch(/check in now: "Round 3 is reviewed\."/);
+    await stet.archiveAgent("a");
+    await expect(stet.pingAgent("a")).rejects.toThrow(/archived/);
+  });
+
+  it("sorts events into kinds", () => {
+    expect(triggerOf({ type: "accepted" })).toBe("accepted");
+    expect(triggerOf({ type: "repeat_rejected" })).toBe("rejected");
+    expect(triggerOf({ type: "revision_requested" })).toBe("revision");
+    expect(triggerOf({ type: "note_comment" })).toBe("comment");
+    expect(triggerOf({ type: "stale" })).toBe("document");
+    expect(triggerOf({ type: "reopened", data: { was: "rejected" } })).toBe("rejected");
   });
 });
 

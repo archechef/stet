@@ -39,7 +39,10 @@ const str = (description: string) => ({ type: "string", description });
 const whereSchema = {
   type: "array",
   items: { type: "string" },
-  description: 'Locations in YOUR workspace after editing: "file", "file:line" or "file:from-to" (1-based lines).',
+  description:
+    'Locations in YOUR workspace after editing: "file", "file:line" or "file:from-to" (1-based lines), optionally followed by a ' +
+    'quoted snippet of the new text that picks one change on that line: \'main.tex:12 "suggestion"\'. Use the snippet whenever ' +
+    "several changes share a line (a paragraph is often one line): it is the only way to put them into different parts.",
 };
 
 export const TOOLS: ToolDef[] = [

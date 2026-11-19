@@ -29,7 +29,10 @@ import {
   moveOthers,
   moveTo,
   NOTIFY_MODES,
+  NOTIFY_TRIGGERS,
   notifyMode,
+  notifyTriggers,
+  type NotifyTrigger,
   parsePartId,
   partId,
   type NotifyMode,
@@ -51,6 +54,8 @@ import { combineParts, settleParts, type PartDraft } from "./parts.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
 import { Store, writeJsonAtomic } from "./store.js";
 import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
+import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewEnv, type PreviewResult } from "./preview.js";
+import { pingInbox } from "./inbox.js";
 import { archivedMessage, STET_MARKER } from "./instructions.js";
 import { installHooks } from "./hooks.js";
 import { isWorkspaceFile, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
@@ -63,6 +68,13 @@ import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normali
 export { StetError };
 
 export const BASE_REF = "refs/stet/base";
+/** Changes of a simulated accept, as neighbours of `it` (same file and base). */
+function appliedAsNeighbours(applied: { item: Item; text: string }[], it: Item): Neighbour[] {
+  return applied
+    .filter((a) => a.item.kind === "modify" && a.item.file === it.file && a.item.baseCommit === it.baseCommit && a.item.id !== it.id)
+    .map((a) => ({ range: a.item.range, oldText: a.item.oldText, text: a.text }));
+}
+
 /** Text between two changes that ends a sentence or a paragraph. */
 const SENTENCE_BREAK = /[.!?]["')\]}]*\s|\n[ \t]*\n/;
 
@@ -1048,19 +1060,21 @@ export class Stet {
     const hints = opts.groups ?? [];
     const tipRange = async (w: string) => {
       const where = parseWhere(w);
-      if (where.from === undefined) return { file: where.file, range: null };
+      const text = where.text;
+      if (where.from === undefined) return { file: where.file, range: null, text };
       const t = await this.textAt(tip, where.file);
-      if (!t) return { file: where.file, range: { start: -1, end: -1 } };
-      return { file: where.file, range: lineRange(t.text, where.from, where.to!) };
+      if (!t) return { file: where.file, range: { start: -1, end: -1 }, text };
+      return { file: where.file, range: lineRange(t.text, where.from, where.to!), text };
     };
     const unit = (c: Candidate, key: string): HintUnit => ({
       key, file: c.file, ...(c.oldFile ? { oldFile: c.oldFile } : {}), wholeFile: c.kind !== "modify", newStart: c.newStart, newEnd: c.newEnd,
+      oldText: c.oldText, newText: c.newText,
     });
     const hintMatches = async (where: string[], pool: Candidate[]) => {
       const out = new Set<Candidate>();
       for (const w of where) {
-        const { file, range } = await tipRange(w);
-        const hits = pool.filter((c) => unitMatches(unit(c, ""), file, range));
+        const { file, range, text } = await tipRange(w);
+        const hits = pool.filter((c) => unitMatches(unit(c, ""), file, range, text));
         if (!hits.length) result.warnings.push(`'${w}' matched no change.`);
         hits.forEach((h) => out.add(h));
       }
@@ -1470,9 +1484,12 @@ export class Stet {
         if (b === a) continue;
         const located = before[b]!.located;
         const clash = located.some((l) =>
-          res.applied.some((x) => x.item.file === l.item.file && (l.item.kind !== "modify" || x.item.kind !== "modify" || overlaps(l.span, x.span))),
+          res.applied.some((x) => x.item.file === l.item.file && (l.item.kind !== "modify" || x.item.kind !== "modify" || conflicts(l.span, x.span))),
         );
-        const lost = clash ? [] : (await locate(located.map((l) => l.item), after, opts)).failed;
+        // Part a is accepted in this simulation: a change next to it is found with its text, as
+        // after a real accept (bug report 2026-11-19: parts in one paragraph were always joined).
+        const simulated = { ...opts, neighbours: async (it: Item) => [...appliedAsNeighbours(res.applied, it), ...(await this.neighbours(it))] };
+        const lost = clash ? [] : (await locate(located.map((l) => l.item), after, simulated)).failed;
         if (clash || lost.length) out.push([a, b]);
       }
     }
@@ -1949,6 +1966,75 @@ export class Stet {
     delete it.acceptFailed;
     await this.store.putItem(it);
     await this.store.appendEvent({ type: "reopened", agent: it.agent, items: [it.id], data: { item: await this.describe(it), was } });
+  }
+
+  // -------------------------------------------------------------------------
+  // PDF previews (§14)
+
+  private previews: { env: PreviewEnv; builder: PreviewBuilder } | null = null;
+
+  /** What PDF previews can use here, and what is missing. Never installs or downloads anything. */
+  async previewStatus(recheck = false): Promise<PreviewEnv> {
+    if (!this.previews || recheck) {
+      const cfg = (await this.config()).preview;
+      const env = await detectPreviewEnv(cfg);
+      this.previews = { env, builder: new PreviewBuilder(this.repo, join(this.store.root, "previews"), cfg, env) };
+    }
+    return this.previews.env;
+  }
+
+  /** Build the container image previews run in. It downloads packages: call it only on the user's request. */
+  async setupPreview(): Promise<{ ok: boolean; log: string; status: PreviewEnv }> {
+    const r = await setupPreviewImage((await this.config()).preview);
+    return { ...r, status: await this.previewStatus(true) };
+  }
+
+  /**
+   * The region of the compiled paper where a change lands, before and after (as images in the
+   * preview cache). Text changes in .tex files only; slow (it compiles), so callers show the
+   * change first and the preview once it is ready.
+   */
+  async preview(id: string): Promise<PreviewResult> {
+    const item = await this.store.getItem(id.toUpperCase());
+    if (!item) throw new StetError(`Unknown item '${id}'.`);
+    await this.previewStatus();
+    const cfg = await this.config();
+    if (item.kind !== "modify" || this.fileClass(cfg, item.file) !== "tex" || !/\.tex$/i.test(item.file))
+      return { status: "no-spot", message: "Only changes to the text of .tex files have a PDF preview." };
+    const base = await this.textAt(item.baseCommit, item.file);
+    if (!base) return { status: "no-spot", message: `${item.file} isn't in the text this change was proposed against.` };
+    return this.previews!.builder.preview({
+      base: item.baseCommit,
+      file: item.file,
+      baseText: base.text,
+      eol: base.eol,
+      range: item.range,
+      newText: item.newText,
+      key: `${item.id}-${sha256(`${item.range.start}:${item.range.end}:${item.newText}`).replace(/^sha256:/, "").slice(0, 12)}`,
+    });
+  }
+
+  /** Choose which kinds of news wake an agent (see `NotifyTrigger`). Returns false if unchanged. */
+  async setNotifyOn(agentId: string, triggers: NotifyTrigger[]): Promise<boolean> {
+    const bad = triggers.filter((t) => !NOTIFY_TRIGGERS.includes(t));
+    if (bad.length) throw new StetError(`Unknown kind of news: ${bad.join(", ")} (use ${NOTIFY_TRIGGERS.join(", ")}).`);
+    return this.store.withLock(async () => {
+      const agent = await this.requireAgent(agentId);
+      const next = NOTIFY_TRIGGERS.filter((t) => triggers.includes(t));
+      if (next.join() === notifyTriggers(agent).join()) return false;
+      if (next.length === NOTIFY_TRIGGERS.length) delete agent.notifyOn;
+      else agent.notifyOn = next;
+      await this.store.putAgent(agent);
+      return true;
+    });
+  }
+
+  /** *Notify now*: wake an agent waiting with `stet watch`, whatever its notification settings. */
+  async pingAgent(agentId: string, message?: string): Promise<void> {
+    const agent = await this.requireAgent(agentId);
+    if (agent.state !== "active") throw new StetError(`Agent ${agentId} is archived.`);
+    if (!(await pathExists(agent.worktree))) throw new StetError(`The workspace of ${agentId} no longer exists.`);
+    await pingInbox(agent.worktree, message);
   }
 
   /** Set how an agent hears about the reviewer's activity (see `NotifyMode`). Returns false if unchanged. */

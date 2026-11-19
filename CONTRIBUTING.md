@@ -27,7 +27,7 @@ With npm 11 (Node 24), `npm install` reports that some packages' install scripts
 - `node_modules` (the root's and `packages/vscode`'s) and npm's cache are Podman volumes (`stet-node-modules`, `stet-node-modules-vscode`, `stet-npm-cache`), not folders in the repository on your machine. On your machine the two `node_modules` folders stay empty: the volumes are mounted on them (`initializeCommand` creates them before the container starts). `podman volume rm` removes the volumes.
 - **No pushing from inside:** git there rewrites GitHub push URLs to a scheme that doesn't exist, and your SSH agent is not passed in. Commit and tag in the container; push from your own terminal.
 
-**Not in the container:** the VS Code integration test (`npm run test:integration -w stet-vscode`) needs VS Code and a display. Run it on your machine, which then needs Node.js and an `npm ci` there.
+**Not in the container:** the VS Code integration test needs VS Code and a display, so it runs on your machine. Build in the container first (`npm run build`, which also bundles the test's fixture), then run `node packages/vscode/test/integration/run.mjs` on your machine. It needs Node.js there, but no `node_modules`.
 
 **Agents:** a Claude Code session started *inside* the container (in its terminal, or with the Claude Code extension in the container window) runs its commands there too. The Claude desktop app runs its commands on your machine, even for this folder.
 

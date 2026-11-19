@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Item } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
+import { parseWhere } from "../src/grouping.js";
 import { edit, PAPER, read, setup, write } from "./helpers.js";
 
 let n = 0;
@@ -201,5 +202,48 @@ describe("parts in review", () => {
     await stet.acceptGroup(`${g!.id}.1`);
     expect((await stet.listGroups()).find((x) => x.id === g!.id)!.state).toBe("resolved");
     expect((await stet.feedback("a")).map((e) => e.type)).not.toContain("group_partial");
+  });
+});
+
+describe("parts within one line (bug report 2026-11-19)", () => {
+  const LINE = "We define the \\emph{review base} as the text agents see, and the \\emph{proposal} as what one agent changes in its own copy before it submits.";
+  const DOC = `\\documentclass{article}\n\\begin{document}\n${LINE}\n\\end{document}\n`;
+
+  it("reads locations with a snippet", () => {
+    expect(parseWhere('main.tex:12 "sug gestion"')).toEqual({ file: "main.tex", from: 12, to: 12, text: "sug gestion" });
+    expect(parseWhere('main.tex:3-5 "say \\"hi\\""')).toEqual({ file: "main.tex", from: 3, to: 5, text: 'say "hi"' });
+    expect(parseWhere('./sec/a.tex "x"')).toEqual({ file: "sec/a.tex", text: "x" });
+    expect(parseWhere("main.tex:7")).toEqual({ file: "main.tex", from: 7, to: 7 });
+  });
+
+  it("keeps changes on one paragraph line in separate parts when the agent names them by snippet", async () => {
+    const { stet } = await setup({ "main.tex": DOC });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "review base", "shared base");
+    edit(wt, "main.tex", "proposal", "suggestion");
+    const r = await stet.submit("a", {
+      title: "terms",
+      groups: [{ kind: "linked", title: "terms", where: ["main.tex:3"], parts: [{ title: "base", where: ['main.tex:3 "shared"'] }, { title: "proposal", where: ['main.tex:3 "suggestion"'] }] }],
+    });
+    expect(r.warnings).toEqual([]);
+    const g = r.groups.find((x) => x.kind === "linked")!;
+    expect(g.parts!.map((p) => p.items)).toEqual([[r.items[0]!.id], [r.items[1]!.id]]);
+    // Each part is accepted on its own, the other one still applies.
+    await stet.accept([r.items[1]!.id]);
+    await stet.accept([r.items[0]!.id]);
+  });
+
+  it("warns when a snippet matches no change, and a snippet for a deletion looks at the old text", async () => {
+    const { stet } = await setup({ "main.tex": DOC });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", " in its own copy", "");
+    edit(wt, "main.tex", "proposal", "suggestion");
+    const r = await stet.submit("a", {
+      title: "t",
+      groups: [{ kind: "linked", title: "t", where: ["main.tex:3"], parts: [{ title: "cut", where: ['main.tex:3 "own copy"'] }, { title: "word", where: ['main.tex:3 "nowhere"'] }] }],
+    });
+    expect(r.warnings).toContain(`'main.tex:3 "nowhere"' matched no change.`);
+    const g = r.groups.find((x) => x.kind === "linked")!;
+    expect(g.parts!.some((p) => p.title === "cut" && p.items.length === 1)).toBe(true);
   });
 });

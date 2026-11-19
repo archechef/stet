@@ -274,13 +274,13 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const ref = (id: string): Ref => ({ path: p.mainPath, id });
     const parts = hits.map(({ item }) => {
       const md = new vscode.MarkdownString(undefined, true);
-      md.isTrusted = { enabledCommands: ["stet.accept", "stet.acceptGroup", "stet.reject", "stet.edit", "stet.revise", "stet.comment", "stet.showDiff"] };
+      md.isTrusted = { enabledCommands: ["stet.accept", "stet.acceptGroup", "stet.reject", "stet.edit", "stet.revise", "stet.comment", "stet.showDiff", "stet.preview"] };
       md.supportHtml = false;
       md.appendMarkdown(itemMarkdown(item, model));
       md.appendMarkdown(
         `\n\n[✓ Accept](${cmd("stet.accept", [ref(item.id)])}) · [✗ Reject](${cmd("stet.reject", [ref(item.id)])}) · ` +
           `[✎ Edit](${cmd("stet.edit", [ref(item.id)])}) · [↻ Revise](${cmd("stet.revise", [ref(item.id)])}) · ` +
-          `[💬 Comment](${cmd("stet.comment", [ref(item.id)])}) · [Diff](${cmd("stet.showDiff", [ref(item.id)])})`,
+          `[💬 Comment](${cmd("stet.comment", [ref(item.id)])}) · [Diff](${cmd("stet.showDiff", [ref(item.id)])}) · [PDF](${cmd("stet.preview", [ref(item.id)])})`,
       );
       return md;
     });
