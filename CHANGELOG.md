@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.1 — 2026-11-19
 
 - **Fix: release build of 0.11.0.** A test of the preview setup assumed Podman wasn't installed, and failed on build machines that have it. It now rules Podman out itself. 0.11.1 contains all changes of 0.11.0.
 
