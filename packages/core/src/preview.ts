@@ -46,6 +46,12 @@ export interface PreviewConfig {
   tex: "auto" | "host" | "image";
   /** The container image with its own TeX Live, for macOS and Linux without a standalone TeX Live. */
   texImage: string;
+  /**
+   * Use the image with its own TeX plus Debian's extra fonts (dsfont, bbm, bbold, …), about 2 GB
+   * more. Off by default; switched on when the user agrees to install them after a missing file.
+   */
+  texExtras: boolean;
+  texExtrasImage: string;
   /** Seconds a build may take before it is stopped. */
   timeout: number;
 }
@@ -58,6 +64,8 @@ export const DEFAULT_PREVIEW: PreviewConfig = {
   image: "localhost/stet-preview:1",
   tex: "auto",
   texImage: "localhost/stet-preview-tex:1",
+  texExtras: false,
+  texExtrasImage: "localhost/stet-preview-tex-extra:1",
   timeout: 120,
 };
 
@@ -67,6 +75,14 @@ export const PREVIEW_CONTAINERFILE = `# Stet PDF previews: Perl for latexmk, Pop
 FROM docker.io/library/debian:bookworm-slim
 RUN apt-get update \\
  && apt-get install -y --no-install-recommends perl poppler-utils \\
+ && rm -rf /var/lib/apt/lists/*
+`;
+
+/** The extra fonts, as a layer on the image with its own TeX: only they are downloaded. */
+export const previewExtrasContainerfile = (base: string) => `# Stet PDF previews with their own TeX, plus Debian's extra fonts (dsfont, bbm, bbold, …).
+FROM ${base}
+RUN apt-get update \\
+ && apt-get install -y --no-install-recommends texlive-fonts-extra \\
  && rm -rf /var/lib/apt/lists/*
 `;
 
@@ -104,6 +120,8 @@ export interface PreviewEnv {
   podman?: string;
   image?: string;
   texSource?: "host" | "image";
+  /** The image with its own TeX is the small one: the extra fonts can still be added. */
+  extrasAvailable?: boolean;
 }
 
 const run = (cmd: string, args: string[], opts: { input?: string; timeout?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {}) =>
@@ -238,12 +256,13 @@ export async function detectPreviewEnv(
     if (odd) {
       return { status: "unavailable", isolation: "container", message: `PDF previews can't mount ${odd} into a container: its path contains ':' or ','.`, fix: "Move it to a path without those characters." };
     }
-    const image = source === "host" ? cfg.image : cfg.texImage;
+    const image = source === "host" ? cfg.image : cfg.texExtras ? cfg.texExtrasImage : cfg.texImage;
     const base = {
       isolation: "container" as const,
       podman,
       texSource: source,
       image,
+      extrasAvailable: source === "image" && !cfg.texExtras,
       texBin: source === "host" ? texBin! : "/usr/bin",
       ...(source === "host" ? { texMount: texMount! } : {}),
       ...(texmfHome ? { texmfHome } : {}),
@@ -256,7 +275,9 @@ export async function detectPreviewEnv(
         fix:
           source === "host"
             ? "Build it once with `stet preview setup` or the Set up button (downloads Debian, Perl and Poppler, about 150 MB; TeX is yours)."
-            : "Build it once with `stet preview setup` or the Set up button (downloads Debian with TeX Live, Perl and Poppler, about 1.5 GB).",
+            : cfg.texExtras
+              ? "Build it once with `stet preview setup --extras` or the Set up button (Debian with TeX Live and its extra fonts, about 3 GB)."
+              : "Build it once with `stet preview setup` or the Set up button (downloads Debian with TeX Live, Perl and Poppler, about 1 GB).",
       };
     }
     const memoryLimit = /\bmemory\b/.test(info.stdout);
@@ -296,18 +317,29 @@ const oneLineOf = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 200);
  * Build the image previews need here: with the user's TeX mounted (Debian, Perl and Poppler), or
  * with its own TeX Live. Downloads packages: only on the user's explicit request.
  */
-export async function setupPreviewImage(cfg: PreviewConfig): Promise<{ ok: boolean; log: string }> {
-  const env = await detectPreviewEnv(cfg);
+export async function setupPreviewImage(cfg: PreviewConfig, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string }> {
+  const env = await detectPreviewEnv(opts.extras ? { ...cfg, texExtras: true } : cfg);
   if (env.isolation !== "container" || !env.podman || !env.image) return { ok: false, log: `${env.message}${env.fix ? ` ${env.fix}` : ""}` };
-  // An empty build context with just the Containerfile (podman can't read it from a Node pipe).
-  const dir = await mkdtemp(join(tmpdir(), "stet-preview-image-"));
-  try {
-    await writeFile(join(dir, "Containerfile"), env.texSource === "image" ? PREVIEW_TEX_CONTAINERFILE : PREVIEW_CONTAINERFILE);
-    const r = await run(env.podman, ["build", "--tag", env.image, "--file", join(dir, "Containerfile"), dir], { timeout: 60 * 60_000 });
-    return { ok: r.code === 0, log: (r.stdout + r.stderr).trim() };
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+  if (opts.extras && env.texSource !== "image") return { ok: false, log: "Previews use your own TeX here: install missing packages there (e.g. `tlmgr install <package>`)." };
+  const build = async (tag: string, containerfile: string) => {
+    // An empty build context with just the Containerfile (podman can't read it from a Node pipe).
+    const dir = await mkdtemp(join(tmpdir(), "stet-preview-image-"));
+    try {
+      await writeFile(join(dir, "Containerfile"), containerfile);
+      const r = await run(env.podman!, ["build", "--tag", tag, "--file", join(dir, "Containerfile"), dir], { timeout: 60 * 60_000 });
+      return { ok: r.code === 0, log: (r.stdout + r.stderr).trim() };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+  if (env.texSource !== "image") return build(env.image, PREVIEW_CONTAINERFILE);
+  // The extra fonts are a layer on the image with its own TeX: build that first if it's missing.
+  if (!opts.extras && !cfg.texExtras) return build(cfg.texImage, PREVIEW_TEX_CONTAINERFILE);
+  if ((await run(env.podman, ["image", "exists", cfg.texImage])).code !== 0) {
+    const first = await build(cfg.texImage, PREVIEW_TEX_CONTAINERFILE);
+    if (!first.ok) return first;
   }
+  return build(cfg.texExtrasImage, previewExtrasContainerfile(cfg.texImage));
 }
 
 /** TeX's own restrictions, in every build (kpathsea reads these from the environment). They stop shell escape and writes, not reads. */
@@ -448,13 +480,22 @@ export type PreviewResult =
       /** Which other changes the preview includes, and why. */
       note?: string;
       /** LaTeX reported errors with the change that the document didn't have without it; the PDF came out anyway. */
-      warning?: { message: string; log: string; count: number };
+      warning?: { message: string; log: string; count: number; missing?: Missing };
     }
   /** The change has no place on the page (preamble, macros, bibliography data, a file not in the document). */
   | { status: "no-spot"; message: string }
   /** No PDF: with the change (`change`), or already without it (`base`). */
-  | { status: "failed"; message: string; log: string; cause?: "base" | "change" }
+  | { status: "failed"; message: string; log: string; cause?: "base" | "change"; missing?: Missing }
   | { status: "unavailable"; message: string; fix?: string };
+
+/**
+ * Files LaTeX couldn't find (`dsfont.sty`), and whether installing the preview image's extra fonts
+ * may bring them (only for the small image with its own TeX).
+ */
+export interface Missing {
+  files: string[];
+  extras: boolean;
+}
 
 /** One change applied for a preview: a file's text at the base (LF), its line endings, and the edit. */
 export interface PreviewChange {
@@ -562,7 +603,7 @@ export class PreviewBuilder {
     if (!base.root) {
       return { status: "unavailable", message: "Stet couldn't tell which file is the document to compile.", fix: "Set preview.rootFile in .git/stet/config.json (e.g. \"main.tex\")." };
     }
-    if (!base.pdf) return { status: "failed", cause: "base", message: "Your document doesn't compile without this change either.", log: excerpt(base.log) };
+    if (!base.pdf) return this.failure("base", "Your document doesn't compile without this change either.", base.log);
     const noSpot: PreviewResult = { status: "no-spot", message: "This change has no place of its own on the page (for example the preamble, a macro or bibliography data)." };
     const target = req.changes[req.target]!;
     // The main file's preamble: SyncTeX would point at the first text instead.
@@ -583,7 +624,7 @@ export class PreviewBuilder {
     for (const [file, text] of applied.files) await writeInside(work, file, fromLf(text, req.changes.find((c) => c.file === file)!.eol));
     const engine = this.cfg.engine === "auto" ? detectEngine((await readFile(join(work, base.root), "utf8").catch(() => "")) || "") : this.cfg.engine;
     const built = await this.compile(work, base.root, engine);
-    if (!built.pdf) return { status: "failed", cause: "change", message: "The document doesn't compile with this change.", log: excerpt(built.log) };
+    if (!built.pdf) return this.failure("change", "The document doesn't compile with this change.", built.log);
 
     const after = applied.files.get(target.file)!;
     const lines = (text: string, from: number, to: number) => [lineOf(text, from), lineOf(text, Math.max(from, to - 1))];
@@ -600,9 +641,32 @@ export class PreviewBuilder {
       before: beforeImg,
       after: afterImg,
       ...(fresh.length
-        ? { warning: { message: `LaTeX reported ${fresh.length === 1 ? "an error" : `${fresh.length} errors`} with this change that the document doesn't have without it.`, log: excerpt(built.log), count: fresh.length } }
+        ? {
+            warning: {
+              message: `LaTeX reported ${fresh.length === 1 ? "an error" : `${fresh.length} errors`} with this change that the document doesn't have without it.`,
+              log: excerpt(built.log),
+              count: fresh.length,
+              ...this.missingIn(built.log),
+            },
+          }
         : {}),
     };
+  }
+
+  /** A failed build, with what's missing if a file couldn't be found (a package not in the preview's TeX). */
+  private failure(cause: "base" | "change", message: string, log: string): PreviewResult {
+    const m = this.missingIn(log);
+    const say = m.missing
+      ? ` ${m.missing.files.join(", ")} ${m.missing.files.length === 1 ? "isn't" : "aren't"} in ${
+          this.env.texSource === "image" ? `the preview's TeX${m.missing.extras ? " (its extra fonts may have it)" : ""}` : "your TeX installation (tlmgr install …)"
+        }.`
+      : "";
+    return { status: "failed", cause, message: message + say, log: excerpt(log), ...m };
+  }
+
+  private missingIn(log: string): { missing?: Missing } {
+    const files = missingFiles(log);
+    return files.length ? { missing: { files, extras: !!this.env.extrasAvailable } } : {};
   }
 
   /** Locate source lines in a PDF with SyncTeX and render that region to `out`. */
@@ -731,6 +795,14 @@ export function errorsOf(log: string): string[] {
     out.push(`${m[1]!.replace(/\d+/g, "#").trim()}${at ? ` @ ${at}` : ""}`);
   }
   return out;
+}
+
+/** Files LaTeX looked for and didn't find (`File \`dsfont.sty' not found`, `I can't find file`). */
+export function missingFiles(log: string): string[] {
+  const out = new Set<string>();
+  for (const m of log.matchAll(/File [`'‘]([^'’\s]+)['’] not found/g)) out.add(m[1]!);
+  for (const m of log.matchAll(/I can't find file [`'‘]([^'’\s]+)['’]/g)) out.add(m[1]!);
+  return [...out];
 }
 
 /** The part of a LaTeX log that says what went wrong. */

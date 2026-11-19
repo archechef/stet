@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
-import { applyChanges, containerArgs, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
+import { applyChanges, containerArgs, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -99,8 +99,9 @@ describe("preview: isolation", () => {
       // the machine has one: CI runners often do.)
       const env = await detectPreviewEnv(DEFAULT_PREVIEW, { podman: null });
       expect(env.status).toBe("unavailable");
-      expect(env.message).toMatch(/Podman/);
-      expect(env.fix).toMatch(/Install Podman|WSL2/);
+      // Each platform says what it needs: Podman, or (Windows, not supported yet) WSL2.
+      expect(env.message).toMatch(process.platform === "win32" ? /Windows/ : /Podman/);
+      expect(env.fix).toMatch(process.platform === "win32" ? /WSL2/ : /Install Podman/);
       // Without a container (the user's choice), their own TeX is needed.
       const proc = await detectPreviewEnv({ ...DEFAULT_PREVIEW, isolation: "process" });
       expect(proc.message).toMatch(/latexmk/);
@@ -121,6 +122,8 @@ describe("preview: isolation", () => {
     expect(() => cfg({ timeout: 0 })).toThrow(/preview.timeout/);
     expect(() => cfg({ tex: "mine" })).toThrow(/preview.tex/);
     expect(() => cfg({ texImage: "a b" })).toThrow(/preview.texImage/);
+    expect(() => cfg({ texExtras: "yes" })).toThrow(/preview.texExtras/);
+    expect(() => cfg({ texExtrasImage: "x;y" })).toThrow(/preview.texExtrasImage/);
   });
 });
 
@@ -157,5 +160,20 @@ describe("preview: several changes at once", () => {
     ]);
     // The same message at two places is two errors.
     expect(new Set(errorsOf("! Undefined control sequence.\nl.3 a \\x\n! Undefined control sequence.\nl.9 b \\y")).size).toBe(2);
+  });
+});
+
+describe("preview: missing packages", () => {
+  it("names the files LaTeX couldn't find", () => {
+    const log = "! LaTeX Error: File `dsfont.sty' not found.\nType X to quit or <RETURN> to proceed,\n! I can't find file `bbm.sty'.\n! LaTeX Error: File `dsfont.sty' not found.";
+    expect(missingFiles(log)).toEqual(["dsfont.sty", "bbm.sty"]);
+    expect(missingFiles("! Undefined control sequence.")).toEqual([]);
+  });
+
+  it("builds the extra fonts as a layer on the image with its own TeX", () => {
+    const f = previewExtrasContainerfile("localhost/stet-preview-tex:1");
+    expect(f).toMatch(/^FROM localhost\/stet-preview-tex:1$/m);
+    expect(f).toMatch(/texlive-fonts-extra/);
+    expect(DEFAULT_PREVIEW.texExtras).toBe(false); // the small image unless the user agrees
   });
 });

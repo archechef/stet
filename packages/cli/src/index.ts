@@ -76,7 +76,8 @@ Review:
   stet reject <12.3|G3|G3.2>... [-m <reason>] [--all | --revise-rest | --only]
   stet undo <12.3>                      undo an accept (until committed) or a rejection: pending again
   stet preview <12.3>                   PDF preview: images of the page region before and after the change
-  stet preview status|setup             what previews can use here | build their container image (downloads)
+  stet preview status|setup [--extras]  what previews can use here | build their container image (downloads;
+                                        --extras: add TeX's extra fonts to it, about 2 GB)
   stet revise <12.3> -m <what to change>
   stet comment <12.3|N3> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
@@ -133,6 +134,7 @@ const { values: opt, positionals: pos } = parseArgs({
     peek: { type: "boolean" },
     once: { type: "boolean" },
     on: { type: "string" },
+    extras: { type: "boolean" },
     print: { type: "boolean" },
   },
 });
@@ -650,12 +652,14 @@ async function main() {
         const before = await stet.previewStatus(true);
         console.error(
           dim(
-            before.texSource === "image"
-              ? "Building the preview image with its own TeX Live (downloads about 1.5 GB; this takes a while)…"
-              : "Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…",
+            opt.extras
+              ? "Adding the extra fonts to the preview image (downloads about 2 GB; this takes a while)…"
+              : before.texSource === "image"
+                ? "Building the preview image with its own TeX Live (downloads about 1 GB; this takes a while)…"
+                : "Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…",
           ),
         );
-        const r = await stet.setupPreview();
+        const r = await stet.setupPreview({ extras: !!opt.extras });
         if (!r.ok) throw new StetError(`Building the preview image failed:\n${r.log.split("\n").slice(-15).join("\n")}`);
         return out(() => `${green("Done.")} ${r.status.message}${r.status.fix ? `\n  ${r.status.fix}` : ""}`, r.status);
       }
@@ -665,7 +669,7 @@ async function main() {
           case "ready":
             return [`${bold(what.toUpperCase())} page ${r.after.page}`, `  before: ${r.before ? r.before.file : dim("(not found in the old version)")}`, `  after:  ${r.after.file}`].join("\n");
           case "failed":
-            return `${red(r.message)}\n${r.log}`;
+            return `${red(r.message)}${r.missing?.extras ? `\n  ${yellow("Add the extra fonts with `stet preview setup --extras` (downloads about 2 GB).")}` : ""}\n${r.log}`;
           case "unavailable":
             return `${yellow(r.message)}${r.fix ? `\n  ${r.fix}` : ""}`;
           default:

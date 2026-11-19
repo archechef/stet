@@ -27,6 +27,9 @@ export class PreviewPanel implements vscode.Disposable {
     private readonly setup: (p: Project) => Promise<void>,
     /** The live changes after `t` in review order, for building ahead. */
     private readonly next: (t: Target, n: number) => Target[],
+    /** Install the extra fonts (asks first) / a preview found files missing that they may bring. */
+    private readonly extras: (p: Project) => Promise<void>,
+    private readonly onMissing: (p: Project, files: string[]) => void,
   ) {}
 
   get visible(): boolean {
@@ -47,6 +50,7 @@ export class PreviewPanel implements vscode.Disposable {
       });
       this.panel.webview.onDidReceiveMessage((m) => {
         if (m?.type === "setup" && this.current) void this.setup(this.current.project).then(() => this.refresh());
+        if (m?.type === "extras" && this.current) void this.extras(this.current.project).then(() => this.refresh());
       });
     }
     this.follow(t);
@@ -101,6 +105,8 @@ export class PreviewPanel implements vscode.Disposable {
           r = { status: "failed", message: "Stet couldn't build the preview.", log: String(e?.message ?? e) };
         }
         this.results.set(keyOf(t), r);
+        const missing = r.status === "failed" ? r.missing : r.status === "ready" ? r.warning?.missing : undefined;
+        if (missing?.extras) this.onMissing(t.project, missing.files);
         if (this.current && keyOf(this.current) === keyOf(t)) this.render();
       }
     } finally {
@@ -127,12 +133,12 @@ export class PreviewPanel implements vscode.Disposable {
     else if (r.status === "ready") {
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
-        (r.warning ? `<p class="warn">${html(r.warning.message)}</p><details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
+        (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
         `<div class="zoom"><button id="out" title="Zoom out (Ctrl/Cmd + wheel)">−</button><button id="fit" title="Fit the panel (double-click an image)">Fit</button><button id="in" title="Zoom in (Ctrl/Cmd + wheel)">+</button><span id="level" class="muted"></span></div>` +
         `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page"><img src="${img(r.after.file)}" alt="after"></div>` +
         (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><div class="page"><img src="${img(r.before.file)}" alt="before"></div>` : "");
     } else if (r.status === "no-spot") body = `<p class="muted">${html(r.message)}</p>`;
-    else if (r.status === "failed") body = `<p class="warn">${html(r.message)}</p><pre>${html(r.log)}</pre>`;
+    else if (r.status === "failed") body = `<p class="warn">${html(r.message)}</p>${extrasButton(r.missing)}<pre>${html(r.log)}</pre>`;
     else {
       const setup = /\bsetup\b/i.test(r.fix ?? "");
       body =
@@ -159,6 +165,8 @@ ${body}
 const vscode = acquireVsCodeApi();
 const b = document.getElementById("setup");
 if (b) b.onclick = () => vscode.postMessage({ type: "setup" });
+const x = document.getElementById("extras");
+if (x) x.onclick = () => vscode.postMessage({ type: "extras" });
 // Zoom: kept in the webview's state, so it stays while you move from change to change.
 let zoom = (vscode.getState() || {}).zoom || 1;
 const apply = () => {
@@ -203,7 +211,7 @@ export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, proje
   if (env.status === "needs-setup") {
     const setup = "Set up";
     const pick = await vscode.window.showInformationMessage(
-      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once (${env.texSource === "image" ? "downloads Debian with TeX Live, about 1.5 GB" : "downloads Debian, Perl and Poppler, about 150 MB"}).`,
+      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once (${env.texSource === "image" ? "downloads Debian with TeX Live, about 1 GB" : "downloads Debian, Perl and Poppler, about 150 MB"}).`,
       setup,
       "Not now",
       never,
@@ -220,6 +228,10 @@ export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, proje
 }
 
 export const previewCacheRoot = (p: Project) => join(p.storeRoot, "previews");
+
+/** The offer to add the extra fonts, where they may bring a missing file. */
+const extrasButton = (m: { files: string[]; extras: boolean } | undefined) =>
+  m?.extras ? `<p><button id="extras">Install extra fonts for previews (about 2 GB)</button> <span class="muted">may bring ${html(m.files.join(", "))}</span></p>` : "";
 
 /** Whether `file` is in the project's preview cache (images are shown from nowhere else). */
 export function inPreviewCache(p: Project, file: string | undefined): boolean {

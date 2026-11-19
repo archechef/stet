@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Missing packages in previews:** a preview that fails because LaTeX can't find a file now names it (`dsfont.sty isn't in the preview's TeX`). With the image that brings its own TeX, Stet asks once whether to install TeX's extra fonts (dsfont, bbm, bbold and many more, about 2 GB more; Debian packs them together), and the preview panel offers the same as a button. The image stays small unless you agree. `stet preview setup --extras` does the same on the command line. With your own TeX, the message points to installing the package there.
+- **Fix: release build of 0.11.1.** The same preview-setup test expected Podman in its message on Windows too, where Stet says previews aren't supported yet. It now expects each platform's own message. This release contains all changes of 0.11.0 and 0.11.1, whose release builds stopped at that test.
+
 ## 0.11.1 — 2026-11-19
 
 - **Fix: release build of 0.11.0.** A test of the preview setup assumed Podman wasn't installed, and failed on build machines that have it. It now rules Podman out itself. 0.11.1 contains all changes of 0.11.0.

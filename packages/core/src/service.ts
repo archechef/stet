@@ -2004,8 +2004,17 @@ export class Stet {
   }
 
   /** Build the container image previews run in. It downloads packages: call it only on the user's request. */
-  async setupPreview(): Promise<{ ok: boolean; log: string; status: PreviewEnv }> {
-    const r = await setupPreviewImage((await this.config()).preview);
+  async setupPreview(opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string; status: PreviewEnv }> {
+    const r = await setupPreviewImage((await this.config()).preview, opts);
+    if (r.ok && opts.extras) {
+      // From now on the image with the extra fonts.
+      await this.store.withLock(async () => {
+        const cfg = await this.config();
+        await this.store.saveConfig(validateConfig({ ...cfg, preview: { ...cfg.preview, texExtras: true } }));
+      });
+    }
+    // Previews built before (failed ones included) were made with the old image.
+    if (r.ok) await rm(join(this.store.root, "previews"), { recursive: true, force: true });
     return { ...r, status: await this.previewStatus(true) };
   }
 

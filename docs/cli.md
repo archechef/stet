@@ -72,6 +72,7 @@ Run these in your project folder. Changes have ids like `12.3`: change 3 of roun
 | `stet preview <12.3>` | PDF preview of a change: writes images of the page region after and before the change and prints their paths. Says so when the change has no place on the page, or when the document doesn't compile. |
 | `stet preview status` | What PDF previews can use here, and what is missing. |
 | `stet preview setup` | Builds the container image previews compile in (downloads Debian, Perl and Poppler, about 150 MB). Only ever on this command. |
+| `stet preview setup --extras` | Adds TeX's extra fonts (dsfont, bbm, bbold, …, about 2 GB) to the preview image with its own TeX, and uses it from then on. A preview that fails over a missing file suggests it. |
 | | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <12.3\|N3> -m <text>` | Sends a message about a change, or in a note's thread; the agent can reply. |

@@ -72,6 +72,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const i = live.findIndex((e) => e.node?.type === "item" && e.node.item.id === t.item.id);
         return live.slice(i + 1, i + 1 + n).map((e) => ({ project: e.project, item: (e.node as { item: Item }).item }));
       },
+      (p) => this.installExtras(p),
+      (p, files) => void this.offerExtras(p, files),
     );
     this.tree = vscode.window.createTreeView("stet.review", { treeDataProvider: this, showCollapseAll: true });
     this.history = vscode.window.createTreeView("stet.history", {
@@ -195,7 +197,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         location: vscode.ProgressLocation.Notification,
         title:
           (await project.stet.previewStatus(true)).texSource === "image"
-            ? "Stet: building the PDF preview image with its own TeX Live (about 1.5 GB, this takes a while)…"
+            ? "Stet: building the PDF preview image with its own TeX Live (about 1 GB, this takes a while)…"
             : "Stet: building the PDF preview image (downloads Debian, Perl and Poppler)…",
       },
       () => project.stet.setupPreview().catch((e: any) => ({ ok: false, log: String(e?.message ?? e), status: undefined })),
@@ -204,6 +206,45 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     else {
       this.output.appendLine(r.log);
       void vscode.window.showErrorMessage("Stet: building the PDF preview image failed. Details are in the Stet output.", "Show output").then((c) => c && this.output.show());
+    }
+    this.preview.refresh();
+  }
+
+  /** Projects asked about the extra fonts in this session (asked once each). */
+  private askedExtras = new Set<string>();
+
+  /** A preview misses files the extra fonts may bring: ask once whether to install them. */
+  private async offerExtras(p: Project, files: string[]): Promise<void> {
+    if (this.askedExtras.has(p.mainPath)) return;
+    this.askedExtras.add(p.mainPath);
+    const install = "Install (about 2 GB)";
+    const pick = await vscode.window.showInformationMessage(
+      `Stet: a PDF preview in ${p.name} needs ${files.join(", ")}, which the preview's TeX doesn't have. Its extra fonts may (dsfont, bbm, bbold and many more). Install them?`,
+      install,
+      "Not now",
+    );
+    if (pick === install) await this.runExtras(p);
+  }
+
+  /** The panel's button: ask before downloading, then install. */
+  async installExtras(p: Project): Promise<void> {
+    const ok = await vscode.window.showWarningMessage(
+      "Install TeX's extra fonts for PDF previews?",
+      { modal: true, detail: "Podman downloads Debian's texlive-fonts-extra (about 2 GB) into a second preview image. Previews then use that image." },
+      "Install",
+    );
+    if (ok === "Install") await this.runExtras(p);
+  }
+
+  private async runExtras(p: Project): Promise<void> {
+    const r = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Stet: adding TeX's extra fonts to the PDF preview image (about 2 GB, this takes a while)…" },
+      () => p.stet.setupPreview({ extras: true }).catch((e: any) => ({ ok: false, log: String(e?.message ?? e), status: undefined })),
+    );
+    if (r.ok) void vscode.window.showInformationMessage("Stet: extra fonts installed; previews are built again with them.");
+    else {
+      this.output.appendLine(r.log);
+      void vscode.window.showErrorMessage("Stet: adding the extra fonts failed. Details are in the Stet output.", "Show output").then((c) => c && this.output.show());
     }
     this.preview.refresh();
   }
@@ -235,7 +276,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()}|width=520)`,
       ].join("\n\n");
     }
-    if (r.status === "failed") return `⚠ *${esc(r.message)}* The LaTeX error is in *Preview in PDF*.`;
+    if (r.status === "failed") return `⚠ *${esc(r.message)}* The LaTeX error is in *Preview in PDF*${r.missing?.extras ? ", with the offer to install the extra fonts" : ""}.`;
     return undefined; // no spot on the page, or previews unavailable (said once, elsewhere)
   }
 
