@@ -64,7 +64,37 @@ export class Locator {
  * line, so a longer single-line proposal fits; without it, long text would run off the screen.
  */
 export function inlineMax(uri: vscode.Uri): number {
-  return wraps(uri) && usesHints(uri) ? 400 : 80;
+  return wraps(uri) && usesHints(uri) ? 2000 : 80;
+}
+
+/**
+ * VS Code settings that break inline proposals with word wrap, for a document: they are inlay
+ * hints, which VS Code cuts after `editor.inlayHints.maximumLength` characters per line (Stet's
+ * default for LaTeX files is no limit, but the user's own value wins) or hides unless a key is held.
+ */
+export function inlineProblems(doc: vscode.TextDocument): { key: string; message: string; setting: string; value: unknown }[] {
+  if (!usesHints(doc.uri)) return [];
+  const ed = vscode.workspace.getConfiguration("editor", { uri: doc.uri, languageId: doc.languageId });
+  const out: { key: string; message: string; setting: string; value: unknown }[] = [];
+  const max = ed.get<number>("inlayHints.maximumLength", 43);
+  if (max > 0) {
+    out.push({
+      key: "maximumLength",
+      message: `VS Code shows at most ${max} characters of inline text per line in ${doc.languageId} files (editor.inlayHints.maximumLength), so longer proposals are cut off instead of wrapping.`,
+      setting: "inlayHints.maximumLength",
+      value: 0,
+    });
+  }
+  const enabled = ed.get<string>("inlayHints.enabled", "on");
+  if (enabled !== "on") {
+    out.push({
+      key: "enabled",
+      message: `VS Code's inline hints are set to “${enabled}” in ${doc.languageId} files (editor.inlayHints.enabled), so proposed text ${enabled === "off" ? "isn't shown" : "only shows while you hold Ctrl+Alt"} with word wrap on.`,
+      setting: "inlayHints.enabled",
+      value: "on",
+    });
+  }
+  return out;
 }
 
 const wraps = (uri: vscode.Uri) => vscode.workspace.getConfiguration("editor", uri).get<string>("wordWrap", "off") !== "off";

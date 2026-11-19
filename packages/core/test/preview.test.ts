@@ -83,6 +83,9 @@ describe("preview: isolation", () => {
     // Exactly two mounts: TeX read-only, the build folder.
     const vols = a.flatMap((x, i) => (x === "--volume" ? [a[i + 1]] : []));
     expect(vols).toEqual(["/tl:/tl:ro", "/cache/abc/base/src:/work"]);
+    // With the image's own TeX (macOS): only the build folder is mounted.
+    const own = containerArgs({ ...env, texMount: undefined, texBin: "/usr/bin" }, "localhost/stet-preview-tex:1", "/w", "n", ["latexmk"]);
+    expect(own.flatMap((x, i) => (x === "--volume" ? [own[i + 1]] : []))).toEqual(["/w:/work"]);
     // TeX may read and write only the build folder, and no shell escape.
     for (const v of ["openin_any=p", "openout_any=p", "shell_escape=f", "HOME=/tmp"]) expect(a).toContain(v);
     expect(a.slice(-3)).toEqual(["localhost/stet-preview:1", "latexmk", "main.tex"]);
@@ -92,10 +95,15 @@ describe("preview: isolation", () => {
     const path = process.env.PATH;
     process.env.PATH = "/nonexistent";
     try {
+      // A container needs Podman first: the image can bring its own TeX.
       const env = await detectPreviewEnv(DEFAULT_PREVIEW);
       expect(env.status).toBe("unavailable");
-      expect(env.message).toMatch(/latexmk/);
-      expect(env.fix).toMatch(/TeX Live/);
+      expect(env.message).toMatch(/Podman/);
+      expect(env.fix).toMatch(/Install Podman|WSL2/);
+      // Without a container (the user's choice), their own TeX is needed.
+      const proc = await detectPreviewEnv({ ...DEFAULT_PREVIEW, isolation: "process" });
+      expect(proc.message).toMatch(/latexmk/);
+      expect(proc.fix).toMatch(/TeX Live/);
     } finally {
       process.env.PATH = path;
     }
@@ -110,6 +118,8 @@ describe("preview: isolation", () => {
     expect(() => cfg({ isolation: "none" })).toThrow(/preview.isolation/);
     expect(() => cfg({ image: "x; rm -rf /" })).toThrow(/preview.image/);
     expect(() => cfg({ timeout: 0 })).toThrow(/preview.timeout/);
+    expect(() => cfg({ tex: "mine" })).toThrow(/preview.tex/);
+    expect(() => cfg({ texImage: "a b" })).toThrow(/preview.texImage/);
   });
 });
 

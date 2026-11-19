@@ -167,6 +167,31 @@ exports.run = async function run() {
     check("word wrap makes room for the new text", wrappedWithHint && !wrappedWithout, `with hint: ${wrappedWithHint}, without: ${wrappedWithout}`);
     await vscode.workspace.getConfiguration("stet").update("inlineChanges", true, vscode.ConfigurationTarget.Global);
 
+    // A long proposal in a long paragraph line wraps over several screen lines, whole: VS Code
+    // cuts inline hints after 43 characters per line unless told otherwise (Stet's default for
+    // LaTeX files), and a hint must be broken at its spaces like text.
+    const wrapUri = vscode.Uri.file(join(fx.repo, "wrap.tex"));
+    const wrapEd = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(wrapUri));
+    await editorCfg.update("wordWrapColumn", 80, vscode.ConfigurationTarget.Global);
+    const screenLines = async () => {
+      wrapEd.selection = new vscode.Selection(0, 0, 0, 0);
+      let n = 1;
+      for (; n < 40; n++) {
+        await vscode.commands.executeCommand("cursorMove", { to: "down", by: "wrappedLine" });
+        if (wrapEd.selection.active.line !== 0) break;
+      }
+      return n;
+    };
+    await until("hint in wrap.tex", async () => ((await hintLabels(wrapUri)).some((l) => l.length > 100) ? true : null), 5000).catch(() => null);
+    await sleep(500);
+    const withLong = await screenLines();
+    await vscode.workspace.getConfiguration("stet").update("inlineChanges", false, vscode.ConfigurationTarget.Global);
+    await sleep(500);
+    const withoutLong = await screenLines();
+    await vscode.workspace.getConfiguration("stet").update("inlineChanges", true, vscode.ConfigurationTarget.Global);
+    const maxLen = vscode.workspace.getConfiguration("editor", { uri: wrapUri, languageId: wrapEd.document.languageId }).get("inlayHints.maximumLength");
+    check("a long proposal wraps over several screen lines", withLong - withoutLong >= 2, JSON.stringify({ withLong, withoutLong, lang: wrapEd.document.languageId, maxLen }));
+
     // The colour button: green parameter hints in the user's settings, and back (keeping their own value).
     const workbench = () => vscode.workspace.getConfiguration("workbench").inspect("colorCustomizations").globalValue || {};
     await vscode.workspace.getConfiguration("workbench").update("colorCustomizations", { "editorInlayHint.parameterForeground": "#123456", "editor.background": "#fafafa" }, vscode.ConfigurationTarget.Global);
@@ -216,10 +241,11 @@ exports.run = async function run() {
     const errors = [];
     await Promise.all([1, 2].map(() => Promise.resolve(vscode.commands.executeCommand("stet.accept")).catch((err) => errors.push(err.message))));
     const statusOf = (id) => JSON.parse(readFileSync(join(store, "items", `${id}.json`), "utf8")).status;
+    const acceptedNow = fx.items.slice(1).filter((id) => statusOf(id) === "accepted");
     check(
       "two quick accepts accept two changes",
-      !errors.length && statusOf(fx.items[1]) === "accepted" && statusOf(fx.items[2]) === "accepted",
-      JSON.stringify({ errors, a: statusOf(fx.items[1]), b: statusOf(fx.items[2]) }),
+      !errors.length && statusOf(fx.items[1]) === "accepted" && acceptedNow.length === 2,
+      JSON.stringify({ errors, accepted: acceptedNow }),
     );
 
     // Undo from the panel: the accept is taken out of the file again and the change is pending.

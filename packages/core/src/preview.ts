@@ -40,8 +40,12 @@ export interface PreviewConfig {
    * where TeX can read every file you can; only on your explicit choice.
    */
   isolation: "auto" | "container" | "process";
-  /** The container image with Perl and the PDF tools (`stet preview setup` builds it). */
+  /** The container image with Perl and the PDF tools, for the user's own TeX (`stet preview setup` builds it). */
   image: string;
+  /** Where TeX comes from: `auto` (the user's standalone TeX Live on Linux, else the image's), `host` or `image`. */
+  tex: "auto" | "host" | "image";
+  /** The container image with its own TeX Live, for macOS and Linux without a standalone TeX Live. */
+  texImage: string;
   /** Seconds a build may take before it is stopped. */
   timeout: number;
 }
@@ -52,6 +56,8 @@ export const DEFAULT_PREVIEW: PreviewConfig = {
   engine: "auto",
   isolation: "auto",
   image: "localhost/stet-preview:1",
+  tex: "auto",
+  texImage: "localhost/stet-preview-tex:1",
   timeout: 120,
 };
 
@@ -61,6 +67,18 @@ export const PREVIEW_CONTAINERFILE = `# Stet PDF previews: Perl for latexmk, Pop
 FROM docker.io/library/debian:bookworm-slim
 RUN apt-get update \\
  && apt-get install -y --no-install-recommends perl poppler-utils \\
+ && rm -rf /var/lib/apt/lists/*
+`;
+
+/** The image with its own TeX Live (Debian's), where the user's TeX can't be mounted: macOS, a distribution's TeX. */
+export const PREVIEW_TEX_CONTAINERFILE = `# Stet PDF previews with their own TeX: Debian's TeX Live with the common packages, latexmk,
+# Biber and Poppler. Used where the user's TeX can't run in a Linux container (macOS).
+FROM docker.io/library/debian:bookworm-slim
+RUN apt-get update \\
+ && apt-get install -y --no-install-recommends perl poppler-utils latexmk biber \\
+      texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \\
+      texlive-science texlive-bibtex-extra texlive-pictures texlive-publishers texlive-xetex texlive-luatex \\
+      lmodern cm-super \\
  && rm -rf /var/lib/apt/lists/*
 `;
 
@@ -82,6 +100,10 @@ export interface PreviewEnv {
   texmfHome?: string;
   /** Whether Podman can limit a container's memory here (needs the cgroup memory controller). */
   memoryLimit?: boolean;
+  /** The Podman program, and the image builds run in; where TeX comes from. */
+  podman?: string;
+  image?: string;
+  texSource?: "host" | "image";
 }
 
 const run = (cmd: string, args: string[], opts: { input?: string; timeout?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {}) =>
@@ -136,70 +158,115 @@ async function which(cmd: string): Promise<string | null> {
  * What previews can use here. Never installs or downloads anything: when something is missing,
  * it says what and how to get it.
  */
+/** Podman: on the PATH, or where its installers put it (VS Code started from the Dock may lack those on its PATH). */
+async function findPodman(): Promise<string | null> {
+  if (process.platform === "win32") return null;
+  const onPath = await which("podman");
+  if (onPath) return onPath;
+  for (const p of ["/opt/podman/bin/podman", "/opt/homebrew/bin/podman", "/usr/local/bin/podman", "/usr/bin/podman"]) if (existsSync(p)) return p;
+  return null;
+}
+
+/** The user's own TeX packages: ~/texmf, or MacTeX's ~/Library/texmf. */
+function userTexmf(): string | undefined {
+  const home = process.env.HOME;
+  if (!home) return undefined;
+  return [join(home, "texmf"), join(home, "Library", "texmf")].find((p) => existsSync(p));
+}
+
+/**
+ * What previews can use here. Never installs or downloads anything: when something is missing,
+ * it says what and how to get it.
+ */
 export async function detectPreviewEnv(cfg: PreviewConfig): Promise<PreviewEnv> {
   if (!cfg.enabled) return { status: "unavailable", isolation: null, message: "PDF previews are switched off (preview.enabled in .git/stet/config.json)." };
+  const trusted = "Or, for material you trust, set preview.isolation to \"process\" in .git/stet/config.json: TeX can then read every file you can.";
+
+  // The host's TeX, if any. A standalone TeX Live on Linux (<root>/bin/<arch>, texmf-dist) can be
+  // mounted into the container; MacTeX's programs are macOS ones and can't run there.
   const latexmk = await which("latexmk");
-  if (!latexmk) {
-    return {
-      status: "unavailable",
-      isolation: null,
-      message: "PDF previews need a TeX distribution with latexmk, which isn't on the PATH.",
-      fix: "Install TeX Live (tug.org/texlive) or MiKTeX, then reload. Everything else works without it.",
-    };
+  let texBin: string | undefined;
+  let texMount: string | undefined;
+  if (latexmk) {
+    // Where the TeX program really is: latexmk is a link to a Perl script inside texmf-dist.
+    const tex = (await which("pdftex")) ?? (await which("tex")) ?? latexmk;
+    texBin = dirname(await realpath(tex));
+    const texRoot = dirname(dirname(texBin));
+    if (process.platform === "linux" && existsSync(join(texRoot, "texmf-dist"))) texMount = existsSync(join(dirname(texRoot), "texmf-local")) ? dirname(texRoot) : texRoot;
   }
-  // TeX Live's bin folder: where the TeX program really is. (latexmk itself is a link to a Perl
-  // script inside texmf-dist, and /usr/local/bin may hold links to everything.)
-  const tex = (await which("pdftex")) ?? (await which("tex")) ?? latexmk;
-  const texBin = dirname(await realpath(tex));
-  // A standalone TeX Live (<root>/bin/<arch>) can be mounted into a container as a whole.
-  const texRoot = dirname(dirname(texBin));
-  const standalone = existsSync(join(texRoot, "texmf-dist"));
-  const texMount = standalone && existsSync(join(dirname(texRoot), "texmf-local")) ? dirname(texRoot) : texRoot;
-  const podman = process.platform === "linux" ? await which("podman") : null;
-  const home = process.env.HOME ? join(process.env.HOME, "texmf") : null;
-  const texmfHome = home && existsSync(home) ? home : undefined;
+  const texmfHome = userTexmf();
 
   if (cfg.isolation !== "process") {
+    const podman = await findPodman();
     if (!podman) {
       return {
         status: "unavailable",
         isolation: "container",
         message:
-          process.platform === "linux"
-            ? "PDF previews compile agents' text in a container, so TeX can't read your files, and Podman isn't installed."
-            : "PDF previews compile agents' text in a container, so TeX can't read your files, and that needs Linux with Podman.",
-        fix:
-          (process.platform === "linux" ? "Install Podman (rootless), then reload. " : "") +
-          "Or, for material you trust, set preview.isolation to \"process\" in .git/stet/config.json: TeX can then read every file you can.",
+          process.platform === "win32"
+            ? "PDF previews compile agents' text in a container, so TeX can't read your files, and that isn't supported on Windows yet."
+            : "PDF previews compile agents' text in a container, so TeX can't read your files, and Podman isn't installed.",
+        fix: (process.platform === "win32" ? "Use Stet in WSL2 for previews. " : "Install Podman (podman.io), then reload. ") + trusted,
       };
     }
-    if (!standalone) {
+    // Podman answers only while its service runs: on macOS, its Linux machine.
+    const info = await run(podman, ["info", "--format", "{{.Host.CgroupControllers}}"], { timeout: 30_000 });
+    if (info.code !== 0) {
       return {
         status: "unavailable",
         isolation: "container",
-        message: `Previews in a container need a standalone TeX Live (with bin/ and texmf-dist/ in one folder); ${texBin} isn't one.`,
-        fix: "Install TeX Live from tug.org. (Or, for material you trust, set preview.isolation to \"process\": TeX can then read every file you can.)",
+        message: `PDF previews run in a Podman container, but Podman doesn't answer${process.platform === "darwin" ? " (its machine isn't running)" : ""}.`,
+        fix: process.platform === "darwin" ? "Start it with `podman machine start` (once: `podman machine init`), then reload." : `Check \`podman info\`: ${oneLineOf(info.stderr)}`,
+      };
+    }
+    // Where TeX comes from: the user's (mounted read-only) or the image's own.
+    const source: "host" | "image" = cfg.tex === "image" || (cfg.tex === "auto" && !texMount) ? "image" : "host";
+    if (source === "host" && !texMount) {
+      return {
+        status: "unavailable",
+        isolation: "container",
+        message: `preview.tex is "host", but ${latexmk ? `${texBin} isn't a standalone TeX Live for Linux` : "no TeX (latexmk) is on the PATH"}, which the container could use.`,
+        fix: 'Set preview.tex to "auto" (the image then brings its own TeX), or install TeX Live from tug.org.',
       };
     }
     // Podman's mount syntax separates with ':' and ','; such paths would be read wrongly.
-    const odd = [texMount, texmfHome].find((p) => p && /[:,]/.test(p));
+    const odd = [source === "host" ? texMount : undefined, texmfHome].find((p) => p && /[:,]/.test(p));
     if (odd) {
       return { status: "unavailable", isolation: "container", message: `PDF previews can't mount ${odd} into a container: its path contains ':' or ','.`, fix: "Move it to a path without those characters." };
     }
-    const exists = await run(podman, ["image", "exists", cfg.image]);
-    if (exists.code !== 0) {
+    const image = source === "host" ? cfg.image : cfg.texImage;
+    const base = {
+      isolation: "container" as const,
+      podman,
+      texSource: source,
+      image,
+      texBin: source === "host" ? texBin! : "/usr/bin",
+      ...(source === "host" ? { texMount: texMount! } : {}),
+      ...(texmfHome ? { texmfHome } : {}),
+    };
+    if ((await run(podman, ["image", "exists", image])).code !== 0) {
       return {
         status: "needs-setup",
-        isolation: "container",
-        texBin,
-        texMount,
-        ...(texmfHome ? { texmfHome } : {}),
+        ...base,
         message: "PDF previews run in a container, whose image isn't built yet.",
-        fix: "Build it once with `stet preview setup` or the Set up button (downloads Debian, Perl and Poppler, roughly 100 MB).",
+        fix:
+          source === "host"
+            ? "Build it once with `stet preview setup` or the Set up button (downloads Debian, Perl and Poppler, about 150 MB; TeX is yours)."
+            : "Build it once with `stet preview setup` or the Set up button (downloads Debian with TeX Live, Perl and Poppler, about 1.5 GB).",
       };
     }
-    const memoryLimit = /\bmemory\b/.test((await run(podman, ["info", "--format", "{{.Host.CgroupControllers}}"])).stdout);
-    return { status: "ready", isolation: "container", texBin, texMount, ...(texmfHome ? { texmfHome } : {}), memoryLimit, message: "PDF previews run in an isolated container." };
+    const memoryLimit = /\bmemory\b/.test(info.stdout);
+    return {
+      status: "ready",
+      ...base,
+      memoryLimit,
+      message: `PDF previews run in an isolated container${source === "image" ? ", with the TeX in its image" : ""}.`,
+    };
+  }
+
+  // A normal process: the user's explicit choice, with their own TeX and Poppler.
+  if (!latexmk) {
+    return { status: "unavailable", isolation: "process", message: "PDF previews need a TeX distribution with latexmk, which isn't on the PATH.", fix: "Install TeX Live (tug.org/texlive) or MiKTeX, then reload." };
   }
   const pdftoppm = await which("pdftoppm");
   if (!pdftoppm || !(await which("pdfinfo"))) {
@@ -207,27 +274,32 @@ export async function detectPreviewEnv(cfg: PreviewConfig): Promise<PreviewEnv> 
       status: "unavailable",
       isolation: "process",
       message: "PDF previews need Poppler's pdftoppm and pdfinfo to show pages, and they aren't on the PATH.",
-      fix: process.platform === "linux" ? "Install Podman (previews then run in a container) or poppler-utils." : "Install Poppler (pdftoppm, pdfinfo).",
+      fix: process.platform === "darwin" ? "Install Poppler (brew install poppler)." : "Install poppler-utils.",
     };
   }
   return {
     status: "ready",
     isolation: "process",
-    texBin,
+    texBin: texBin!,
     message:
       "PDF previews run as a normal process (preview.isolation is \"process\"): TeX can read every file you can, so a proposal could copy one into its preview. Use this only for material you trust.",
   };
 }
 
-/** Build the preview image. Downloads Debian, Perl and Poppler: only on the user's explicit request. */
+const oneLineOf = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 200);
+
+/**
+ * Build the image previews need here: with the user's TeX mounted (Debian, Perl and Poppler), or
+ * with its own TeX Live. Downloads packages: only on the user's explicit request.
+ */
 export async function setupPreviewImage(cfg: PreviewConfig): Promise<{ ok: boolean; log: string }> {
-  const podman = await which("podman");
-  if (!podman) return { ok: false, log: "Podman is not installed." };
+  const env = await detectPreviewEnv(cfg);
+  if (env.isolation !== "container" || !env.podman || !env.image) return { ok: false, log: `${env.message}${env.fix ? ` ${env.fix}` : ""}` };
   // An empty build context with just the Containerfile (podman can't read it from a Node pipe).
   const dir = await mkdtemp(join(tmpdir(), "stet-preview-image-"));
   try {
-    await writeFile(join(dir, "Containerfile"), PREVIEW_CONTAINERFILE);
-    const r = await run(podman, ["build", "--tag", cfg.image, "--file", join(dir, "Containerfile"), dir], { timeout: 15 * 60_000 });
+    await writeFile(join(dir, "Containerfile"), env.texSource === "image" ? PREVIEW_TEX_CONTAINERFILE : PREVIEW_CONTAINERFILE);
+    const r = await run(env.podman, ["build", "--tag", env.image, "--file", join(dir, "Containerfile"), dir], { timeout: 60 * 60_000 });
     return { ok: r.code === 0, log: (r.stdout + r.stderr).trim() };
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -253,7 +325,7 @@ export function containerArgs(env: PreviewEnv, image: string, work: string, name
     "--ulimit", "fsize=536870912:536870912",
     "--ulimit", "nofile=1024:1024",
     ...(env.memoryLimit ? ["--memory=2g", "--memory-swap=2g"] : []),
-    "--volume", `${env.texMount}:${env.texMount}:ro`,
+    ...(env.texMount ? ["--volume", `${env.texMount}:${env.texMount}:ro`] : []),
     ...(env.texmfHome ? ["--volume", `${env.texmfHome}:/texmf-home:ro`] : []),
     "--volume", `${work}:/work`,
     "--workdir", "/work",
@@ -268,8 +340,9 @@ async function runIsolated(env: PreviewEnv, cfg: PreviewConfig, work: string, cm
   if (env.isolation === "container") {
     if (/[:,]/.test(work)) return { code: -1, stdout: "", stderr: `Can't mount ${work} into a container: its path contains ':' or ','.` };
     const name = `stet-preview-${randomBytes(6).toString("hex")}`;
-    const r = await run("podman", containerArgs(env, cfg.image, work, name, cmd), { timeout });
-    if (r.code !== 0) await run("podman", ["rm", "--force", "--ignore", name]); // after a timeout
+    const podman = env.podman ?? "podman";
+    const r = await run(podman, containerArgs(env, env.image ?? cfg.image, work, name, cmd), { timeout });
+    if (r.code !== 0) await run(podman, ["rm", "--force", "--ignore", name]); // after a timeout
     return r;
   }
   // A normal process: the restrictions above, a private HOME, and nothing else from the environment.
@@ -401,7 +474,7 @@ export interface PreviewRequest {
   target: number;
 }
 
-const RESOLUTION = 110; // dpi of the rendered region
+const RESOLUTION = 200; // dpi of the rendered region: sharp enough to zoom in
 const KEEP_BASES = 3;
 
 /** Builds previews for one project, with a cache under `root` (`<store>/previews`). */

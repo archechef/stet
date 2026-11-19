@@ -647,7 +647,14 @@ async function main() {
       }
       if (what === "setup") {
         // Downloads packages into a container image: only ever on this explicit command.
-        console.error(dim("Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…"));
+        const before = await stet.previewStatus(true);
+        console.error(
+          dim(
+            before.texSource === "image"
+              ? "Building the preview image with its own TeX Live (downloads about 1.5 GB; this takes a while)…"
+              : "Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…",
+          ),
+        );
         const r = await stet.setupPreview();
         if (!r.ok) throw new StetError(`Building the preview image failed:\n${r.log.split("\n").slice(-15).join("\n")}`);
         return out(() => `${green("Done.")} ${r.status.message}${r.status.fix ? `\n  ${r.status.fix}` : ""}`, r.status);

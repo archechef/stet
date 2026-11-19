@@ -4,7 +4,7 @@ import { inPreviewCache, PreviewPanel, previewNotice, previewPlace } from "./pre
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { doctor, foldPath, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
-import { esc, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
+import { esc, inlineProblems, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
   AGENT_ID,
@@ -105,6 +105,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }),
       vscode.workspace.onDidCloseTextDocument((d) => this.locator.forget(d)),
       this.preview,
+      vscode.window.onDidChangeActiveTextEditor((ed) => ed && void this.checkInline(ed.document)),
       // The preview follows the change under the cursor while it is open.
       vscode.window.onDidChangeTextEditorSelection((e) => {
         if (!this.preview.visible) return;
@@ -156,6 +157,22 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     await this.onProjectChanged();
   }
 
+  /** Settings that cut or hide inline proposals in a project file: say so once, with a fix for that language. */
+  private async checkInline(doc: vscode.TextDocument): Promise<void> {
+    if (!this.projectFor(doc.uri) || !vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true)) return;
+    for (const p of inlineProblems(doc)) {
+      const memo = `stet.inlineNotice:${p.key}:${doc.languageId}`;
+      if (this.ctx.globalState.get<boolean>(memo)) continue;
+      await this.ctx.globalState.update(memo, true);
+      const fix = `Fix for ${doc.languageId} files`;
+      const pick = await vscode.window.showInformationMessage(`Stet: ${p.message}`, fix, "Leave it");
+      if (pick === fix) {
+        // In the user's settings, for this language only.
+        await vscode.workspace.getConfiguration("editor", { languageId: doc.languageId }).update(p.setting, p.value, vscode.ConfigurationTarget.Global, true);
+      }
+    }
+  }
+
   /** Say once what PDF previews need here (nothing when they work). Never sets anything up unasked. */
   private async checkPreviews(p: Project): Promise<void> {
     if (previewPlace() === "off") return;
@@ -174,7 +191,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (!p) return;
     const project = p;
     const r = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: "Stet: building the PDF preview image (downloads Debian, Perl and Poppler)…" },
+      {
+        location: vscode.ProgressLocation.Notification,
+        title:
+          (await project.stet.previewStatus(true)).texSource === "image"
+            ? "Stet: building the PDF preview image with its own TeX Live (about 1.5 GB, this takes a while)…"
+            : "Stet: building the PDF preview image (downloads Debian, Perl and Poppler)…",
+      },
       () => project.stet.setupPreview().catch((e: any) => ({ ok: false, log: String(e?.message ?? e), status: undefined })),
     );
     if (r.ok) void vscode.window.showInformationMessage(`Stet: ${r.status?.message ?? "PDF previews are set up."}`);
@@ -208,7 +231,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       return [
         `**PDF**, page ${r.after.page}${r.note ? ` · *${esc(r.note)}*` : ""}`,
         ...(r.warning ? [`⚠ ${esc(r.warning.message)}`] : []),
-        `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()})`,
+        // A fixed width: the image is rendered sharp enough to zoom in the panel, far wider than a hover.
+        `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()}|width=520)`,
       ].join("\n\n");
     }
     if (r.status === "failed") return `⚠ *${esc(r.message)}* The LaTeX error is in *Preview in PDF*.`;

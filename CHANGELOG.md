@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Previews on macOS:** previews used your own TeX inside the container, which works only on Linux (MacTeX's programs can't run in Podman's Linux machine), so macOS only got a message. Where your TeX can't be used (macOS, or Linux with a distribution's TeX), the preview image now brings its own TeX Live (about 1.5 GB, built once with Set up). Stet also finds Podman where its macOS installers put it, and says so when Podman's machine isn't running.
+- **Zoom in previews:** zoom buttons, Ctrl/Cmd + wheel and double-click in the preview panel; images are rendered at 200 dpi so they stay sharp.
+- **Proposed text with word wrap:** inline proposals wrap with the line (now up to 2000 characters before the panel takes over). If your VS Code settings cut inline text (`editor.inlayHints.maximumLength`) or hide it (`editor.inlayHints.enabled`) for your LaTeX files, Stet says so once and offers to fix them for that language. Line breaks can't be shown inline (⏎); the panel under the change shows them.
 - **Fix: previews of changes that only work together.** A preview applied the change alone, so one end of a pair (a `\begin{proof}` removed in one change and its `\end{proof}` in another, or the two ends of a move) failed with "\begin{proof} … ended by \end{document}". A preview now applies what accepting the change would apply, then the changes of its round that complete it, then the whole round, and says which it shows.
 - **Fix: previews of papers with an error elsewhere.** Builds stopped at the first LaTeX error, so a document with any error got no previews at all. They now continue like a normal compile; errors that only the change brings are shown next to its preview.
 - **Previews in the hover:** a change's hover shows its PDF preview once it is built (selecting a change starts building it). The setting `stet.pdfPreviews` (also under View options) chooses where previews appear: hover and panel, one of them, or off.

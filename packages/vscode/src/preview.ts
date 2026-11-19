@@ -128,8 +128,9 @@ export class PreviewPanel implements vscode.Disposable {
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
         (r.warning ? `<p class="warn">${html(r.warning.message)}</p><details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
-        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><img src="${img(r.after.file)}" alt="after">` +
-        (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><img src="${img(r.before.file)}" alt="before">` : "");
+        `<div class="zoom"><button id="out" title="Zoom out (Ctrl/Cmd + wheel)">−</button><button id="fit" title="Fit the panel (double-click an image)">Fit</button><button id="in" title="Zoom in (Ctrl/Cmd + wheel)">+</button><span id="level" class="muted"></span></div>` +
+        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page"><img src="${img(r.after.file)}" alt="after"></div>` +
+        (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><div class="page"><img src="${img(r.before.file)}" alt="before"></div>` : "");
     } else if (r.status === "no-spot") body = `<p class="muted">${html(r.message)}</p>`;
     else if (r.status === "failed") body = `<p class="warn">${html(r.message)}</p><pre>${html(r.log)}</pre>`;
     else {
@@ -144,14 +145,43 @@ export class PreviewPanel implements vscode.Disposable {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${w.cspSource}; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
 body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 0 12px; }
-img { max-width: 100%; background: white; border: 1px solid var(--vscode-panel-border); }
+.page { overflow: auto; max-width: 100%; }
+img { width: calc(100% * var(--zoom, 1)); max-width: none; background: white; border: 1px solid var(--vscode-panel-border); }
+.zoom { position: sticky; top: 0; padding: 4px 0; background: var(--vscode-editor-background); }
+.zoom button { min-width: 2.2em; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: none; padding: 2px 6px; cursor: pointer; }
 h2 { font-size: 1.1em; } h3 { font-size: 1em; margin: 1em 0 .4em; }
 .muted { color: var(--vscode-descriptionForeground); } .warn { color: var(--vscode-errorForeground); }
 pre { white-space: pre-wrap; font-size: .9em; background: var(--vscode-textCodeBlock-background); padding: 8px; }
 </style></head><body>
 <h2>${html(t.item.id)} <span class="muted">${html(t.item.file)}</span></h2>
 ${body}
-<script nonce="${nonce}">const b = document.getElementById("setup"); if (b) b.onclick = () => acquireVsCodeApi().postMessage({ type: "setup" });</script>
+<script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+const b = document.getElementById("setup");
+if (b) b.onclick = () => vscode.postMessage({ type: "setup" });
+// Zoom: kept in the webview's state, so it stays while you move from change to change.
+let zoom = (vscode.getState() || {}).zoom || 1;
+const apply = () => {
+  zoom = Math.min(4, Math.max(0.5, Math.round(zoom * 100) / 100));
+  document.documentElement.style.setProperty("--zoom", String(zoom));
+  const l = document.getElementById("level");
+  if (l) l.textContent = Math.round(zoom * 100) + "%";
+  vscode.setState({ zoom });
+};
+const by = (f) => () => { zoom *= f; apply(); };
+for (const [id, f] of [["in", by(1.25)], ["out", by(0.8)], ["fit", () => { zoom = 1; apply(); }]]) {
+  const e = document.getElementById(id);
+  if (e) e.onclick = f;
+}
+document.addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  apply();
+}, { passive: false });
+for (const img of document.querySelectorAll("img")) img.ondblclick = () => { zoom = zoom > 1 ? 1 : 2; apply(); };
+apply();
+</script>
 </body></html>`;
   }
 
@@ -173,7 +203,7 @@ export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, proje
   if (env.status === "needs-setup") {
     const setup = "Set up";
     const pick = await vscode.window.showInformationMessage(
-      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once (downloads Debian, Perl and Poppler, roughly 100 MB).`,
+      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once (${env.texSource === "image" ? "downloads Debian with TeX Live, about 1.5 GB" : "downloads Debian, Perl and Poppler, about 150 MB"}).`,
       setup,
       "Not now",
       never,

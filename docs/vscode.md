@@ -196,7 +196,14 @@ The agent is told and can propose it again against the current text.
 - Changes with no place of their own on the page (the preamble, a macro definition, bibliography data, files that aren't `.tex`) get no preview, and the panel says so.
 - **LaTeX errors:** previews are built like your own compile, past errors, so a paper with a small error elsewhere still gets them. Errors that only appear with the change are shown as a warning next to the preview. If no PDF comes out, the panel shows the LaTeX error, or says the document doesn't compile without the change either.
 
-**What it needs:** TeX Live (with `latexmk`) and Podman, on Linux. Previews compile the agents' text in an isolated container, because LaTeX can read any file you can and copy it into the PDF. The container has no network and sees only the build folder and, read-only, your TeX Live. The first time, Stet offers to build the container image (**Set up**, about 150 MB: Debian, Perl and Poppler). It never downloads anything without that click. If something is missing, Stet says once what and how to fix it; everything else works as usual. *Stet: Set up PDF previews* builds the image at any time.
+**Zoom:** the buttons above the images (−, *Fit*, +), Ctrl/Cmd and the mouse wheel, or a double-click on an image (fit ↔ 200%). The zoom stays while you move from change to change.
+
+**What it needs:** Podman, and on Linux preferably TeX Live. Previews compile the agents' text in an isolated container, because LaTeX can read any file you can and copy it into the PDF. The container has no network and sees only the build folder.
+- **Linux with a standalone TeX Live** (from tug.org): the container uses your TeX, read-only. Its image is small (**Set up**, about 150 MB: Debian, Perl and Poppler).
+- **macOS, or Linux with a distribution's TeX:** your TeX can't run in the Linux container, so the image brings its own (Debian's TeX Live with the common packages, about 1.5 GB). On macOS, Podman runs containers in its machine: start it once with `podman machine init` and `podman machine start`. Projects must be in your home folder, which Podman shares with its machine.
+- The setting `preview.tex` in `.git/stet/config.json` chooses where TeX comes from: `auto` (default), `host` or `image`.
+
+The first time, Stet offers to build the image (**Set up**). It never downloads anything without that click. If something is missing (Podman, its machine, the image), Stet says once what and how to fix it; everything else works as usual. *Stet: Set up PDF previews* builds the image at any time.
 
 Without Podman, previews stay off. For material you trust, you can set `"preview": { "isolation": "process" }` in `.git/stet/config.json` to compile without a container. TeX can then read every file you can.
 
@@ -263,7 +270,7 @@ Most of these can also be switched from the panel's **View options** (§4.1).
 |---|---|---|
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
-| `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. |
+| `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. With word wrap on, the new text wraps with the line. VS Code can't show line breaks inline (⏎ marks them); the panel under a long change shows its text in full. Stet sets VS Code's `editor.inlayHints.maximumLength` to no limit for LaTeX files; if your own settings cut or hide inline text, Stet says so once and offers to fix them for that language. |
 | `stet.longChanges` | `collapsed` | How changes too long for one line of grey text are shown: in full in a panel under the change that you open from the gutter (`collapsed`), the same panel open (`expanded`), or only in the hover (`hover`). |
 | `stet.newTextStyle` | `auto` | How new text is drawn: `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line, in the inlay-hint colour), or `auto` (by the word wrap setting). |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |

@@ -134,6 +134,8 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (!["auto", "pdflatex", "xelatex", "lualatex"].includes(pv.engine)) bad(`preview.engine '${pv.engine}' (auto, pdflatex, xelatex or lualatex)`);
   if (!["auto", "container", "process"].includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (auto, container or process)`);
   if (typeof pv.image !== "string" || !/^[a-z0-9][a-z0-9._\/:@-]*$/i.test(pv.image)) bad(`preview.image '${pv.image}'`);
+  if (typeof pv.texImage !== "string" || !/^[a-z0-9][a-z0-9._\/:@-]*$/i.test(pv.texImage)) bad(`preview.texImage '${pv.texImage}'`);
+  if (!["auto", "host", "image"].includes(pv.tex)) bad(`preview.tex '${pv.tex}' (auto, host or image)`);
   if (typeof pv.timeout !== "number" || !(pv.timeout >= 5 && pv.timeout <= 3600)) bad("preview.timeout (seconds, 5 to 3600)");
   return cfg;
 }
