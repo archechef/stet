@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-11-19
 
 - **Previews on macOS:** previews used your own TeX inside the container, which works only on Linux (MacTeX's programs can't run in Podman's Linux machine), so macOS only got a message. Where your TeX can't be used (macOS, or Linux with a distribution's TeX), the preview image now brings its own TeX Live (about 1.5 GB, built once with Set up). Stet also finds Podman where its macOS installers put it, and says so when Podman's machine isn't running.
 - **Zoom in previews:** zoom buttons, Ctrl/Cmd + wheel and double-click in the preview panel; images are rendered at 200 dpi so they stay sharp.

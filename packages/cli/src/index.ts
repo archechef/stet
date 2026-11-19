@@ -226,7 +226,7 @@ const SELF: CliCommand = {
   // Running on VS Code's own runtime (bundled with the extension): keep it in Node mode.
   ...(process.env.ELECTRON_RUN_AS_NODE ? { env: { ELECTRON_RUN_AS_NODE: "1" } } : {}),
 };
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 
 function readAll(stream: NodeJS.ReadableStream): Promise<string> {
   return new Promise((resolve, reject) => {
