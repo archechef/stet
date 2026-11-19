@@ -48,7 +48,7 @@ import {
   type Note,
   type StetEvent,
 } from "./model.js";
-import { detectMoves } from "./moves.js";
+import { detectMoves, detectRewritten, separateMoved } from "./moves.js";
 import { describeNote, type DeliveredNote } from "./notes.js";
 import { combineParts, imbalance, settleParts, type PartDraft } from "./parts.js";
 import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
@@ -185,6 +185,27 @@ interface Candidate extends Edit {
   kind: Item["kind"];
   oldBlob?: string | null;
   newBlob?: string | null;
+}
+
+/** Submit: an agent's linked group made related, and what stayed linked. */
+function unlinkedWarning(title: string, linked: string[][]): string {
+  return (
+    `Group '${title}' is a related group now: Stet saw no dependency between all of its changes, so the reviewer can decide them one by one` +
+    (linked.length ? `. Still linked, because they need each other: ${linked.map((c) => c.join(" + ")).join("; ")}` : "") +
+    `. Link only changes where accepting some alone breaks the document. If that is the case here in a way Stet can't see, ` +
+    `group them again with stet_group, kind "linked", and a "reason" saying why (the reviewer sees it).`
+  );
+}
+
+/** stet_group: a linked group Stet sees no dependency in. */
+function unlinkedRefusal(comps: string[][]): string {
+  const linked = comps.filter((c) => c.length > 1);
+  const free = comps.filter((c) => c.length === 1).map((c) => c[0]!);
+  return (
+    `Not linked: Stet sees no dependency between all of these changes` +
+    (linked.length ? ` (${linked.map((c) => c.join(" + ")).join("; ")} need each other` + (free.length ? `; ${free.join(", ")} don't depend on them)` : ")") : ")") +
+    `. Group them as "related" and link only the changes that need each other, or pass a "reason" if accepting only some really breaks the document (the reviewer sees it).`
+  );
 }
 
 export class Stet {
@@ -1031,8 +1052,10 @@ export class Stet {
       touched.add(ch.path);
       if (ch.oldPath) touched.add(ch.oldPath);
     }
-    let cands = await this.candidatesFor(cfg, base, tip, touched);
     const allItems = await this.store.items();
+    // An unrelated paragraph replacing another is one change, unless one of them moved (§6.4.7).
+    const agentPure = allItems.filter((i) => i.agent === agent.id && isLive(i.status) && i.kind === "modify" && !touched.has(i.file));
+    let cands = separateMoved(await this.candidatesFor(cfg, base, tip, touched), agentPure, cfg.grouping.moves);
     // Items whose change is still in the agent's tree: live ones, plus ones resolved since the last replay.
     const resolvedAt = (i: Item) => i.history[i.history.length - 1]!.at;
     const existing = allItems.filter(
@@ -1290,7 +1313,13 @@ export class Stet {
       result.moves.push(move);
       drafts.push({ kind: "linked", title: m.title, rationale: null, source: "auto", items: [...move.from, ...move.to] });
     }
+    // Moved and rewritten beyond a move: accepting one half alone would lose or duplicate it.
+    for (const m of detectRewritten([...earlier, ...live], cfg.grouping.moves, cfg.split.abbreviations)) {
+      if (!newIds.has(m.from.id) && !newIds.has(m.to.id)) continue;
+      drafts.push({ kind: "linked", title: m.title, rationale: null, source: "auto", items: [m.from.id, m.to.id] });
+    }
     const idOfCand = (c: Candidate) => itemOf.get(c)?.id ?? matched.get(c)?.id;
+    const known = new Map<string, Item>([...created, ...matched.values(), ...earlier].map((i) => [i.id, i]));
     for (const h of effectiveHints) {
       const pool = [...live.map((i) => candOf.get(i)!), ...[...matched.entries()].filter(([, e]) => isLive(e.status)).map(([c]) => c)];
       const members = (await hintMatches(h.where, pool)).map(idOfCand).filter((x): x is string => !!x);
@@ -1307,7 +1336,26 @@ export class Stet {
           }
         }
       }
-      if (members.length) drafts.push({ kind: h.kind, title: h.title, rationale: h.rationale ?? null, source: "agent", items: members, ...(parts ? { parts } : {}) });
+      if (!members.length) continue;
+      // Linked only where accepting some alone would break the document (§6.4.6). Without a
+      // dependency Stet can see, and without the agent's reason, the group is related, and only the
+      // changes that need each other are linked.
+      if (h.kind === "linked" && !h.reason && members.length > 1) {
+        const units = parts?.length ? [...parts.map((p) => p.items), members.filter((m) => !parts!.some((p) => p.items.includes(m)))].filter((u) => u.length) : undefined;
+        const comps = await this.dependencies(members.map((id) => known.get(id)).filter((x): x is Item => !!x), units);
+        if (comps.length > 1) {
+          drafts.push({ kind: "related", title: h.title, rationale: h.rationale ?? null, source: "agent", items: members });
+          const kept = comps.filter((c) => c.length > 1);
+          for (const c of kept) {
+            const part = parts?.find((p) => c.every((i) => p.items.includes(i)));
+            drafts.push({ kind: "linked", title: part?.title ?? `${h.title} (${c.length} changes that need each other)`, rationale: null, source: "auto", items: c });
+          }
+          result.warnings.push(unlinkedWarning(h.title, kept));
+          continue;
+        }
+      }
+      const rationale = h.reason ? `Linked because: ${h.reason}${h.rationale ? `\n\n${h.rationale}` : ""}` : (h.rationale ?? null);
+      drafts.push({ kind: h.kind, title: h.title, rationale, source: "agent", items: members, ...(parts ? { parts } : {}) });
     }
     drafts.push(...autoGroups([...earlier, ...live], cfg.grouping).filter((d) => d.items.some((i) => newIds.has(i))));
     const finalDrafts = normalizeGroups(drafts);
@@ -1468,6 +1516,20 @@ export class Stet {
    * Check the parts of a linked group (§6.4.6) and join the ones that break the rules. Accepting
    * is simulated on the review base the members were made against. Returns notes for the agent.
    */
+  /**
+   * The sets of changes among `members` that need each other: the rules of §6.4.6 from single
+   * changes up, plus the same symbol or term replaced, within one of `units` (the agent's parts:
+   * a notation change it split by section stays split).
+   */
+  private async dependencies(members: Item[], units?: string[][]): Promise<string[][]> {
+    const base = members.find((m) => isLive(m.status))?.baseCommit;
+    const singles = members.map((m) => ({ title: m.id, items: [m.id] }));
+    const unitOf = new Map((units ?? []).flatMap((u, k) => u.map((i) => [i, k] as const)));
+    const sameSymbol = (a: Item, b: Item) => !units || unitOf.get(a.id) === unitOf.get(b.id);
+    const { parts } = await settleParts(singles, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { sameSymbol });
+    return parts ? parts.map((p) => p.items) : [members.map((m) => m.id)];
+  }
+
   private async settleParts(g: Group, get: (id: string) => Promise<Item | undefined>): Promise<string[]> {
     if (g.kind !== "linked" || !g.parts) {
       delete g.parts;
@@ -2227,6 +2289,7 @@ export class Stet {
     title: string,
     rationale?: string,
     parts?: { title: string; items: string[] }[],
+    reason?: string,
   ): Promise<{ group: Group | null; merged: Item | null; warnings: string[] }> {
     return this.store.withLock(async () => {
       if (parts?.length && kind !== "linked") throw new StetError("Only linked groups have parts.");
@@ -2241,6 +2304,13 @@ export class Stet {
         if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
       }
       if (kind === "atomic") return { group: null, merged: await this.mergeAtomic(items, title, rationale), warnings: [] };
+      // An agent's linked group needs a dependency Stet can see, or a reason (§6.4.6).
+      if (kind === "linked" && agentId && !reason) {
+        const units = partList.length ? [...partList.map((p) => p.items), items.map((i) => i.id).filter((i) => !partList.some((p) => p.items.includes(i)))].filter((u) => u.length) : undefined;
+        const comps = await this.dependencies(items, units);
+        if (comps.length > 1) throw new StetError(unlinkedRefusal(comps));
+      }
+      if (reason) rationale = `Linked because: ${reason}${rationale ? `\n\n${rationale}` : ""}`;
       const [gid] = await this.store.allocate("group");
       let group: Group = {
         id: gid!, agent, changeset: items[0]!.changeset, kind, title, rationale: rationale ?? null, source: "agent",

@@ -71,7 +71,7 @@ The agent needs no further setup. The first time it opens the folder, Claude ask
 - **Wake it for:** the kinds of news that should wake it: accepted changes, rejected changes, revision requests, comments and replies, new notes, commits and shared edits, and saves (when agents see your saved edits). News left out doesn't wake the agent, but it still finds it when it next checks, and it arrives if you tick that kind again.
 - Untick every kind to turn notifications **off** (the bell is crossed out).
 
-**Notify now** (the megaphone next to the agent): wakes the agent at once, whatever the settings above, with an optional message such as *I've finished reviewing round 3*.
+**Notify now** (the megaphone at the top of that checklist, or right-click the agent): wakes the agent at once, whatever the settings above, with an optional message such as *I've finished reviewing round 3*.
 
 A woken agent starts working without you prompting it, so *Off* is also the way to keep it waiting for you.
 
@@ -100,7 +100,7 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
 
 - **Round:** one submission by the agent, with its title and rationale. Hover it to read the rationale.
 - **Group:**
-  - 🔗 **linked:** changes that must be accepted together, such as a label and its references. Accepting only some of them could break the document. A large linked group can be split into **parts** (*Part 1: …*, *Part 2: …*). Each part has its own ✓/✗ buttons: accepting a part alone keeps the document compiling and leaves the other parts acceptable.
+  - 🔗 **linked:** changes that must be accepted together because accepting only some would break the document or lose text: a macro and its uses, a moved passage, the same symbol renamed in several formulas. Stet checks agents' linked groups and makes them *related* when it sees no such dependency (the agent can insist with a reason, shown as "Linked because: …" in the group's rationale). A large linked group can be split into **parts** (*Part 1: …*, *Part 2: …*). Each part has its own ✓/✗ buttons: accepting a part alone keeps the document compiling and leaves the other parts acceptable.
   - ▣ **related:** changes on the same theme, which you can accept or reject in one go.
   - The tag *auto* means Stet detected the group itself. *broken* means the group was resolved inconsistently, and the agent has been asked to repair the document.
 - **Change** (`S<n>`): a single edit, located at `file:line` in your current text.
@@ -113,21 +113,23 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
 - A cloud icon means you have saved edits that agents don't see yet (see *Sharing your edits* below).
 - A warning icon, and a line at the top of the panel, appear only if an accepted change can't reach agents: Stet could not apply it on top of your last commit or shared edits. **Finish review** or **Share my edits** passes it on. While everything works, neither is shown.
 
-**Panel title buttons:**
-- **Share my edits with agents** (only shown when you have saved edits that agents don't see)
-- **Finish review** (only shown when there is something to commit)
-- **New agent workspace**
-- **Highlight proposed text in green** / **Show proposed text in theme colours** (for word-wrapped editors, see 4.2)
-- **View options** (gear): settings you may want to switch back and forth, with a checkmark at the current one: changes shown inline, Accept / Reject actions above changes, going to the next change after deciding, how long changes are shown, and which of your edits agents see. They are the settings of §9, so the Settings editor shows the same values.
-- **Refresh**: reloads the panel and rewrites the active agents' instructions, tool configuration and guardrails, e.g. after you updated Stet. Agent sessions read them when they start, so restart running ones.
-- `…` menu: **Check setup**, **Set up project**
+**Panel title:** only what you act on now, and the View options.
+- **Share my edits with agents** (cloud): shown only when you have saved edits that agents don't see.
+- **Finish review** (commit): shown only when there is something to commit.
+- **View options** (gear): everything you may want to switch while you work, with a checkmark at the current choice:
+  - changes inline in the editor, actions above changes (CodeLens), going to the next change after deciding;
+  - how new text is drawn (by word wrap, highlighted, or wrapping), and whether wrapping text is green too (see 4.2);
+  - how long changes are shown, which of your edits agents see, and where PDF previews appear.
+  
+  They are the settings of §9, so the Settings editor shows the same values. Settings you choose once (such as `stet.runtime`) are only there.
+- `…` menu: **New agent workspace**, **Refresh** (reloads the panel and rewrites the active agents' instructions, tool configuration and guardrails, e.g. after you updated Stet; agent sessions read them when they start, so restart running ones), **Set up PDF previews**, **Check setup**, **Set up project**.
 
 #### The History view
 
 The **History** view (under Review in the Stet sidebar; click its title to open it) lists the decided changes: accepted, rejected, withdrawn or stale. It has the same structure, agent → round → change, with the newest round first. Each round is closed by default and says how it was decided, e.g. *4 accepted · 1 rejected*.
 
 - Clicking a change shows its diff: the old text against the text that was accepted (your edited version, if you edited it), in its original context.
-- Right-click for **Go to change** and **Comment…** (the agent can still reply).
+- Right-click for **Comment…** (the agent can still reply), **Diff**, **PDF preview** and **Go to change**, with the same names as everywhere (4.3). `d` shows the diff, `u` undoes.
 - **Undo** (the ↶ button): the change is pending again, and the agent is told. Undoing an accept takes the change out of your file again, and changes the accept had made stale are pending again too. A change decided together with others (a linked group, a move) is undone with them. You can undo an accept until you **Finish review**; after that it is in git's history, and its diff still shows here.
 - A round that is partly decided appears in both views: its open changes under Review, the decided ones under History.
 
@@ -137,45 +139,63 @@ Open a `.tex` file with pending changes:
 
 - **only what actually changes is marked:** a change may span a whole formula (math is always reviewed whole, so it can't end up half-edited), but only the symbols that differ are marked, and the new ones appear right where they go. Everything unchanged stays plain;
 - the **old text is struck through in red**, and the **new text follows in green**;
-- **with word wrap on**, the new text is drawn so that it wraps with the line (as an inlay hint). VS Code draws those in your theme's inlay-hint colour, usually grey. The **colour button** in the Stet panel title (*Highlight proposed text in green*) makes them green: it sets the colour of parameter-name hints in your user settings, so other extensions' parameter hints turn green too (LaTeX files rarely have any). Click it again to undo; a value you had set before is restored. Inlay hints must be enabled (`editor.inlayHints.enabled`, on by default);
-- the setting `stet.newTextStyle` chooses explicitly: `highlighted` (always green, doesn't wrap) or `wrapping`. The default `auto` follows the word wrap setting. Toggling word wrap with Alt+Z doesn't change that setting, so if you toggle it that way, choose explicitly;
+- **with word wrap on**, the new text is drawn so that it wraps with the line (as an inlay hint). VS Code draws those in your theme's inlay-hint colour, usually grey. **View options → Proposed text in green, also when it wraps** makes them green: it sets the colour of parameter-name hints in your user settings, so other extensions' parameter hints turn green too (LaTeX files rarely have any). Untick it to undo; a value you had set before is restored. Inlay hints must be enabled (`editor.inlayHints.enabled`, on by default);
+- **View options → New text** (the setting `stet.newTextStyle`) chooses explicitly: *highlighted* (always green, doesn't wrap) or *wraps with the line*. The default follows the word wrap setting. Toggling word wrap with Alt+Z doesn't change that setting, so if you toggle it that way, choose explicitly;
 - new text that doesn't fit there is shortened, and shown **in full in a panel directly below the change**, closed until you click its marker in the gutter. That is new text with several lines, or longer than 80 characters (400 with word wrap on). The panel is the change's thread: you can reply to the agent from it, and close it with its collapse button. The setting `stet.longChanges` keeps these panels closed until you click the gutter marker (`collapsed`, default), opens them (`expanded`), or leaves the full text to the hover (`hover`);
-- above each change is a row of actions: **2.2: ✓ Accept · ✗ Reject · ✎ Edit · ↻ Revise · 💬 Comment**. For a member of a linked group, *Accept* reads **✓ Accept all n linked**, or **✓ Accept part 2 of 3 (n changes)** when the group has parts;
-- **hovering** a change shows the agent, the round and its rationale, the groups, the diff, the latest thread messages, and the same actions;
-- **moved passages:** when an agent moves a passage of two sentences or more, or a whole paragraph or environment, the old place is struck through with a note **⇣ moved to line N**, and the new place shows **⇡ moved here from line N, word for word** instead of repeating the text. If a few words changed on the way, the note says which, e.g. **with 1 word changed: "small" → "short"**, in the editor's warning colour. Above both: **✓ Accept move · ✗ Reject move** and a link to the other end. Accepting or rejecting either end decides the whole move. Several blocks moved next to each other are one move: the new place says **moved here from lines 12 and 40**. In the panel, a move is a group *Move "…"* (or *Move 2 passages …*) with its parts *⇣ moved out* and *⇡ moved in*.
+- above each change: **2.2: ✓ Accept · ✗ Reject… · ⋯ More…**. For a member of a linked group, *Accept* reads **Accept all n linked**, or **Accept part 2 of 3 (n changes)** when the group has parts. *More…* lists every action on the change (4.3);
+- **Ctrl+.** (Cmd+. on macOS, VS Code's Quick Fix) with the cursor in a change lists the same actions; a light bulb shows they're there;
+- **hovering** a change shows the agent, the round and its rationale, the groups, the diff, the latest thread messages, and every action. It opens over the change and the word before and after it (so short changes and insertions are easy to hit) and stays open while the mouse is in that area; the green proposed text has the same hover;
+- **moved passages:** when an agent moves a passage of two sentences or more, or a whole paragraph or environment, the old place is struck through with a note **⇣ moved to line N**, and the new place shows **⇡ moved here from line N, word for word** instead of repeating the text. If a few words changed on the way, the note says which, e.g. **with 1 word changed: "small" → "short"**, in the editor's warning colour. Above both: **✓ Accept move · ✗ Reject move… · ⋯ More…**, where *More…* also goes to the other end. Accepting or rejecting either end decides the whole move. Several blocks moved next to each other are one move: the new place says **moved here from lines 12 and 40**. In the panel, a move is a group *Move "…"* (or *Move 2 passages …*) with its parts *⇣ moved out* and *⇡ moved in*.
 
 You can keep typing in the file while changes are pending. Stet finds each change again in your current text, including unsaved edits.
 
 ### Reviewing a whole file
 
-**Review all changes in this file** opens VS Code's diff editor: on the left your file, on the right the same file with every pending change in it applied. Real line breaks and word wrap, so long rewrites read like text; VS Code's *Inline View* (the diff's **…** menu) shows both in one column, like tracked changes.
+**Review file** opens VS Code's diff editor: on the left your file, on the right the same file with every pending change in it applied. Real line breaks and word wrap, so long rewrites read like text; VS Code's *Inline View* (the diff's **…** menu) shows both in one column, like tracked changes.
 
-- **Open it from:** the button in the editor's title bar (shown when the file has pending changes), the editor's right-click menu, *All changes* in a change's hover, right-clicking a change in the Stet panel, or the command palette.
+- **Open it from:** the button in the editor's title bar (shown when the file has pending changes), the editor's right-click menu, or a change's actions (hover, *More…*, Ctrl+., right-click in the panel, `f` in the panel).
 - **Edit the right side** to reword proposals. Saving keeps your wording for those changes (the panel marks them *your wording*); nothing is accepted. Edits outside the proposed changes are refused when you save: make those in your file itself.
-- **Decide** with the buttons above each change on the right: **✓ Accept** (with your wording, if you gave one), **✗ Reject**, and **↺ Agent's wording** to drop yours. Accepting elsewhere (panel, editor, `stet accept`) uses your wording too. The agent is told when you accept a change in your own wording.
+- **Decide** with the buttons above each change on the right: **✓ Accept** (with your wording, if you gave one), **✗ Reject…**, **Use agent's wording** to drop yours, and **More…**. Accepting elsewhere (panel, editor, `stet accept`) uses your wording too. The agent is told when you accept a change in your own wording.
 - Changes that overlap another one (two agents on the same text) are not in it; a line at the top names them.
 
 ### 4.3 Actions
 
+Every change has the same actions, under the same names and in the same order, wherever you meet it:
+
+| Where | What it shows |
+|---|---|
+| **Hover** over a change | every action, as links |
+| **Above the change** (CodeLens) | Accept, Reject… and *More…* |
+| **More…** (CodeLens, or `.` in the panel) | every action, with its key and what it does |
+| **Ctrl+.** (Cmd+. on macOS) in the change | every action, in VS Code's Quick Fix menu |
+| **Stet panel**, change row | Diff, Accept, Reject as buttons; right-click for every action |
+| **Keys** in the panel | one letter per action (below) |
+
+An action that ends in "…" asks you something first (a reason, your wording, a message).
+
 | Action | Key in the panel | What happens |
 |---|---|---|
-| **Accept** | `a` | Applies the change to your file. It is committed together with the rest of the review when you click **Finish review**. |
+| **Accept** | `a` | Applies the change to your file. It is committed together with the rest of the review when you click **Finish review**. On a linked change it reads *Accept all n linked* (see below). |
 | **Reject…** | `r` | Asks for an optional reason. The agent gets the reason and won't propose the same change again. |
-| **Edit and accept…** | `e` | Lets you change the wording first, then accepts it. The agent sees your version and adapts to your style. Short changes are edited in an input box; multi-line ones in a separate tab, where you then choose *Accept edited*. |
-| **Request revision…** | `v` | Tells the agent what to change. The change stays open until the agent resubmits it. |
+| **Edit & accept…** | `e` | Lets you change the wording first, then accepts it. The agent sees your version and adapts to your style. Short changes are edited in an input box; multi-line ones in a separate tab, where you then choose *Accept edited*. To reword several changes and decide later, use **Review file**. |
+| **Revise…** | `v` | Tells the agent what to change. The change stays open until the agent resubmits it. |
 | **Comment…** | `c` | Sends a message about the change; the agent can reply. |
-| **Show diff** | `d` | Opens a side-by-side diff of your current file and the file with this change. File additions, deletions and renames are shown this way too. |
+| **Diff** | `d` | A side-by-side diff of your current file and the file with this change. File additions, deletions and renames are shown this way too. |
+| **PDF preview** | `p` | The compiled page with the change, after and before (see *PDF previews*). |
+| **Review file** | `f` | All pending changes of the file in one editable diff (see *Reviewing a whole file*). |
+| **Use agent's wording** | | Drops the wording you gave the change in *Review file*. |
+| **Undo** | `u` | For a decided change: it is pending again (see *The History view*). |
+| **More…** | `.` | Lists every action on the change. |
 | **Accept all** | `Shift+A` | Accepts the whole group. On a round, it accepts the whole round, after asking. |
 | **Reject all…** | `Shift+R` | Rejects the whole group or round with one reason. |
-| **Dissolve group** | (context menu) | Removes a group, for example a wrong automatic one. The changes themselves stay. |
+| **Dissolve group** | (right-click) | Removes a group, for example a wrong automatic one. The changes themselves stay. |
 | **Next / previous change** | `j` / `k` | Selects the next or previous change and shows it in the editor, keeping the focus in the panel. The arrow keys move through the panel too; press Enter to show the change. |
 
 After you accept, reject, edit or request a revision, Stet **moves on to the next pending change** and shows it, so reviewing takes one key per change. From the panel, the focus stays in the panel; from the actions in the editor, the editor moves to the next change. The setting `stet.autoAdvance` turns this off.
 
 **Linked changes:**
-- Accepting or rejecting one member of a linked group asks what to do with the rest of the group, or of its part if the group has parts:
-  - *Accept all linked changes*, or *Accept only this one*, which breaks the group.
-  - *Reject all*, *Reject this one and ask the agent to revise the rest*, or *Reject only this one*.
+- **Accept** on a linked change accepts what belongs together: its whole group, or its part if the group has parts. Where there's room, the label says so (*Accept all 3 linked*, *Accept part 2 of 3*). The panel's button and `a` can't show that, so there Stet asks: all of them, or only this one. **Accept only 2.3**, in the change's actions, breaks the group; the agent is asked to repair the document.
+- Rejecting one member asks what to do with the rest: *Reject all*, *Reject this one and ask the agent to revise the rest*, or *Reject only this one*.
 - Accepting a linked group is all-or-nothing: if any member can't be applied, nothing is applied.
 
 **Committing: Finish review.** Accepting only writes your files; nothing is committed per change. When you're done reviewing, click **Finish review** (the commit icon in the panel title, also shown in the status bar with the number of accepted changes). It asks for the commit's summary line, prefilled with the titles of the accepted changesets, and makes **one commit** for the whole review. The commit body lists the accepted changes per changeset, with a `Stet-Applied:` trailer.
@@ -198,7 +218,7 @@ The agent is told and can propose it again against the current text.
 
 ### PDF previews
 
-**Preview in PDF** (the *PDF* link in a change's hover, or right-click a change) opens a panel next to the editor. It shows the region of the compiled paper where the change lands, after and before. The change itself is in the editor at once; the panel says *Building the preview…* and fills in a second or two later. While the panel is open it follows the change you select or put the cursor on, and prepares the next two changes in the background, so moving through a review stays quick.
+**PDF preview** (among a change's actions: hover, *More…*, Ctrl+., right-click, `p` in the panel) opens a panel next to the editor. It shows the region of the compiled paper where the change lands, after and before. The change itself is in the editor at once; the panel says *Building the preview…* and fills in a second or two later. While the panel is open it follows the change you select or put the cursor on, and prepares the next two changes in the background, so moving through a review stays quick.
 
 - **In the hover, too:** a change's hover shows its preview once it is built. Selecting a change starts building it, so it is usually ready by the time you hover. The setting `stet.pdfPreviews` (also under **View options**) chooses where previews appear: in the hover and the panel (default), only one of them, or off (nothing is compiled).
 - **What a preview includes:** the change with what accepting it would apply too (the rest of its move or linked part). If that alone breaks the document (say, the change removes a `\begin{proof}` and another change its `\end{proof}`), the preview adds the changes of its round that complete it, or the whole round, and says so: accept them together.
@@ -223,7 +243,7 @@ Without Podman, previews stay off. For material you trust, you can set `"preview
 Comments and revision requests appear as threads on the change, in the editor and in the **Comments** view (the panel area at the bottom). Agent replies show up there too.
 
 - To answer, type in the thread and click **Send to agent**.
-- To start a new thread, use **💬 Comment**, or the `+` in the gutter on a line that has a pending change.
+- To start a new thread, use **Comment…** among the change's actions, or the `+` in the gutter on a line that has a pending change.
 
 **Notes for an agent.** To ask an agent for something about a passage it hasn't changed ("shorten this paragraph", "check this proof"), select the passage and choose **Stet: Note for agent…** from the editor's context menu, or click the gutter `+` on a line without a pending change and type. With several agents, Stet asks which one.
 - The agent receives the note at its next sync, at the passage as it is in its copy. It is told when a note is waiting, and gets it even if it is in the middle of other work.
@@ -249,7 +269,7 @@ Comments and revision requests appear as threads on the change, in the editor an
 
 ## 7. Troubleshooting
 
-Run **Stet: Check setup (doctor)** first. It checks git, the hooks, the agent workspaces and their configuration, and prints fixes in the **Stet** output channel.
+Run **Stet: Check setup** first. It checks git, the hooks, the agent workspaces and their configuration, and prints fixes in the **Stet** output channel.
 
 | Symptom | Cause and fix |
 |---|---|

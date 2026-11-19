@@ -103,18 +103,19 @@ describe("agent report 2026-11-18", () => {
     const WANT = DOC.replace(`${P}\n\\begin{lemma}[Old title]`, "A shorter lead-in.\\begin{lemma}[Main bound]");
 
     for (const [name, order, sync] of [
-      ["in order", [0, 1, 2], false],
-      ["in order, syncing in between", [0, 1, 2], true],
-      ["after both its neighbours", [0, 2, 1], false],
-      ["after both its neighbours, syncing in between", [0, 2, 1], true],
+      ["in order", [0, 1], false],
+      ["in order, syncing in between", [0, 1], true],
+      ["the other way round", [1, 0], false],
+      ["the other way round, syncing in between", [1, 0], true],
     ] as const) {
       it(`can be accepted ${name}`, async () => {
         const { stet, repo } = await setup({ "main.tex": DOC });
         const { worktree: wt } = await stet.newAgent("a");
-        // The paragraph rewritten and joined onto the lemma line: three changes that touch.
+        // The paragraph rewritten and joined onto the lemma line: two changes that touch (the
+        // rewrite takes the line break with it).
         edit(wt, "main.tex", `${P}\n\\begin{lemma}[Old title]`, "A shorter lead-in.\\begin{lemma}[Main bound]");
         const { items } = await stet.submit("a", { title: "t" });
-        expect(items.map((i) => i.oldText)).toEqual([expect.stringMatching(/next one$/), "\n", "Old title"]);
+        expect(items.map((i) => i.oldText)).toEqual([expect.stringMatching(/next one\.\n$/), "Old title"]);
         for (const k of order) {
           const r = await stet.accept([items[k]!.id]);
           expect(r.stale).toEqual([]);
@@ -152,7 +153,6 @@ describe("agent report 2026-11-18", () => {
       if (between === "commit") await stet.commitAcceptedItems();
       else await stet.shareEdits();
       await stet.accept([items[1]!.id]);
-      await stet.accept([items[2]!.id]);
       expect(read(repo, "main.tex")).toBe(WANT);
       await stet.sync("b");
       expect(read(other, "main.tex")).toBe(WANT);

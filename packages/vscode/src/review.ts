@@ -152,9 +152,10 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
       const ref = { path: c.project.mainPath, id: item.id };
       const yours = item.draft !== undefined;
       lenses.push(
-        new vscode.CodeLens(at, { title: `${item.id}: ✓ Accept${yours ? " your wording" : ""}`, command: "stet.reviewAccept", arguments: [doc.uri, ref] }),
-        new vscode.CodeLens(at, { title: "✗ Reject", command: "stet.reject", arguments: [ref] }),
-        ...(yours ? [new vscode.CodeLens(at, { title: "↺ Agent's wording", command: "stet.clearDraft", arguments: [ref] })] : []),
+        new vscode.CodeLens(at, { title: `${item.id}: $(check) Accept${yours ? " your wording" : ""}`, command: "stet.reviewAccept", arguments: [doc.uri, ref] }),
+        new vscode.CodeLens(at, { title: "$(close) Reject…", command: "stet.reject", arguments: [ref] }),
+        ...(yours ? [new vscode.CodeLens(at, { title: "$(discard) Use agent's wording", command: "stet.clearDraft", arguments: [ref] })] : []),
+        new vscode.CodeLens(at, { title: "$(ellipsis) More…", command: "stet.changeActions", arguments: [ref] }),
       );
     }
     return lenses;

@@ -84,7 +84,7 @@ Review:
   stet comment <12.3|N3> -m <text>
   stet commit [-m <summary>]            commit all accepted changes in one commit (finish the review)
   stet share [manual|saved|committed]   share your saved edits with agents now, or set when agents see them
-  stet group <12.1> <12.2>... --kind atomic|linked|related -t <title> [-m <rationale>] [--parts <file.json|->]
+  stet group <12.1> <12.2>... --kind atomic|linked|related -t <title> [-m <rationale>] [--parts <file.json|->] [--reason <why linked>]
   stet ungroup <G3>
   stet note <agent> <file[:line[-line]]> -m <text>
                                         leave a note for one agent on a passage; it arrives at the agent's next sync
@@ -132,6 +132,7 @@ const { values: opt, positionals: pos } = parseArgs({
     only: { type: "boolean" },
     groups: { type: "string" },
     parts: { type: "string" },
+    reason: { type: "string" },
     notes: { type: "string" },
     peek: { type: "boolean" },
     once: { type: "boolean" },
@@ -761,7 +762,7 @@ async function main() {
       if (!["atomic", "linked", "related"].includes(kind)) throw new StetError(`Unknown group kind '${kind}'.`);
       const onlyAgent = opt.agent ?? (await stet.agentForCwd(cwd).then((a) => a.id).catch(() => null));
       const parts = await readJsonArg<{ title: string; items: string[] }[]>(opt.parts);
-      const r = await stet.group(onlyAgent, args, kind, need(opt.title, "-t <title>"), opt.message, parts ?? undefined);
+      const r = await stet.group(onlyAgent, args, kind, need(opt.title, "-t <title>"), opt.message, parts ?? undefined, opt.reason);
       return out(() => {
         if (r.merged) return `Merged into ${bold(r.merged.id)}.`;
         const g = r.group!;

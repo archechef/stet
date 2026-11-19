@@ -2,9 +2,11 @@
 
 import { inPreviewCache, PreviewPanel, previewNotice, previewPlace } from "./preview.js";
 import { ReviewFiles } from "./review.js";
+import { closeSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { doctor, foldPath, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
+import { changeActions, withIcon } from "./actions.js";
 import { esc, inlineProblems, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -43,6 +45,32 @@ const HIGHLIGHT: Record<string, string> = {
   "editorInlayHint.parameterBackground": "#2EA04326",
 };
 const HIGHLIGHT_PREVIOUS = "stet.highlightPrevious";
+
+const HOVER_WIDTH = 520;
+const pngSizes = new Map<string, { width: number; height: number }>();
+
+/** The hover size of a preview image: its width fixed, its height from the PNG's header. */
+function hoverSize(file: string): string {
+  if (!pngSizes.has(file)) {
+    let size: { width: number; height: number } | null = null;
+    try {
+      const fd = openSync(file, "r");
+      try {
+        const b = Buffer.alloc(24);
+        // PNG: an 8-byte signature, then the IHDR chunk, whose data start with width and height.
+        if (readSync(fd, b, 0, 24, 0) === 24 && b.toString("latin1", 12, 16) === "IHDR") size = { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      // Not there (yet): the width alone, as before.
+    }
+    if (pngSizes.size > 500) pngSizes.clear();
+    if (size) pngSizes.set(file, size); // not there yet: looked at again next time
+  }
+  const s = pngSizes.get(file);
+  return s && s.width > 0 ? `width=${HOVER_WIDTH},height=${Math.round((HOVER_WIDTH * s.height) / s.width)}` : `width=${HOVER_WIDTH}`;
+}
 
 class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposable {
   private projects = new Map<string, Project>();
@@ -329,8 +357,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       return [
         `**PDF**, page ${r.after.page}${r.note ? ` · *${esc(r.note)}*` : ""}`,
         ...(r.warning ? [`⚠ ${esc(r.warning.message)}`] : []),
-        // A fixed width: the image is rendered sharp enough to zoom in the panel, far wider than a hover.
-        `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()}|width=520)`,
+        // A fixed size: the image is rendered sharp enough to zoom in the panel, far wider than a
+        // hover; and with its height known up front, the hover doesn't change size when it loads.
+        `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()}|${hoverSize(r.after.file)})`,
       ].join("\n\n");
     }
     if (r.status === "failed") return `⚠ *${esc(r.message)}* The LaTeX error is in *Preview in PDF*${r.missing?.extras ? ", with the offer to install the extra fonts" : ""}.`;
@@ -770,6 +799,32 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       else overrideLinked = true;
     }
     await this.decide(p, item.id, !isRef(arg), () => this.doAccept(p, ids, { overrideLinked }));
+  }
+
+  /** Accept only this change of a linked group (breaks it; the agent is asked to repair it). */
+  async acceptOnly(arg: unknown): Promise<void> {
+    const t = await this.targetItem(arg);
+    if (!t) return;
+    const { project: p, item } = t;
+    const own = this.model(p).withMove(item);
+    const rest = this.model(p).linkedRest(own);
+    await this.decide(p, item.id, !isRef(arg), () => this.doAccept(p, own, { overrideLinked: rest.length > 0 }));
+  }
+
+  /** More…: every action on a change, the same list as in its hover and under Ctrl+. in the editor. */
+  async changeActions(arg: unknown): Promise<void> {
+    const t = await this.targetItem(arg);
+    if (!t) return;
+    const { project: p, item } = t;
+    const actions = changeActions(this.model(p), p.mainPath, item, { previews: previewPlace() !== "off" });
+    type Pick = vscode.QuickPickItem & { action?: (typeof actions)[number] };
+    const items: Pick[] = [];
+    actions.forEach((a, i) => {
+      if (i > 0 && actions[i - 1]!.tier !== a.tier) items.push({ label: "", kind: vscode.QuickPickItemKind.Separator });
+      items.push({ label: withIcon(a), description: a.key ? `${a.key === a.key.toUpperCase() ? "Shift+" : ""}${a.key.toUpperCase()} in the panel` : undefined, detail: a.detail, action: a });
+    });
+    const pick = await vscode.window.showQuickPick(items, { title: `${item.id}: ${itemLabel(item, this.model(p).get)}`, placeHolder: "What to do with this change", matchOnDetail: true });
+    if (pick?.action) await vscode.commands.executeCommand(pick.action.command, ...pick.action.args);
   }
 
   /** What an item must be decided with: "the linked group" or "part 2 “Section 3”". */
@@ -1244,8 +1299,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const kinds: Item[] = NOTIFY_TRIGGERS.map((t) => ({ label: NOTIFY_TRIGGER_TEXT[t], news: t }));
     const qp = vscode.window.createQuickPick<Item>();
     qp.title = `Notifications for ${a.agent.id}`;
-    qp.placeholder = "Untick every kind of news to turn notifications off. The megaphone wakes the agent at once.";
+    qp.placeholder = "Untick every kind of news to turn notifications off. The megaphone above wakes the agent at once.";
     qp.canSelectMany = true;
+    const notifyNow: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("megaphone"), tooltip: "Notify now…: wake the agent at once" };
+    qp.buttons = [notifyNow];
+    qp.onDidTriggerButton((b) => {
+      if (b !== notifyNow) return;
+      qp.hide();
+      void this.agentPing({ project: a.project, node: { type: "agent", agent: a.agent } } as El);
+    });
     qp.items = [
       { label: "When", kind: vscode.QuickPickItemKind.Separator },
       ...timings,
@@ -1399,12 +1461,17 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return { ...(vscode.workspace.getConfiguration("workbench").inspect<Record<string, unknown>>("colorCustomizations")?.globalValue ?? {}) };
   }
 
-  async updateHighlightContext(): Promise<void> {
+  /** Whether proposed text is green in word-wrapped editors too (Stet's colours are set). */
+  highlighted(): boolean {
     const cc = this.colorCustomizations();
-    await vscode.commands.executeCommand("setContext", "stet.highlighted", Object.entries(HIGHLIGHT).every(([k, v]) => cc[k] === v));
+    return Object.entries(HIGHLIGHT).every(([k, v]) => cc[k] === v);
   }
 
-  /** Panel button: green proposed text in word-wrapped editors, or back to the theme's colours. */
+  async updateHighlightContext(): Promise<void> {
+    await vscode.commands.executeCommand("setContext", "stet.highlighted", this.highlighted());
+  }
+
+  /** View options: green proposed text in word-wrapped editors, or back to the theme's colours. */
   async setHighlight(on: boolean): Promise<void> {
     const cc = this.colorCustomizations();
     if (on) {
@@ -1424,7 +1491,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (on) {
       void vscode.window.showInformationMessage(
         "Stet: proposed text is now green in word-wrapped editors too (without word wrap it always is). " +
-          "This colours parameter-name hints in your user settings; other extensions' parameter hints turn green as well. Click the button again to undo.",
+          "This colours parameter-name hints in your user settings; other extensions' parameter hints turn green as well. Untick it in View options to undo.",
       );
     }
   }
@@ -1537,7 +1604,12 @@ function itemIcon(it: Item): vscode.ThemeIcon {
   }
 }
 
-export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
+/** Returned by `activate`, for the integration test (VS Code's commands don't resolve inlay hints). */
+export interface TestApi {
+  editor: EditorIntegration;
+}
+
+export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   const ext = new StetExtension(ctx);
   const editor = new EditorIntegration(ext, ext.locator);
   const threads = new Threads(ext, ext.locator, () => ext.allProjects());
@@ -1575,13 +1647,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   for (const v of ["expanded", "collapsed", "hover"]) reg(`stet.longChanges.${v}`, () => ext.setOption("longChanges", v));
   for (const v of ["manual", "saved", "committed"]) reg(`stet.shareEdits.${v}`, () => ext.setOption("shareEdits", v));
   for (const v of ["both", "hover", "panel", "off"]) reg(`stet.pdfPreviews.${v}`, () => ext.setOption("pdfPreviews", v));
+  for (const v of ["auto", "highlighted", "wrapping"]) reg(`stet.newTextStyle.${v}`, () => ext.setOption("newTextStyle", v));
   reg("stet.refresh", () => ext.refresh());
   reg("stet.doctor", () => ext.doctor());
   reg("stet.finishReview", () => ext.finishReview());
   reg("stet.shareEdits", () => ext.shareEdits());
+  reg("stet.toggleHighlight", () => ext.setHighlight(!ext.highlighted()));
   reg("stet.highlightOn", () => ext.setHighlight(true));
   reg("stet.highlightOff", () => ext.setHighlight(false));
   reg("stet.accept", inOrder((a) => ext.accept(a)));
+  reg("stet.acceptOnly", inOrder((a) => ext.acceptOnly(a)));
+  reg("stet.changeActions", (a) => ext.changeActions(a));
   reg("stet.reject", inOrder((a) => ext.reject(a)));
   reg("stet.edit", inOrder((a) => ext.edit(a)));
   reg("stet.comment", (a) => ext.comment(a));
@@ -1599,6 +1675,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg("stet.showNote", (a) => ext.showNote(a));
   await ext.updateHighlightContext();
   await ext.discover();
+  return { editor };
 }
 
 export function deactivate(): void {}

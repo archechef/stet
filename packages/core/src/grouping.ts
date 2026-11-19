@@ -1,7 +1,7 @@
 /** Grouping helpers (spec §6.4). */
 import type { GroupingConfig } from "./config.js";
 import type { GroupKind, Item } from "./model.js";
-import { changeTitle, combineParts, type PartDraft } from "./parts.js";
+import { changedSides, changeTitle, combineParts, DEF_KINDS, definedIn, usesIn, type PartDraft } from "./parts.js";
 import { normalizeWs } from "./text.js";
 
 export interface GroupHint {
@@ -11,6 +11,11 @@ export interface GroupHint {
   where: string[];
   /** Linked groups: pieces that can each be accepted on their own (spec §6.4.6). */
   parts?: { title: string; where: string[] }[];
+  /**
+   * Linked groups: why accepting only some of the changes would break the document. Stet keeps
+   * a linked group whose changes don't depend on each other in a way it can see only with one.
+   */
+  reason?: string;
 }
 
 export interface NoteHint {
@@ -173,6 +178,36 @@ export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
     renames(cfg.refCommands, (it) => keyChange(oldWin(it), newWin(it), ["label"]), "label");
   }
 
+  // A macro or environment renamed (or defined, or removed) with the changes that use it:
+  // accepting some alone leaves a use undefined, which is an error, not a warning.
+  if (cfg.autoDetect.includes("macro")) {
+    const sides = new Map(text.filter((i) => i.kind === "modify").map((i) => [i, changedSides(i)]));
+    for (const [def, sd] of sides) {
+      const [o, nw] = [definedIn(sd.old), definedIn(sd.new)];
+      for (const kind of DEF_KINDS) {
+        const [a, b] = [o[kind], nw[kind]];
+        const removed = [...a].filter((x) => !b.has(x));
+        const added = [...b].filter((x) => !a.has(x));
+        if (!removed.length && !added.length) continue;
+        const users = [...sides].filter(
+          ([u, us]) =>
+            u !== def &&
+            (added.some((x) => usesIn(us.new, x, kind) && !usesIn(us.old, x, kind)) || removed.some((x) => usesIn(us.old, x, kind) && !usesIn(us.new, x, kind))),
+        );
+        if (!users.length) continue;
+        const name = (x: string) => (kind === "cmd" ? `\\${x}` : x);
+        const what = { cmd: "macro", env: "environment", style: "TikZ style" }[kind];
+        const title =
+          removed.length === 1 && added.length === 1
+            ? `Rename ${what} ${name(removed[0]!)} → ${name(added[0]!)}`
+            : added.length
+              ? `Define ${added.map(name).join(", ")} and use ${added.length > 1 ? "them" : "it"}`
+              : `Remove ${removed.map(name).join(", ")} and ${removed.length > 1 ? "their" : "its"} uses`;
+        groups.push({ kind: "linked", title, rationale: null, source: "auto", items: [def.id, ...users.map(([u]) => u.id)] });
+      }
+    }
+  }
+
   if (cfg.autoDetect.includes("cite")) {
     const bibKeys = (t: string) => new Set([...t.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,/g)].map((m) => m[1]!));
     const bibItems = text.filter((it) => it.file.toLowerCase().endsWith(".bib"));
@@ -227,9 +262,12 @@ export function normalizeGroups(drafts: GroupDraft[]): GroupDraft[] {
   const sig = (g: GroupDraft) => g.kind + ":" + [...g.items].sort().join(",");
   const agentSigs = new Set(all.filter((g) => g.source !== "auto").map(sig));
   const seen = new Set<string>();
+  const linkedSets = all.filter((g) => g.kind === "linked").map((g) => new Set(g.items));
   return all.filter((g) => {
     const s = sig(g);
     if (g.source === "auto" && agentSigs.has(s)) return false;
+    // An automatic related group of changes that are linked anyway says nothing more.
+    if (g.source === "auto" && g.kind === "related" && linkedSets.some((l) => g.items.every((i) => l.has(i)))) return false;
     if (seen.has(s + g.source)) return false;
     seen.add(s + g.source);
     return true;

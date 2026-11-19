@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { diffArrays } from "diff";
 
 /** Line-ending style of a text file. Stet works on LF text internally and restores the style on write. */
 export type Eol = "lf" | "crlf";
@@ -80,6 +81,55 @@ export function similarity(a: string, b: string): number {
  * no `.`/`..` segments, and nothing that reaches the git dir on any platform (`.git`,
  * Windows aliases such as `GIT~1` or `.git.`, alternate data streams).
  */
+/**
+ * How alike two passages are, word by word: twice the words they share in order over all their
+ * words (1 = the same, 0 = nothing in common). Below `min`, returns 0 without the full comparison.
+ */
+export function wordSimilarity(a: string[], b: string[], min = 0): number {
+  if (!a.length || !b.length) return 0;
+  // Shared words in any order bound the result from above.
+  const counts = new Map<string, number>();
+  for (const w of a) counts.set(w, (counts.get(w) ?? 0) + 1);
+  let shared = 0;
+  for (const w of b) {
+    const c = counts.get(w);
+    if (c) {
+      shared++;
+      counts.set(w, c - 1);
+    }
+  }
+  if ((2 * shared) / (a.length + b.length) < min) return 0;
+  let common = 0;
+  for (const ch of diffArrays(a, b)) if (!ch.added && !ch.removed) common += ch.count ?? ch.value.length;
+  return (2 * common) / (a.length + b.length);
+}
+
+/**
+ * Whether two paragraphs are one paragraph edited: alike by `wordSimilarity`, or the shorter one
+ * (5 words or more) found almost whole, in order, in the other (most sentences deleted, or many
+ * added). Returns a score; at least `min` means alike.
+ */
+export function paragraphSimilarity(a: string[], b: string[], min: number): number {
+  const d = wordSimilarity(a, b, min);
+  if (d >= min) return d;
+  const short = Math.min(a.length, b.length);
+  if (short < 5) return d;
+  const counts = new Map<string, number>();
+  for (const w of a) counts.set(w, (counts.get(w) ?? 0) + 1);
+  let shared = 0;
+  for (const w of b) {
+    const c = counts.get(w);
+    if (c) {
+      shared++;
+      counts.set(w, c - 1);
+    }
+  }
+  if (shared / short < 0.8) return d;
+  let common = 0;
+  for (const ch of diffArrays(a, b)) if (!ch.added && !ch.removed) common += ch.count ?? ch.value.length;
+  return common / short >= 0.8 ? Math.max(d, min) : d;
+}
+
 export function isSafeRepoPath(p: string): boolean {
   if (!p || p.includes("\0") || /^[\\/]/.test(p) || /^[A-Za-z]:/.test(p)) return false;
   return p.split(/[\\/]/).every((seg) => {

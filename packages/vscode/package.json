@@ -44,7 +44,7 @@
   ],
   "scripts": {
     "build": "tsc -b ../core && tsc -p . && node esbuild.mjs",
-    "package": "node -e \"require('fs').copyFileSync('../../LICENSE','LICENSE')\" && npm run build && vsce package --no-dependencies --allow-missing-repository -o stet-vscode.vsix",
+    "package": "node -e \"for (const f of ['LICENSE','CHANGELOG.md']) require('fs').copyFileSync('../../'+f,f)\" && npm run build && vsce package --no-dependencies --allow-missing-repository -o stet-vscode.vsix",
     "test:integration": "node test/integration/run.mjs"
   },
   "dependencies": {
@@ -134,7 +134,7 @@
       },
       {
         "command": "stet.doctor",
-        "title": "Check setup (doctor)",
+        "title": "Check setup",
         "category": "Stet",
         "icon": "$(pulse)"
       },
@@ -169,6 +169,18 @@
         "icon": "$(check)"
       },
       {
+        "category": "Stet",
+        "command": "stet.acceptOnly",
+        "title": "Accept only this",
+        "icon": "$(check)"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.changeActions",
+        "title": "More…",
+        "icon": "$(ellipsis)"
+      },
+      {
         "command": "stet.reject",
         "title": "Reject…",
         "category": "Stet",
@@ -176,7 +188,7 @@
       },
       {
         "command": "stet.edit",
-        "title": "Edit and accept…",
+        "title": "Edit & accept…",
         "category": "Stet",
         "icon": "$(edit)"
       },
@@ -188,7 +200,7 @@
       },
       {
         "command": "stet.revise",
-        "title": "Request revision…",
+        "title": "Revise…",
         "category": "Stet",
         "icon": "$(sync)"
       },
@@ -217,7 +229,7 @@
       },
       {
         "command": "stet.showDiff",
-        "title": "Show diff",
+        "title": "Diff",
         "category": "Stet",
         "icon": "$(diff)"
       },
@@ -269,19 +281,19 @@
       },
       {
         "command": "stet.undo",
-        "title": "Undo decision",
+        "title": "Undo",
         "category": "Stet",
         "icon": "$(discard)"
       },
       {
         "command": "stet.toggleInlineChanges",
-        "title": "Show changes inline",
+        "title": "Changes inline in the editor",
         "category": "Stet",
         "toggled": "config.stet.inlineChanges"
       },
       {
         "command": "stet.toggleCodeLens",
-        "title": "Show Accept / Reject actions above changes",
+        "title": "Actions above changes (CodeLens)",
         "category": "Stet",
         "toggled": "config.stet.codeLens"
       },
@@ -290,6 +302,12 @@
         "title": "Go to the next change after deciding",
         "category": "Stet",
         "toggled": "config.stet.autoAdvance"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.toggleHighlight",
+        "title": "Proposed text in green, also when it wraps",
+        "toggled": "stet.highlighted"
       },
       {
         "command": "stet.longChanges.expanded",
@@ -329,7 +347,7 @@
       },
       {
         "command": "stet.preview",
-        "title": "Preview in PDF",
+        "title": "PDF preview",
         "category": "Stet",
         "icon": "$(file-pdf)"
       },
@@ -340,7 +358,7 @@
       },
       {
         "command": "stet.agentPing",
-        "title": "Notify agent now…",
+        "title": "Notify now…",
         "category": "Stet",
         "icon": "$(megaphone)"
       },
@@ -369,8 +387,26 @@
         "toggled": "config.stet.pdfPreviews == 'off'"
       },
       {
+        "category": "Stet",
+        "command": "stet.newTextStyle.auto",
+        "title": "New text: by word wrap (highlighted without, wrapping with)",
+        "toggled": "config.stet.newTextStyle == 'auto'"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.newTextStyle.highlighted",
+        "title": "New text: highlighted, doesn't wrap",
+        "toggled": "config.stet.newTextStyle == 'highlighted'"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.newTextStyle.wrapping",
+        "title": "New text: wraps with the line",
+        "toggled": "config.stet.newTextStyle == 'wrapping'"
+      },
+      {
         "command": "stet.reviewFile",
-        "title": "Review all changes in this file",
+        "title": "Review file",
         "category": "Stet",
         "icon": "$(diff-multiple)"
       },
@@ -381,8 +417,9 @@
       },
       {
         "command": "stet.clearDraft",
-        "title": "Use the agent's wording again",
-        "category": "Stet"
+        "title": "Use agent's wording",
+        "category": "Stet",
+        "icon": "$(discard)"
       }
     ],
     "menus": {
@@ -398,52 +435,37 @@
           "group": "navigation@1"
         },
         {
+          "submenu": "stet.viewOptions",
+          "when": "view == stet.review",
+          "group": "navigation@9"
+        },
+        {
           "command": "stet.newAgent",
           "when": "view == stet.review && stet.active",
-          "group": "navigation@2"
+          "group": "1_agents@1"
         },
         {
           "command": "stet.refresh",
           "when": "view == stet.review",
-          "group": "navigation@5"
+          "group": "2_tools@1"
+        },
+        {
+          "command": "stet.previewSetup",
+          "when": "view == stet.review && stet.active",
+          "group": "2_tools@2"
         },
         {
           "command": "stet.doctor",
           "when": "view == stet.review",
-          "group": "more@1"
+          "group": "2_tools@3"
         },
         {
           "command": "stet.setup",
           "when": "view == stet.review",
-          "group": "more@2"
-        },
-        {
-          "command": "stet.highlightOn",
-          "when": "view == stet.review && stet.active && !stet.highlighted",
-          "group": "navigation@3"
-        },
-        {
-          "command": "stet.highlightOff",
-          "when": "view == stet.review && stet.highlighted",
-          "group": "navigation@3"
-        },
-        {
-          "submenu": "stet.viewOptions",
-          "when": "view == stet.review",
-          "group": "navigation@4"
+          "group": "2_tools@4"
         }
       ],
       "view/item/context": [
-        {
-          "command": "stet.accept",
-          "when": "view == stet.review && viewItem =~ /^item\\.live/",
-          "group": "inline@1"
-        },
-        {
-          "command": "stet.reject",
-          "when": "view == stet.review && viewItem =~ /^item\\.live/",
-          "group": "inline@2"
-        },
         {
           "command": "stet.showDiff",
           "when": "view == stet.review && viewItem =~ /^item/",
@@ -452,22 +474,32 @@
         {
           "command": "stet.accept",
           "when": "view == stet.review && viewItem =~ /^item\\.live/",
-          "group": "1_review@1"
-        },
-        {
-          "command": "stet.edit",
-          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
-          "group": "1_review@2"
+          "group": "inline@1"
         },
         {
           "command": "stet.reject",
           "when": "view == stet.review && viewItem =~ /^item\\.live/",
-          "group": "1_review@3"
+          "group": "inline@2"
+        },
+        {
+          "command": "stet.accept",
+          "when": "view == stet.review && viewItem =~ /^item\\.live/",
+          "group": "1_decide@1"
+        },
+        {
+          "command": "stet.reject",
+          "when": "view == stet.review && viewItem =~ /^item\\.live/",
+          "group": "1_decide@2"
+        },
+        {
+          "command": "stet.edit",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
+          "group": "1_decide@3"
         },
         {
           "command": "stet.revise",
           "when": "view == stet.review && viewItem =~ /^item\\.live/",
-          "group": "1_review@4"
+          "group": "1_decide@4"
         },
         {
           "command": "stet.comment",
@@ -475,14 +507,69 @@
           "group": "2_talk@1"
         },
         {
+          "command": "stet.showDiff",
+          "when": "view == stet.review && viewItem =~ /^item/",
+          "group": "3_view@1"
+        },
+        {
+          "command": "stet.preview",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
+          "group": "3_view@2"
+        },
+        {
+          "command": "stet.reviewFile",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
+          "group": "3_view@3"
+        },
+        {
           "command": "stet.showItem",
           "when": "view == stet.review && viewItem =~ /^item/",
-          "group": "3_nav@1"
+          "group": "3_view@4"
+        },
+        {
+          "command": "stet.undo",
+          "when": "view == stet.review && viewItem =~ /\\.undo$/",
+          "group": "4_other@1"
+        },
+        {
+          "command": "stet.changeActions",
+          "when": "view == stet.review && viewItem =~ /^item/",
+          "group": "4_other@9"
         },
         {
           "command": "stet.showDiff",
-          "when": "view == stet.review && viewItem =~ /^item/",
-          "group": "3_nav@2"
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "inline@0"
+        },
+        {
+          "command": "stet.undo",
+          "when": "view == stet.history && viewItem =~ /\\.undo$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "stet.comment",
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "2_talk@1"
+        },
+        {
+          "command": "stet.showDiff",
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "3_view@1"
+        },
+        {
+          "command": "stet.preview",
+          "when": "view == stet.history && viewItem =~ /^item\\.done\\.modify/",
+          "group": "3_view@2"
+        },
+        {
+          "command": "stet.showItem",
+          "when": "view == stet.history && viewItem =~ /^item/",
+          "group": "3_view@4"
+        },
+        {
+          "command": "stet.undo",
+          "when": "view == stet.history && viewItem =~ /\\.undo$/",
+          "group": "4_other@1"
         },
         {
           "command": "stet.acceptGroup",
@@ -497,12 +584,12 @@
         {
           "command": "stet.acceptGroup",
           "when": "view == stet.review && viewItem =~ /^(group|part|changeset)\\.live/",
-          "group": "1_review@1"
+          "group": "1_decide@1"
         },
         {
           "command": "stet.rejectGroup",
           "when": "view == stet.review && viewItem =~ /^(group|part|changeset)\\.live/",
-          "group": "1_review@2"
+          "group": "1_decide@2"
         },
         {
           "command": "stet.ungroup",
@@ -527,27 +614,7 @@
         {
           "command": "stet.archiveAgent",
           "when": "view == stet.review && viewItem =~ /^agent\\.active/",
-          "group": "2_manage@1"
-        },
-        {
-          "command": "stet.showDiff",
-          "when": "view == stet.history && viewItem =~ /^item/",
-          "group": "inline"
-        },
-        {
-          "command": "stet.showDiff",
-          "when": "view == stet.history && viewItem =~ /^item/",
-          "group": "1_view@1"
-        },
-        {
-          "command": "stet.showItem",
-          "when": "view == stet.history && viewItem =~ /^item/",
-          "group": "1_view@2"
-        },
-        {
-          "command": "stet.comment",
-          "when": "view == stet.history && viewItem =~ /^item/",
-          "group": "2_talk@1"
+          "group": "3_archive@1"
         },
         {
           "command": "stet.resolveNote",
@@ -557,7 +624,7 @@
         {
           "command": "stet.resolveNote",
           "when": "view == stet.review && viewItem == note.open",
-          "group": "1_review@1"
+          "group": "1_decide@1"
         },
         {
           "command": "stet.agentNotify",
@@ -575,44 +642,9 @@
           "group": "2_manage@0"
         },
         {
-          "command": "stet.undo",
-          "when": "view == stet.history && viewItem =~ /\\.undo$/",
-          "group": "inline@1"
-        },
-        {
-          "command": "stet.undo",
-          "when": "view == stet.history && viewItem =~ /\\.undo$/",
-          "group": "1_view@3"
-        },
-        {
-          "command": "stet.undo",
-          "when": "view == stet.review && viewItem =~ /\\.undo$/",
-          "group": "1_review@5"
-        },
-        {
-          "command": "stet.preview",
-          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
-          "group": "3_nav@3"
-        },
-        {
-          "command": "stet.preview",
-          "when": "view == stet.history && viewItem =~ /^item\\.done\\.modify/",
-          "group": "1_view@4"
-        },
-        {
           "command": "stet.agentPing",
           "when": "view == stet.review && viewItem =~ /^agent\\.active/",
-          "group": "inline@0"
-        },
-        {
-          "command": "stet.agentPing",
-          "when": "view == stet.review && viewItem =~ /^agent\\.active/",
-          "group": "2_manage@0"
-        },
-        {
-          "command": "stet.reviewFile",
-          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
-          "group": "3_nav@0"
+          "group": "2_manage@1"
         }
       ],
       "comments/commentThread/context": [
@@ -640,14 +672,6 @@
           "when": "stet.active"
         },
         {
-          "command": "stet.highlightOn",
-          "when": "stet.active && !stet.highlighted"
-        },
-        {
-          "command": "stet.highlightOff",
-          "when": "stet.highlighted"
-        },
-        {
           "command": "stet.noteForAgent",
           "when": "stet.active && editorIsOpen"
         },
@@ -665,6 +689,18 @@
         },
         {
           "command": "stet.reviewAccept",
+          "when": "false"
+        },
+        {
+          "command": "stet.highlightOn",
+          "when": "false"
+        },
+        {
+          "command": "stet.highlightOff",
+          "when": "false"
+        },
+        {
+          "command": "stet.acceptOnly",
           "when": "false"
         }
       ],
@@ -701,44 +737,60 @@
           "group": "1_editor@3"
         },
         {
+          "command": "stet.newTextStyle.auto",
+          "group": "2_style@1"
+        },
+        {
+          "command": "stet.newTextStyle.highlighted",
+          "group": "2_style@2"
+        },
+        {
+          "command": "stet.newTextStyle.wrapping",
+          "group": "2_style@3"
+        },
+        {
+          "command": "stet.toggleHighlight",
+          "group": "2_style@4"
+        },
+        {
           "command": "stet.longChanges.expanded",
-          "group": "2_long@1"
+          "group": "3_long@1"
         },
         {
           "command": "stet.longChanges.collapsed",
-          "group": "2_long@2"
+          "group": "3_long@2"
         },
         {
           "command": "stet.longChanges.hover",
-          "group": "2_long@3"
+          "group": "3_long@3"
         },
         {
           "command": "stet.shareEdits.manual",
-          "group": "3_share@1"
+          "group": "4_share@1"
         },
         {
           "command": "stet.shareEdits.saved",
-          "group": "3_share@2"
+          "group": "4_share@2"
         },
         {
           "command": "stet.shareEdits.committed",
-          "group": "3_share@3"
+          "group": "4_share@3"
         },
         {
           "command": "stet.pdfPreviews.both",
-          "group": "4_pdf@1"
+          "group": "5_pdf@1"
         },
         {
           "command": "stet.pdfPreviews.hover",
-          "group": "4_pdf@2"
+          "group": "5_pdf@2"
         },
         {
           "command": "stet.pdfPreviews.panel",
-          "group": "4_pdf@3"
+          "group": "5_pdf@3"
         },
         {
           "command": "stet.pdfPreviews.off",
-          "group": "4_pdf@4"
+          "group": "5_pdf@4"
         }
       ],
       "editor/title": [
@@ -799,6 +851,36 @@
         "key": "k",
         "command": "stet.previous",
         "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "p",
+        "command": "stet.preview",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "f",
+        "command": "stet.reviewFile",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "u",
+        "command": "stet.undo",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": ".",
+        "command": "stet.changeActions",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "u",
+        "command": "stet.undo",
+        "when": "focusedView == stet.history && !inputFocus"
+      },
+      {
+        "key": "d",
+        "command": "stet.showDiff",
+        "when": "focusedView == stet.history && !inputFocus"
       }
     ],
     "configuration": {

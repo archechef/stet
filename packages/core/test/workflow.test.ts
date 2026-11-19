@@ -215,7 +215,7 @@ describe("grouping", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
-    const r = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", title: "Rename", where: ["main.tex"] }] });
+    const r = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", reason: "test of linked groups", title: "Rename", where: ["main.tex"] }] });
     const g = r.groups.find((x) => x.kind === "linked")!;
     expect(g.parts).toBeUndefined();
     await expect(stet.accept([g.items[0]!])).rejects.toThrow(/linked/);
@@ -263,7 +263,7 @@ describe("grouping", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
-    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", title: "Rename", where: ["main.tex"] }] });
+    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", reason: "test of linked groups", title: "Rename", where: ["main.tex"] }] });
     const res = await stet.accept([groups[0]!.items[0]!], { overrideLinked: true });
     expect(res.warnings.join()).toMatch(/broken/);
     expect((await stet.listGroups())[0]!.state).toBe("broken");
@@ -274,7 +274,7 @@ describe("grouping", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
-    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", title: "Rename", where: ["main.tex"] }] });
+    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", reason: "test of linked groups", title: "Rename", where: ["main.tex"] }] });
     const [first, second] = groups[0]!.items;
     await stet.reject([first!], { reason: "keep the old label", mode: "revise-rest" });
     expect((await statuses(stet))[second!]).toBe("needs_revision");
@@ -292,7 +292,7 @@ describe("grouping", () => {
       groups: [
         { kind: "atomic", title: "Reword first sentence", where: ["main.tex:4"] },
         { kind: "related", title: "Tone", where: ["main.tex:6", "main.tex:8"] },
-        { kind: "linked", title: "Nothing", where: ["other.tex:3"] },
+        { kind: "linked", reason: "test of linked groups", title: "Nothing", where: ["other.tex:3"] },
       ],
       notes: [{ where: "main.tex:8", note: "'method' matches Section 2" }],
     });
@@ -326,8 +326,11 @@ describe("grouping", () => {
     expect(items).toHaveLength(3);
     const { merged } = await stet.group("a", [items[0]!.id, items[1]!.id], "atomic", "one change");
     expect(merged!.newText).toBe("examine the problem of checking");
-    const { group } = await stet.group("a", [merged!.id, items[2]!.id], "linked", "together");
+    // Linked without a dependency Stet sees: refused, unless the agent gives a reason.
+    await expect(stet.group("a", [merged!.id, items[2]!.id], "linked", "together")).rejects.toThrow(/Not linked: Stet sees no dependency.*"reason"/);
+    const { group } = await stet.group("a", [merged!.id, items[2]!.id], "linked", "together", undefined, undefined, "the wording only works together");
     expect(group!.items).toEqual([merged!.id, items[2]!.id]);
+    expect(group!.rationale).toBe("Linked because: the wording only works together");
     await stet.ungroup(group!.id);
     expect(await stet.listGroups()).toEqual([]);
   });

@@ -43,9 +43,19 @@ here reaches the real document until a human accepts it.
   line, add a quoted snippet of its new text, e.g. 'main.tex:12 "suggestion"'.
   Always do this when the parts of a group share a line, or they can't be
   separated.
-  - \`linked\`: REQUIRED whenever accepting only some of the edits would break
-    or corrupt the document: label/ref renames, macro definition + uses,
-    citation keys, notation changed consistently across places.
+  - \`linked\` means all or nothing, which is tiring to review. Use it ONLY
+    when accepting some of the edits without the others would break the
+    document or lose text: a macro or environment definition and its uses,
+    a \`\\begin\` and its \`\\end\` in different edits, one symbol renamed in
+    several formulas. Stet detects moves, label/ref and citation renames
+    itself. Edits that merely serve one goal, are in one section, or read
+    better together are NOT linked: make them \`related\` (the reviewer can
+    still accept them all at once).
+    Stet checks every linked group: if it sees no dependency between all of
+    its edits, it makes the group related, links only the edits that need
+    each other, and tells you in the submit result. If accepting only some
+    really breaks the document in a way Stet can't see, give the group a
+    \`reason\` (one sentence, shown to the reviewer) and it stays linked.
     A large linked group is hard to review. Split it into \`parts\` (each with
     a title and its locations) when every part can be accepted on its own:
     accepting one part alone must leave the document compiling (warnings such
@@ -63,9 +73,11 @@ here reaches the real document until a human accepts it.
     sees that nothing changed on the way. So strongly prefer moving text word
     for word, and make edits to it in a separate round. If the move itself
     needs small adjustments (a "below" that is now "above", a reference),
-    keep them few: up to a few changed words are shown as part of the move,
-    more make it an unrelated deletion and insertion that is hard to check.
-  - \`related\`: optional thematic batches with a title and rationale.
+    keep them few: up to one changed word in ten is shown as part of the
+    move; with more it is a deletion and an insertion (linked), which is
+    much harder to check. A single sentence of 7 words or more counts too.
+  - \`related\`: thematic batches with a title and rationale, as large as
+    makes sense (a section's rewording, a notation change by section).
   Check the submit result and fix groupings with \`stet_group\` / \`stet_ungroup\`.
 - Before starting new work, call \`stet_status\`; if it says a sync is needed
   or notes are waiting, call \`stet_sync\` first (it needs a clean folder:
@@ -99,7 +111,9 @@ here reaches the real document until a human accepts it.
   the first lines. When a line arrives, act on it (\`stet_get_feedback\`,
   \`stet_sync\`) and start watching again. The same lines are appended to
   \`.stet/inbox\` in this folder (\`tail -n 0 -f .stet/inbox\` works too). They
-  are only written while your Stet tools are connected.
+  are only written while your Stet tools are connected. The same command with
+  \`help\` instead of \`watch\` lists Stet's commands; use the Stet tools for
+  everything else.
 `;
 }
 

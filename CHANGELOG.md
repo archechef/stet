@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: a paragraph inserted next to one edited in place** showed as "old paragraph → new paragraph" plus the edited paragraph inserted again, so accepting only some of them dropped or duplicated text (bug report C42). Paragraphs are now paired by similarity, not position: you get an insertion, and small edits in place. An unrelated paragraph replacing another is still one replacement, unless the old one moved elsewhere: then it's an insertion and a move.
+- **Moves:** a short paragraph with a changed word, or a single sentence of 7 words or more, is a move now. One changed word per 10 words (at least one) is allowed, with no upper limit. A passage moved and rewritten beyond that is a linked deletion and insertion (*Moved and rewritten*), so accepting one alone can't lose or duplicate it (bug report C38).
+- **A heavily rewritten sentence is one change** instead of word-sized fragments that don't read on their own (bug report C31). A sentence moved inside its paragraph comes out as whole sentences.
+- **Smaller linked groups:** "linked" (all or nothing) is kept for changes that break the document without each other: a macro and its uses, a `\begin` and its `\end`, one symbol renamed across formulas, moves. An agent's linked group without such a dependency becomes a related group (Accept all still works), with only the changes that need each other linked, and the agent is told. It can insist with a reason, which you see on the group. The agents' instructions say this more plainly.
+- **Fix: a sync during submit** could leave a paragraph twice in the agent's workspace (a consequence of the C42 pairing). The submit result now also says which changes went stale and that they are no longer in the workspace (bug report C36).
+- **One change per new paragraph:** several paragraphs inserted (or deleted) in a row are one change each, and so is a heading; an inserted environment stays whole. Paragraphs that move together are still one move, and so are paragraphs that land together.
+- **Macro renames are linked automatically** with the changes that use them: a renamed or new `\newcommand`, environment, or TikZ style (`vertex/.style`). Accepting a use without its definition is a LaTeX error.
+- **Fix: headings stuck to the paragraph after them** when paragraphs were paired, so a paragraph inserted after a heading showed as heading plus paragraph inserted and the old heading deleted. A moved heading is a move.
+- **Fix: TikZ pictures** with several small edits came out as one change; statements (`;`) are kept apart now. Several paragraphs replaced by unrelated text are one replacement instead of fragments.
+- **Guard:** the Stet command's `help` and `--help`, and reading `.stet/` with output thrown away (`2>/dev/null`) or in a chain of reading commands, are no longer blocked. `find -delete` and `find -exec` count as writes.
+- **One set of actions on every change, everywhere.** The hover, the row above a change, the Stet panel and the new lists all offer the same actions under the same names, in the same order: Accept, Reject…, Edit & accept…, Revise…, Comment…, Diff, PDF preview, Review file, Use agent's wording, Undo. "…" means it asks you something first.
+  - **Above a change:** Accept · Reject… · More…, a shorter line.
+  - **More…** lists every action on a change with its key and what it does; **Ctrl+.** (Cmd+.) in a change shows the same list in VS Code's Quick Fix menu.
+  - **Keys in the panel** for the rest: `p` PDF preview, `f` Review file, `u` Undo, `.` More… (and `d`, `u` in the History view).
+  - **Accept on a linked change** accepts its group (or part) wherever its label can say so; the panel's button and `a` still ask. *Accept only 2.3* breaks the group on purpose.
+- **Tidier panel title:** only Share my edits and Finish review (when they apply) and View options; New agent workspace, Refresh, Set up PDF previews, Check setup and Set up project are in the `…` menu.
+- **View options** now also hold how new text is drawn (`stet.newTextStyle`) and the green colour for wrapping text, which was a separate title-bar button.
+- **Agents:** one icon per agent (the notification bell); *Notify now* is the megaphone in the bell's checklist, and in the right-click menu.
+- **New Marketplace page:** the extension's README describes reviewing, PDF previews, notifications, notes, View options and all settings.
+- **Fix: hovers that were hard to open and closed at the slightest movement.** A change's hover answered only to the struck-through old text, so short changes were hard to hit and insertions (no old text) could hardly be hit at all; and it closed as soon as the mouse left that text. It now answers to the change and the word before and after it, and stays open while the mouse is anywhere in that area.
+- **The green proposed text has the full hover**, with the actions and the PDF preview, instead of only the proposed text (with word wrap on, where it is an inline hint).
+- **Fix: the hover changed size when its preview loaded.** The preview image now has its size from the start.
+- **Faster first hovers:** where the changes are in a file is looked up again only when its changes change (a new proposal, a decision, a reply), not on every refresh of the project.
+- Integration test: on Linux it starts VS Code's binary rather than the `code` script, which could hand off to an open VS Code and return without running the test.
+
 ## 0.12.0 — 2026-11-19
 
 - **Page view in the Preview panel:** the whole page with the change, opened at it, with the changed words highlighted (inserted in green, removed in red), from a word diff of the two versions that ignores reflowed text. **After | Before** flips at the same zoom and position, ◀ ▶ turn pages (rendered on demand). `stet preview <id> --page <n> [--before]` gives a whole page on the command line. The hover still shows the region.

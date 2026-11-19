@@ -70,7 +70,7 @@ describe("undo", () => {
     edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
     const { items, groups } = await stet.submit("a", {
       title: "together",
-      groups: [{ kind: "linked", title: "both", where: ["main.tex:4", "main.tex:8"] }],
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "both", where: ["main.tex:4", "main.tex:8"] }],
     });
     expect(items).toHaveLength(2);
     await stet.acceptGroup(groups.find((g) => g.kind === "linked")!.id);

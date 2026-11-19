@@ -2,7 +2,7 @@
 // the extension under development, and reports the checks from suite.cjs.
 // Usage: node test/integration/run.mjs   (VS Code from PATH, or set VSCODE_EXE)
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,10 @@ function vscodeExe() {
   const cli = execFileSync(which, ["code"], { encoding: "utf8" }).split(/\r?\n/)[0].trim();
   if (process.platform === "win32") return resolve(dirname(cli), "..", "Code.exe");
   if (process.platform === "darwin") return resolve(dirname(cli), "../../../MacOS/Electron");
-  return cli;
+  // The `code` script can hand off to a VS Code that's already open and return at once; the
+  // binary next to it (…/bin/code → …/code) runs the test itself.
+  const bin = resolve(dirname(realpathSync(cli)), "..", "code");
+  return existsSync(bin) ? bin : cli;
 }
 
 let failedRuns = 0;

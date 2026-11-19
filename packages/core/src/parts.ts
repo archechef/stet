@@ -9,7 +9,10 @@
  */
 import { joinTitles } from "./grouping.js";
 import { isLive, moveOthers, type GroupPart, type Item } from "./model.js";
+import { diffArrays } from "diff";
+import { isKeyEdit } from "./split.js";
 import { normalizeWs } from "./text.js";
+import { tokenize } from "./tokenizer.js";
 
 export interface PartDraft {
   title: string;
@@ -42,6 +45,31 @@ const CMD_DEFS =
 const TEX_DEFS = /\\(?:def|gdef|edef|xdef|let|newif)\s*\\([A-Za-z@]+)/g;
 const ENV_DEFS = /\\(?:newenvironment|renewenvironment|NewDocumentEnvironment|RenewDocumentEnvironment|newtheorem|declaretheorem|newtcolorbox)\*?\s*\{([A-Za-z@*]+)\}/g;
 
+/**
+ * Symbols and terms an item replaces one for one: `$n$` → `$m$`, `\alpha` → `\beta`, "estimator"
+ * → "statistic". Short words count only in math (so "a" → "the" doesn't); keys of \label,
+ * \ref and \cite don't (a rename is decided reference by reference).
+ */
+export function replacements(it: Item): Set<string> {
+  const out = new Set<string>();
+  if (it.kind !== "modify" || isKeyEdit(it.oldText, it.newText)) return out;
+  const math = /\$|\\\(|\\\[|\\begin\s*\{(?:equation|align|gather|multline)/.test(it.context.before.slice(-60) + it.oldText);
+  // In math, 2n is the symbols 2 and n.
+  const toks = (t: string) =>
+    tokenize(t)
+      .filter((x) => x.type !== "ws" && x.type !== "parbreak" && x.type !== "comment")
+      .flatMap((x) => (math && x.type === "word" ? (x.text.match(/\p{N}+|\p{L}+|./gu) ?? [x.text]) : [x.text]));
+  const counts = (w: string) => w.startsWith("\\") || /^\p{L}{4,}$/u.test(w) || (math && /^[\p{L}\p{N}]{1,3}$/u.test(w));
+  const chunks = diffArrays(toks(it.oldText), toks(it.newText));
+  for (let k = 0; k + 1 < chunks.length; k++) {
+    const [a, b] = [chunks[k]!, chunks[k + 1]!];
+    const one = (c: typeof a) => (c.count ?? c.value.length) === 1;
+    if (a.removed && b.added && one(a) && one(b) && counts(a.value[0]!)) out.add(`${a.value[0]}\u0000${b.value[0]}`);
+    if (a.added && b.removed && one(a) && one(b) && counts(b.value[0]!)) out.add(`${b.value[0]}\u0000${a.value[0]}`);
+  }
+  return out;
+}
+
 /** The whole lines of `win` covering [start, end). */
 function linesAround(win: string, start: number, end: number): string {
   const s = win.lastIndexOf("\n", start - 1) + 1;
@@ -57,25 +85,48 @@ function changedLines(it: Item): string {
   return linesAround(oldWin, b, b + it.oldText.length) + "\n" + linesAround(newWin, b, b + it.newText.length);
 }
 
-/** Commands and environments defined on the lines an item changes. */
-function definitions(it: Item): { cmds: Set<string>; envs: Set<string> } {
-  const t = changedLines(it);
-  const cmds = new Set<string>();
-  const envs = new Set<string>();
-  for (const m of t.matchAll(CMD_DEFS)) cmds.add(m[1]!);
-  for (const m of t.matchAll(TEX_DEFS)) cmds.add(m[1]!.startsWith("if") ? m[1]!.slice(2) : m[1]!);
-  for (const m of t.matchAll(ENV_DEFS)) envs.add(m[1]!);
-  return { cmds, envs };
+/** The lines an item changes, as they were and as they are with it. */
+export function changedSides(it: Item): { old: string; new: string } {
+  const b = it.context.before.length;
+  const oldWin = it.context.before + it.oldText + it.context.after;
+  const newWin = it.context.before + it.newText + it.context.after;
+  return { old: linesAround(oldWin, b, b + it.oldText.length), new: linesAround(newWin, b, b + it.newText.length) };
 }
+
+/** What can be defined in one place and used in others: a macro, an environment, a TikZ style. */
+export type DefKind = "cmd" | "env" | "style";
+export const DEF_KINDS: readonly DefKind[] = ["cmd", "env", "style"];
+
+/** TikZ styles: `\tikzset{name/.style=…}`, `name/.style={…}` in picture options, `\tikzstyle{name}=[…]`. */
+const STYLE_DEFS = /(?:[{,[]\s*|^\s*)([A-Za-z][\w -]*?)\s*\/\.(?:style|append style)\b|\\tikzstyle\s*\{([^}]+)\}/gm;
+
+/** Commands, environments and TikZ styles that `t` defines. */
+export function definedIn(t: string): Record<DefKind, Set<string>> {
+  const out: Record<DefKind, Set<string>> = { cmd: new Set(), env: new Set(), style: new Set() };
+  for (const m of t.matchAll(CMD_DEFS)) out.cmd.add(m[1]!);
+  for (const m of t.matchAll(TEX_DEFS)) out.cmd.add(m[1]!.startsWith("if") ? m[1]!.slice(2) : m[1]!);
+  for (const m of t.matchAll(ENV_DEFS)) out.env.add(m[1]!);
+  for (const m of t.matchAll(STYLE_DEFS)) out.style.add((m[1] ?? m[2]!).trim());
+  return out;
+}
+
+/** Does `t` use command `\name`, environment `name`, or TikZ style `name` (in an option list)? */
+export function usesIn(t: string, name: string, kind: DefKind): boolean {
+  if (kind === "env") return new RegExp(`\\\\(?:begin|end)\\s*\\{${esc(name)}\\}`).test(t);
+  if (kind === "style") return new RegExp(`[\\[,]\\s*${esc(name)}\\s*[,\\]]`).test(t);
+  return new RegExp(`\\\\(?:if)?${esc(name)}(?![A-Za-z@])`).test(t);
+}
+
+/** `\est`, `the environment proof`, `the TikZ style vertex`. */
+export const defName = (name: string, kind: DefKind): string => (kind === "cmd" ? `\\${name}` : kind === "env" ? `the environment ${name}` : `the TikZ style ${name}`);
+
+/** Commands, environments and TikZ styles defined on the lines an item changes. */
+const definitions = (it: Item) => definedIn(changedLines(it));
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Does an item change a line that uses command `\name` or environment `name`? */
-function uses(it: Item, name: string, env: boolean): boolean {
-  const t = changedLines(it);
-  if (env) return new RegExp(`\\\\(?:begin|end)\\s*\\{${esc(name)}\\}`).test(t);
-  return new RegExp(`\\\\(?:if)?${esc(name)}(?![A-Za-z@])`).test(t);
-}
+/** Does an item change a line that uses it? */
+const uses = (it: Item, name: string, kind: DefKind) => usesIn(changedLines(it), name, kind);
 
 /** How a change shifts the nesting of braces, environments, display math and `$`. */
 export function imbalance(it: { oldText: string; newText: string }): number[] {
@@ -97,6 +148,7 @@ export async function settleParts(
   proposed: PartDraft[],
   members: Item[],
   interferes?: Interference,
+  opts: { sameSymbol?: (a: Item, b: Item) => boolean } = {},
 ): Promise<{ parts: GroupPart[] | undefined; notes: string[] }> {
   const byId = new Map(members.map((m) => [m.id, m]));
   const drafts: PartDraft[] = [];
@@ -160,24 +212,39 @@ export async function settleParts(
     if (joined) notes.push(`kept as one part: ${global.id} changes a file, package or include that the other changes may need.`);
   }
 
-  // The same change twice: one part.
-  const bySub = new Map<string, Item>();
+  // The same change twice: one part (only within one of the agent's parts, where asked).
+  const bySub = new Map<string, Item[]>();
   for (const m of members) {
     const s = substitution(m);
     if (s === null) continue;
-    const first = bySub.get(s);
+    const earlier = bySub.get(s) ?? [];
+    const first = earlier.find((e) => !opts.sameSymbol || opts.sameSymbol(e, m));
     if (first) join(at(first), at(m), `they make the same change (${changeTitle(m)})`);
-    else bySub.set(s, m);
+    bySub.set(s, [...earlier, m]);
+  }
+
+  // The same symbol or term replaced in several places, where asked (finding the changes that
+  // need each other): notation must not end up half changed.
+  if (opts.sameSymbol) {
+    const byRepl = new Map<string, Item[]>();
+    for (const m of members) {
+      for (const r of replacements(m)) {
+        for (const first of byRepl.get(r) ?? []) {
+          if (opts.sameSymbol(first, m)) join(at(first), at(m), `they both replace ${r.split("\u0000")[0]} with ${r.split("\u0000")[1]}`);
+        }
+        byRepl.set(r, [...(byRepl.get(r) ?? []), m]);
+      }
+    }
   }
 
   // A definition and the changes that use it: an undefined macro or environment is an error.
   for (const d of members) {
-    const { cmds, envs } = definitions(d);
-    for (const [names, env] of [[cmds, false], [envs, true]] as const) {
-      for (const name of names) {
+    const defs = definitions(d);
+    for (const kind of DEF_KINDS) {
+      for (const name of defs[kind]) {
         for (const u of members) {
-          if (u !== d && find(at(u)) !== find(at(d)) && uses(u, name, env)) {
-            join(at(d), at(u), `${d.id} defines ${env ? `the environment ${name}` : `\\${name}`}, which ${u.id} uses`);
+          if (u !== d && find(at(u)) !== find(at(d)) && uses(u, name, kind)) {
+            join(at(d), at(u), `${d.id} defines ${defName(name, kind)}, which ${u.id} uses`);
           }
         }
       }

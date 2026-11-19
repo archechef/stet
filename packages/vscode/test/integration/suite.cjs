@@ -54,16 +54,42 @@ exports.run = async function run() {
     const ed = await vscode.window.showTextDocument(doc);
     const lenses = await until("code lenses", async () => {
       const l = await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri);
-      return l && l.length >= 10 ? l : null;
+      return l && l.length >= 6 ? l : null;
     });
     const titles = lenses.map((l) => l.command && l.command.title);
-    check("code lenses for both items", titles.includes(`${fx.items[0]}: ✓ Accept`) && titles.includes(`${fx.items[1]}: ✓ Accept`), titles.join(" | "));
-    const first = lenses.find((l) => l.command.title === `${fx.items[0]}: ✓ Accept`);
+    check("code lenses for both items", titles.includes(`${fx.items[0]}: $(check) Accept`) && titles.includes(`${fx.items[1]}: $(check) Accept`), titles.join(" | "));
+    const first = lenses.find((l) => l.command.title === `${fx.items[0]}: $(check) Accept`);
     check("lens on the right line", first.range.start.line === 3, first.range.start.line);
+    // Above each change: Accept, Reject… and More… (every action, the same list as everywhere).
+    const onFirst = lenses.filter((l) => l.range.start.line === 3).map((l) => l.command.command);
+    check("lenses: Accept, Reject, More…", JSON.stringify(onFirst) === JSON.stringify(["stet.accept", "stet.reject", "stet.changeActions"]), JSON.stringify(onFirst));
+    // Ctrl+. in a change offers the same actions, in the same order.
+    const fixes = (await vscode.commands.executeCommand("vscode.executeCodeActionProvider", uri, new vscode.Range(3, 28, 3, 28))) || [];
+    const ours = fixes.map((f) => f.title).filter((t) => t.startsWith(`Stet ${fx.items[0]}:`));
+    check(
+      "Ctrl+. in a change lists its actions",
+      ours.length >= 6 && ours[0] === `Stet ${fx.items[0]}: Accept` && ours.includes(`Stet ${fx.items[0]}: Review file`),
+      JSON.stringify(ours),
+    );
 
     const hovers = await vscode.commands.executeCommand("vscode.executeHoverProvider", uri, new vscode.Position(3, 26));
     const hoverText = hovers.flatMap((h) => h.contents.map((c) => c.value || String(c))).join("\n");
-    check("hover shows the diff and actions", hoverText.includes("- problem") && hoverText.includes("+ task") && hoverText.includes("Accept"), hoverText.slice(0, 200));
+    check(
+      "hover shows the diff and every action",
+      hoverText.includes("- problem") && hoverText.includes("+ task") && ["$(check) Accept", "$(close) Reject…", "$(edit) Edit & accept…", "$(diff-multiple) Review file"].every((a) => hoverText.includes(`[${a}]`)),
+      hoverText.slice(0, 200),
+    );
+    // The hover answers to the word before and after a change too, and stays open across them.
+    const hoverAt = async (pos) => (await vscode.commands.executeCommand("vscode.executeHoverProvider", uri, pos)) || [];
+    const textOf = (hs) => hs.flatMap((h) => h.contents.map((c) => c.value || String(c))).join("\n");
+    const beside = await hoverAt(new vscode.Position(3, 23)); // "the" before "problem"
+    const besideRange = beside.find((h) => textOf([h]).includes("+ task"))?.range;
+    check(
+      "the hover shows next to a change, and covers the words around it",
+      !!besideRange && besideRange.start.character === 22 && besideRange.end.character === 36,
+      JSON.stringify(besideRange) + " " + textOf(beside).slice(0, 80),
+    );
+    check("no hover away from a change", !textOf(await hoverAt(new vscode.Position(3, 4))).includes("+ task"), textOf(await hoverAt(new vscode.Position(3, 4))).slice(0, 80));
 
     const after = vscode.Uri.from({ scheme: "stet-diff", path: "/main.tex", query: `p=${encodeURIComponent(fx.repo)}&id=${fx.items[1]}&side=after` });
     const diffDoc = await vscode.workspace.openTextDocument(after);
@@ -73,7 +99,7 @@ exports.run = async function run() {
     await ed.edit((e) => e.insert(new vscode.Position(0, 0), "% my note\n"));
     const moved = await until("moved lenses", async () => {
       const l = await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri);
-      const f = l && l.find((x) => x.command && x.command.title === `${fx.items[0]}: ✓ Accept`);
+      const f = l && l.find((x) => x.command && x.command.title === `${fx.items[0]}: $(check) Accept`);
       return f && f.range.start.line === 4 ? f : null;
     });
     check("lenses follow unsaved edits", moved);
@@ -156,6 +182,15 @@ exports.run = async function run() {
       return l.length ? l : null;
     }, 5000).catch(() => []);
     check("with word wrap, new text is an inlay hint", labels.includes("real use"), JSON.stringify(labels));
+    {
+      // Its tooltip is the change's full hover, made when it's hovered (resolved). VS Code's
+      // command doesn't resolve hints, so this asks the extension's provider directly.
+      const { editor } = ext.exports;
+      const hs = await editor.provideInlayHints(await vscode.workspace.openTextDocument(uri), new vscode.Range(0, 0, 50, 0));
+      const resolved = hs.map((h) => editor.resolveInlayHint(h));
+      const tip = resolved.map((h) => (typeof h.tooltip === "string" ? h.tooltip : h.tooltip && h.tooltip.value)).find(Boolean) || "";
+      check("the inline text's tooltip is the full hover, with actions", tip.includes("Accept") && tip.includes("Revise"), tip.slice(0, 120) || "(no tooltip)");
+    }
     const wraps = async () => {
       // cursorMove acts on the active editor, and an editor object goes stale when its editor is
       // replaced: take the one showTextDocument returns, every time.
@@ -204,12 +239,13 @@ exports.run = async function run() {
     // The colour button: green parameter hints in the user's settings, and back (keeping their own value).
     const workbench = () => vscode.workspace.getConfiguration("workbench").inspect("colorCustomizations").globalValue || {};
     await vscode.workspace.getConfiguration("workbench").update("colorCustomizations", { "editorInlayHint.parameterForeground": "#123456", "editor.background": "#fafafa" }, vscode.ConfigurationTarget.Global);
-    await vscode.commands.executeCommand("stet.highlightOn");
+    await vscode.commands.executeCommand("stet.toggleHighlight");
     const on = workbench();
-    await vscode.commands.executeCommand("stet.highlightOff");
+    await until("the highlight to register", async () => vscode.workspace.getConfiguration("workbench").get("colorCustomizations")["editorInlayHint.parameterForeground"] === "#2DA44E" || null, 3000).catch(() => null);
+    await vscode.commands.executeCommand("stet.toggleHighlight");
     const off = workbench();
     check(
-      "colour button turns proposed text green and back",
+      "the green-text option turns proposed text green and back",
       on["editorInlayHint.parameterForeground"] === "#2DA44E" && off["editorInlayHint.parameterForeground"] === "#123456" && !("editorInlayHint.parameterBackground" in off) && off["editor.background"] === "#fafafa",
       JSON.stringify({ on, off }),
     );
@@ -300,7 +336,7 @@ exports.run = async function run() {
       const t = await pdfHoverText();
       return /!\[PDF preview of /.test(t) ? t : null;
     }, 60000).catch(() => null);
-    check("the hover shows the PDF preview once it is built", !!pdfWithImage && /file:\/\/.*after\.png/.test(pdfWithImage), (await pdfHoverText()).slice(0, 300));
+    check("the hover shows the PDF preview once it is built", !!pdfWithImage && /file:\/\/.*after\.png\|width=520,height=\d+\)/.test(pdfWithImage), (await pdfHoverText()).slice(0, 300));
 
     // Review all changes in a file: an editable diff. Saving keeps changes pending with the
     // user's wording; ✓ Accept there accepts with it.
@@ -339,7 +375,7 @@ exports.run = async function run() {
     check("view options switch settings", flipped === !inlineBefore && stetConf().get("inlineChanges") === inlineBefore && long === "hover", JSON.stringify({ inline: inlineBefore, flipped, long }));
 
     const allCommands = await vscode.commands.getCommands(true);
-    const wanted = ["stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover", "stet.reviewFile", "stet.clearDraft"];
+    const wanted = ["stet.changeActions", "stet.acceptOnly", "stet.toggleHighlight", "stet.newTextStyle.wrapping", "stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover", "stet.reviewFile", "stet.clearDraft"];
     check("new commands are registered", wanted.every((c) => allCommands.includes(c)), JSON.stringify(wanted.filter((c) => !allCommands.includes(c))));
   } catch (e) {
     check("no exception", false, e && e.stack);

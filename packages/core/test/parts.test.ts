@@ -158,7 +158,7 @@ describe("parts in review", () => {
     ];
     // One section per part, each repeating the notation change: identical changes stay linked.
     write(wt, "main.tex", notation(read(wt, "main.tex")));
-    const r1 = await stet.submit("a", { title: "notation", groups: [{ kind: "linked", title: "Adversary in sans-serif", where: ["main.tex"], parts: sections }] });
+    const r1 = await stet.submit("a", { title: "notation", groups: [{ kind: "linked", reason: "test of linked groups", title: "Adversary in sans-serif", where: ["main.tex"], parts: sections }] });
     const g1 = r1.groups.find((x) => x.kind === "linked")!;
     expect(g1.items).toHaveLength(3);
     expect(g1.parts).toBeUndefined();
@@ -172,7 +172,7 @@ describe("parts in review", () => {
     t = t.replace("is efficient", "runs in polynomial time");
     t = t.replace("this is a contradiction", "we reach a contradiction");
     write(wt, "main.tex", t);
-    const r2 = await stet.submit("a", { title: "wording", groups: [{ kind: "linked", title: "Wording", where: ["main.tex"], parts: sections }] });
+    const r2 = await stet.submit("a", { title: "wording", groups: [{ kind: "linked", reason: "test of linked groups", title: "Wording", where: ["main.tex"], parts: sections }] });
     const g2 = r2.groups.find((x) => x.kind === "linked")!;
     expect(g2.parts?.map((p) => p.title)).toEqual(["Introduction", "Model", "Proofs"]);
     expect(r2.warnings).toEqual([]);
@@ -190,7 +190,7 @@ describe("parts in review", () => {
     const { group: g } = await stet.group("a", [x!, y!, z!], "linked", "Wording", undefined, [
       { title: "Intro", items: [x!] },
       { title: "Rest", items: [y!, z!] },
-    ]);
+    ], "test of linked groups");
     expect(g!.parts).toEqual([
       { title: "Intro", items: [x] },
       { title: "Rest", items: [y, z] },
@@ -223,7 +223,7 @@ describe("parts within one line (bug report 2026-11-19)", () => {
     edit(wt, "main.tex", "proposal", "suggestion");
     const r = await stet.submit("a", {
       title: "terms",
-      groups: [{ kind: "linked", title: "terms", where: ["main.tex:3"], parts: [{ title: "base", where: ['main.tex:3 "shared"'] }, { title: "proposal", where: ['main.tex:3 "suggestion"'] }] }],
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "terms", where: ["main.tex:3"], parts: [{ title: "base", where: ['main.tex:3 "shared"'] }, { title: "proposal", where: ['main.tex:3 "suggestion"'] }] }],
     });
     expect(r.warnings).toEqual([]);
     const g = r.groups.find((x) => x.kind === "linked")!;
@@ -240,7 +240,7 @@ describe("parts within one line (bug report 2026-11-19)", () => {
     edit(wt, "main.tex", "proposal", "suggestion");
     const r = await stet.submit("a", {
       title: "t",
-      groups: [{ kind: "linked", title: "t", where: ["main.tex:3"], parts: [{ title: "cut", where: ['main.tex:3 "own copy"'] }, { title: "word", where: ['main.tex:3 "nowhere"'] }] }],
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "t", where: ["main.tex:3"], parts: [{ title: "cut", where: ['main.tex:3 "own copy"'] }, { title: "word", where: ['main.tex:3 "nowhere"'] }] }],
     });
     expect(r.warnings).toContain(`'main.tex:3 "nowhere"' matched no change.`);
     const g = r.groups.find((x) => x.kind === "linked")!;

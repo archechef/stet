@@ -5,13 +5,17 @@
  */
 import { diffArrays } from "diff";
 import { isLive, moveFrom, moveTo, movesOut, type Item, type MoveInfo } from "./model.js";
-import { normalizeWs } from "./text.js";
+import type { Edit } from "./split.js";
+import { normalizeWs, wordSimilarity } from "./text.js";
 
 export interface MoveSettings {
   enabled: boolean;
   minWords: number;
-  maxChangedWords: number;
+  maxChangedWords: number | null;
 }
+
+/** A deletion and an insertion this alike (word similarity) are one passage moved and rewritten. */
+export const REWRITTEN_MIN = 0.5;
 
 export interface MovePair {
   /** The deleting items, in the order their blocks appear in the insertion. */
@@ -45,8 +49,8 @@ export function changedWords(a: string[], b: string[]): number {
   return n + Math.max(removed, added);
 }
 
-/** How many changed words a passage of `words` words may have and still count as a move. */
-export const allowedChanges = (words: number, max: number): number => Math.min(max, Math.floor(words / 20));
+/** How many changed words a passage of `words` words may have and still count as a move: one per 10, at least one. */
+export const allowedChanges = (words: number, max: number | null): number => Math.min(max ?? Infinity, Math.max(1, Math.floor(words / 10)));
 
 export interface MoveChange {
   /** Character range in the moved-in text (empty: words were dropped here). */
@@ -119,6 +123,9 @@ export function moveChanges(fromText: string, toText: string): MoveChange[] {
   flush();
   return out;
 }
+
+/** A single sectioning or environment line, such as `\section{Results}` or `\end{proof}`. */
+const isStructureLine = (t: string) => /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end)\*?\s*(?:\[[^\]]*\])?\{[^\n]*\}[^\n]*\s*$/.test(t) && !t.trim().includes("\n");
 
 const SENTENCE_END = /[.?!][)\]}'"’”$]*$/;
 
@@ -200,11 +207,19 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
   const cands: MovePair[] = [];
   for (const d of dels) {
     const dw = moveWords(d.oldText);
-    if (dw.length < s.minWords) continue;
+    // A heading or environment line moved as it is counts, however short: alone, its deletion
+    // or insertion would lose or duplicate it.
+    const line = isStructureLine(d.oldText);
+    if (dw.length < s.minWords && !line) continue;
     const allowed = allowedChanges(dw.length, s.maxChangedWords);
     for (const i of ins) {
       if (i.agent !== d.agent) continue;
       const iw = moveWords(i.newText);
+      if (dw.length < s.minWords && normalizeWs(d.oldText) !== normalizeWs(i.newText)) continue;
+      if (dw.length < s.minWords) {
+        cands.push({ from: [d], to: [i], changed: 0, title: `Move “${short(d.oldText)}” (${/\\(?:begin|end)\b/.test(d.oldText) ? "environment line" : "heading"}, unchanged)` });
+        continue;
+      }
       if (Math.abs(dw.length - iw.length) > allowed) continue;
       let changed = changedWords(dw, iw);
       // Two blocks that were next to each other at both ends, in swapped order, come out as one
@@ -218,8 +233,8 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       }
       const n = sentences(dw, abbr);
       const block = wholeBlock(d, d.oldText) ?? wholeBlock(i, i.newText);
-      if (n < 2 && !block) continue;
-      const what = block && block !== "paragraph" ? block : n >= 2 ? `${n} sentences` : "paragraph";
+      if (n < 1 && !block) continue;
+      const what = block && block !== "paragraph" ? block : n >= 2 ? `${n} sentences` : n === 1 && !block ? "sentence" : "paragraph";
       const title = blocks
         ? `Move ${blocks.length} passages ${blocks.map((b) => `“${short(b.join(" "))}”`).join(", ")} (reordered, ${n >= 2 ? `${n} sentences` : "paragraphs"}, ${howChanged(changed)})`
         : `Move “${short(d.oldText)}” (${what}, ${howChanged(changed)})`;
@@ -260,7 +275,7 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       const changed = changedWords(pieces.flatMap((p) => p.words), bw);
       if (changed > allowed) continue;
       const n = sentences(bw, abbr);
-      if (n < 2 && !pieces.every((p) => wholeBlock(p.item, smallText(p.item)))) continue;
+      if (n < 1 && !pieces.every((p) => wholeBlock(p.item, smallText(p.item)))) continue;
       for (const x of [big, ...pieces.map((p) => p.item)]) used.add(x.id);
       const blocks = pieces.map((p) => p.item);
       const names = blocks.map((b) => `“${short(smallText(b))}”`).join(", ");
@@ -272,7 +287,119 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       });
     }
   }
+  return mergeNeighbours(out, abbr);
+}
+
+/**
+ * Moves of neighbouring blocks are one move: paragraphs moved together (their deletions next to
+ * each other) or landing together (their insertions at one place). Each new paragraph is a
+ * change of its own, so a move of three paragraphs is first found as three.
+ */
+function mergeNeighbours(moves: MovePair[], abbr: Set<string>): MovePair[] {
+  const pos = (i: Item) => [i.file, i.range.start, i.range.end] as const;
+  const before = (a: Item, b: Item) => a.file.localeCompare(b.file) || a.range.start - b.range.start || compareIds(a.id, b.id);
+  const touching = (a: MovePair, b: MovePair) =>
+    a.from.some((x) => b.from.some((y) => x.file === y.file && (x.range.end === y.range.start || y.range.end === x.range.start))) ||
+    a.to.some((x) => b.to.some((y) => pos(x)[0] === pos(y)[0] && x.range.start === y.range.start));
+  const list = [...moves];
+  for (let merged = true; merged; ) {
+    merged = false;
+    for (let a = 0; a < list.length && !merged; a++) {
+      for (let b = a + 1; b < list.length && !merged; b++) {
+        if (!touching(list[a]!, list[b]!)) continue;
+        const [m1, m2] = [list[a]!, list[b]!];
+        const from = [...m1.from, ...m2.from];
+        const to = [...m1.to, ...m2.to].sort(before);
+        // `from` in the order the blocks land, `to` in the order they left.
+        const landing = (d: Item) => [m1, m2].find((m) => m.from.includes(d))!.to[0]!;
+        from.sort((x, y) => before(landing(x), landing(y)) || before(x, y));
+        const names = from.map((d) => `“${short(d.oldText)}”`).join(", ");
+        const changed = m1.changed + m2.changed;
+        const n = sentences(from.flatMap((d) => moveWords(d.oldText)), abbr);
+        const reordered = from.some((d, k) => k > 0 && before(from[k - 1]!, d) > 0);
+        list.splice(b, 1);
+        list[a] = { from, to, changed, title: `Move ${from.length} passages ${names} (${reordered ? "reordered, " : ""}${n >= 2 ? `${n} sentences` : "paragraphs"}, ${howChanged(changed)})` };
+        merged = true;
+      }
+    }
+  }
+  return list;
+}
+
+const compareIds = (a: string, b: string) => {
+  const p = (x: string) => x.split(".").map((k) => Number(k.replace(/\D/g, "")) || 0);
+  const [x, y] = [p(a), p(b)];
+  for (let k = 0; k < Math.max(x.length, y.length); k++) if ((x[k] ?? 0) !== (y[k] ?? 0)) return (x[k] ?? 0) - (y[k] ?? 0);
+  return 0;
+};
+
+/**
+ * Passages moved and rewritten too much to count as moves (§6.4.7): a deletion and an insertion
+ * of the same agent, a sentence or more of at least `minWords` words each, at least REWRITTEN_MIN
+ * alike. Accepting only one of them would lose or duplicate the passage, so they are linked.
+ */
+export function detectRewritten(items: Item[], s: MoveSettings, abbreviations: string[]): { from: Item; to: Item; title: string }[] {
+  if (!s.enabled) return [];
+  const abbr = new Set(abbreviations);
+  const mods = items.filter((i) => i.kind === "modify" && isLive(i.status) && !i.move);
+  const passage = (i: Item, text: string) => {
+    const w = moveWords(text);
+    return w.length >= s.minWords && (sentences(w, abbr) >= 1 || !!wholeBlock(i, text)) ? w : null;
+  };
+  const dels = mods.flatMap((i) => (i.oldText.trim() && !i.newText.trim() ? [{ i, w: passage(i, i.oldText) }] : [])).filter((x) => x.w);
+  const ins = mods.flatMap((i) => (i.newText.trim() && !i.oldText.trim() ? [{ i, w: passage(i, i.newText) }] : [])).filter((x) => x.w);
+  const cands: { from: Item; to: Item; sim: number }[] = [];
+  for (const d of dels) {
+    for (const n of ins) {
+      if (n.i.agent !== d.i.agent) continue;
+      const sim = wordSimilarity(d.w!, n.w!, REWRITTEN_MIN);
+      if (sim >= REWRITTEN_MIN) cands.push({ from: d.i, to: n.i, sim });
+    }
+  }
+  cands.sort((a, b) => b.sim - a.sim);
+  const used = new Set<string>();
+  const out: { from: Item; to: Item; title: string }[] = [];
+  for (const c of cands) {
+    if (used.has(c.from.id) || used.has(c.to.id)) continue;
+    used.add(c.from.id);
+    used.add(c.to.id);
+    out.push({ ...c, title: `Moved and rewritten “${short(c.from.oldText)}”` });
+  }
   return out;
+}
+
+/**
+ * Take apart unrelated replacements (`Edit.halves`) where a half may belong to a move: the
+ * paragraph replaced here was moved elsewhere, or the new one came from elsewhere. Their halves
+ * then meet their other ends in move detection; other replacements stay one change.
+ */
+export function separateMoved<T extends Edit>(cands: T[], others: { oldText: string; newText: string }[], s: MoveSettings): T[] {
+  if (!s.enabled || !cands.some((c) => c.halves)) return cands;
+  const w = (t: string) => moveWords(t);
+  const enough = (x: string[]) => x.length >= s.minWords;
+  // Whole deletions and insertions, from these changes and the agent's others.
+  const pureDel = (x: { oldText: string; newText: string }) => !!x.oldText.trim() && !x.newText.trim();
+  const pureIns = (x: { oldText: string; newText: string }) => !!x.newText.trim() && !x.oldText.trim();
+  const dels: { src: unknown; w: string[] }[] = [];
+  const ins: { src: unknown; w: string[] }[] = [];
+  for (const c of [...cands, ...others]) {
+    if (pureDel(c)) dels.push({ src: c, w: w(c.oldText) });
+    if (pureIns(c)) ins.push({ src: c, w: w(c.newText) });
+  }
+  for (const c of cands) {
+    if (!c.halves) continue;
+    dels.push({ src: c, w: w(c.halves[0].oldText) });
+    ins.push({ src: c, w: w(c.halves[1].newText) });
+  }
+  const matches = (x: string[], pool: { src: unknown; w: string[] }[], self: unknown) =>
+    enough(x) && pool.some((p) => p.src !== self && enough(p.w) && wordSimilarity(x, p.w, REWRITTEN_MIN) >= REWRITTEN_MIN);
+  return cands.flatMap((c) => {
+    if (!c.halves) return [c];
+    const [del, ins2] = c.halves;
+    if (!matches(w(del.oldText), ins, c) && !matches(w(ins2.newText), dels, c)) return [c];
+    const { halves: _, ...rest } = c;
+    return [{ ...rest, ...del }, { ...rest, ...ins2 }] as T[];
+  });
 }
 
 /** The whole moved-out and moved-in text of a move, blocks in order; null if an item is missing. */

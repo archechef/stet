@@ -31,7 +31,7 @@ Record the results, and any fixes, in spec §16. Then tick them off here.
 - [ ] The Stet panel shows "not set up" and a **Set up project** button.
 - [ ] Clicking it offers to create a repository ("not a git repository") and then commits the files ("Initial commit").
 - [ ] It reports the main branch and offers **New agent workspace**.
-- [ ] **Check setup (doctor)** (Stet panel → `…` menu) shows no errors in the *Stet* output panel, including a ✓ line for "stet command".
+- [ ] **Check setup** (Stet panel → `…` menu) shows no errors in the *Stet* output panel, including a ✓ line for "stet command".
 - [ ] `.git/stet/bin/stet.mjs` exists. VS Code hides `.git`, so check in the terminal (`` Ctrl+` ``): `dir .git\stet\bin`.
 - [ ] *(Test-only; users never need this: the default `auto` picks Node.js if installed, otherwise VS Code's runtime.)* Switch the runtime: Settings (`Ctrl+,`) → search `stet.runtime` → `vscode`. The status bar briefly shows "agents … now use VS Code's runtime". `type .git\stet\config.json` shows `"cli"` with `Code.exe` and `ELECTRON_RUN_AS_NODE`.
   - Leave it on `vscode` until A7 (the guard-hook check there needs it), then set it back to `auto`.

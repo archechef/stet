@@ -9,7 +9,7 @@ import type { GroupHint, NoteHint } from "./grouping.js";
 import { archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
 import { isNoteId, moveFrom, moveTo, partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
 import { describeNote } from "./notes.js";
-import { Stet, StetError } from "./service.js";
+import { Stet, StetError, type SubmitResult } from "./service.js";
 import { oneLine } from "./text.js";
 import { pathExists } from "./paths.js";
 import { InboxWriter } from "./inbox.js";
@@ -56,8 +56,9 @@ export const TOOLS: ToolDef[] = [
     name: "stet_submit",
     description:
       "Submit your current edits in this workspace for human review. Stet splits them into reviewable items. " +
-      "Group edits that must be accepted together as 'linked' (REQUIRED e.g. for label/ref renames, macro definition + uses, " +
-      "citation keys), edits that only read well together as 'atomic', and thematic batches as 'related'.",
+      "Group edits that break the document unless accepted together as 'linked' (a macro definition and its uses, a \\begin and " +
+      "its \\end, one symbol renamed across formulas; Stet checks this and makes other linked groups related), edits that only read " +
+      "well together as 'atomic' (one item), and thematic batches as 'related' (any size).",
     inputSchema: obj(
       {
         title: str("Short title of this batch of changes."),
@@ -70,6 +71,12 @@ export const TOOLS: ToolDef[] = [
               title: str("What the group does."),
               rationale: str("Optional explanation."),
               where: whereSchema,
+              reason: str(
+                "Linked groups only, rarely needed: why accepting only some of these changes would break the document. Stet links only " +
+                  "changes it sees depending on each other (a label or macro and its uses, the same symbol renamed, braces or environments " +
+                  "split across changes, moves, changes touching the same text); without a reason it makes other linked groups related. " +
+                  "The reviewer sees the reason.",
+              ),
               parts: {
                 type: "array",
                 description:
@@ -135,13 +142,16 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "stet_group",
-    description: "Group already-submitted items: 'linked' (accept all or none), 'atomic' (merge into one item, same paragraph), or 'related'.",
+    description:
+      "Group already-submitted items: 'linked' (all or none; only for edits that break the document without each other, which Stet " +
+      "checks, or with a 'reason'), 'atomic' (merge into one item, same paragraph), or 'related'.",
     inputSchema: obj(
       {
         itemIds: { type: "array", items: { type: "string" } },
         kind: { type: "string", enum: ["linked", "atomic", "related"] },
         title: str("What the group does."),
         rationale: str("Optional explanation."),
+        reason: str("Linked groups only: why accepting only some would break the document, if Stet can't see it (see stet_submit)."),
         parts: {
           type: "array",
           description: "Linked groups only: pieces that can each be accepted on their own (see stet_submit).",
@@ -173,6 +183,38 @@ export interface FeedbackStyle {
 }
 
 /** One line per feedback event, for agents (MCP) and the CLI alike. */
+/** What `stet_submit` tells the agent. */
+export function describeSubmit(r: SubmitResult): string {
+  const lines: string[] = [];
+  if (r.changeset) lines.push(`Submitted ${r.changeset.id} "${r.changeset.title}" with ${r.items.length} item(s):`, ...r.items.map((i) => "  " + itemLine(i)));
+  for (const g of r.groups) {
+    lines.push(`Group ${g.id} (${g.kind}${g.source === "auto" ? ", auto-detected" : ""}) "${g.title}": ${g.items.join(", ")}`);
+    for (const [k, p] of (g.parts ?? []).entries()) lines.push(`  part ${partId(g.id, k)} "${p.title}": ${p.items.join(", ")}`);
+  }
+  for (const m of r.moves) {
+    lines.push(
+      `Move: ${moveFrom(m).join(", ")} (removed) and ${moveTo(m).join(", ")} (inserted) move text; the reviewer decides them as one.` +
+        (m.changed ? ` ${m.changed} word(s) differ between the two places, and the reviewer is shown them: make sure that is intended.` : " Word for word."),
+    );
+  }
+  if (r.ungrouped.length > 1) lines.push(`Ungrouped: ${r.ungrouped.join(", ")}. If some of these must be accepted together, call stet_group.`);
+  if (r.superseded.length) lines.push(`Superseded (replaced by your new version): ${r.superseded.join(", ")}`);
+  if (r.withdrawn.length) lines.push(`Withdrawn (you removed the change): ${r.withdrawn.join(", ")}`);
+  if (r.repeats.length) lines.push(`Auto-rejected because they repeat rejected changes: ${r.repeats.join(", ")}`);
+  for (const w of r.warnings) lines.push(`Warning: ${w}`);
+  if (r.sync) {
+    lines.push("Your workspace was synced onto the latest document (the reviewer's decisions and edits).");
+    if (r.sync.stale.length) {
+      lines.push(
+        `Stale, because the reviewer changed that text meanwhile: ${r.sync.stale.map(itemLine).join("; ")}. ` +
+          "They are no longer in your workspace; everything else you submitted is. Read the current text, and propose them again if they are still needed.",
+      );
+    }
+    lines.push(...r.sync.notes.map((d) => describeNote(d)));
+  }
+  return lines.join("\n");
+}
+
 export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): string {
   const label = style.label ?? ((t: string) => t);
   const reply = style.reply ?? (() => "stet_reply");
@@ -379,27 +421,7 @@ export class StetMcpServer {
             ...(args.groups !== undefined ? { groups: groupHints(args.groups) } : {}),
             ...(args.notes !== undefined ? { notes: noteHints(args.notes) } : {}),
           });
-          const lines: string[] = [];
-          if (r.changeset) lines.push(`Submitted ${r.changeset.id} "${r.changeset.title}" with ${r.items.length} item(s):`, ...r.items.map((i) => "  " + itemLine(i)));
-          for (const g of r.groups) {
-            lines.push(`Group ${g.id} (${g.kind}${g.source === "auto" ? ", auto-detected" : ""}) "${g.title}": ${g.items.join(", ")}`);
-            for (const [k, p] of (g.parts ?? []).entries()) lines.push(`  part ${partId(g.id, k)} "${p.title}": ${p.items.join(", ")}`);
-          }
-          for (const m of r.moves) {
-            lines.push(
-              `Move: ${moveFrom(m).join(", ")} (removed) and ${moveTo(m).join(", ")} (inserted) move text; the reviewer decides them as one.` +
-                (m.changed ? ` ${m.changed} word(s) differ between the two places, and the reviewer is shown them: make sure that is intended.` : " Word for word."),
-            );
-          }
-          if (r.ungrouped.length > 1) lines.push(`Ungrouped: ${r.ungrouped.join(", ")}. If some of these must be accepted together, call stet_group.`);
-          if (r.superseded.length) lines.push(`Superseded (replaced by your new version): ${r.superseded.join(", ")}`);
-          if (r.withdrawn.length) lines.push(`Withdrawn (you removed the change): ${r.withdrawn.join(", ")}`);
-          if (r.repeats.length) lines.push(`Auto-rejected because they repeat rejected changes: ${r.repeats.join(", ")}`);
-          for (const w of r.warnings) lines.push(`Warning: ${w}`);
-          if (r.sync) {
-            lines.push(`Your workspace was synced onto the latest document${r.sync.stale.length ? `; stale: ${r.sync.stale.map((s) => s.id).join(", ")}` : ""}.`);
-            lines.push(...r.sync.notes.map((d) => describeNote(d)));
-          }
+          const lines = describeSubmit(r).split("\n");
           return text(lines.join("\n"), { changeset: r.changeset?.id ?? null, items: r.items.map((i) => ({ id: i.id, file: i.file, status: i.status, groups: i.groups })), groups: r.groups.map((g) => ({ id: g.id, kind: g.kind, items: g.items, ...(g.parts ? { parts: g.parts } : {}) })) });
         }
         case "stet_sync": {
@@ -483,7 +505,7 @@ export class StetMcpServer {
         }
         case "stet_group": {
           const parts = args.parts === undefined ? undefined : partHints(args.parts);
-          const r = await stet.group(agent, strings(args.itemIds ?? [], "itemIds"), groupKind(args.kind), String(args.title ?? ""), args.rationale ? String(args.rationale) : undefined, parts);
+          const r = await stet.group(agent, strings(args.itemIds ?? [], "itemIds"), groupKind(args.kind), String(args.title ?? ""), args.rationale ? String(args.rationale) : undefined, parts, typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : undefined);
           if (r.merged) return text(`Merged into ${itemLine(r.merged)}`);
           const g = r.group!;
           return text(
@@ -539,6 +561,7 @@ function groupHints(v: unknown): GroupHint[] {
       title: typeof g.title === "string" ? g.title : bad(`groups[${n}].title must be a string`),
       ...(g.rationale !== undefined ? { rationale: String(g.rationale) } : {}),
       where: strings(g.where, `groups[${n}].where`),
+      ...(typeof g.reason === "string" && g.reason.trim() ? { reason: g.reason.trim() } : {}),
       ...(g.parts !== undefined
         ? {
             parts: (Array.isArray(g.parts) ? g.parts : bad(`groups[${n}].parts must be a list`)).map((p: unknown, k: number) => {

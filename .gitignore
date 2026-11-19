@@ -5,3 +5,4 @@ coverage/
 *.vsix
 .codex-reports/
 packages/vscode/LICENSE
+packages/vscode/CHANGELOG.md

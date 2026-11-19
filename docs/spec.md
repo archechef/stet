@@ -226,7 +226,12 @@ Input: the tree diff `refs/stet/base..stet/<agent>` for the newly submitted comm
    - `%`-comments up to the end of the line (one token)
    - whitespace runs; a run with two or more newlines is a *paragraph break*
    - single punctuation characters
-3. **Token diff:** Myers diff over the tokens.
+3. **Token diff:** Myers diff over the tokens, with the common prefix and suffix anchored first.
+   - **Paragraphs paired by similarity:** changed regions only blank lines apart are diffed together. Where a region has several paragraphs on a side, old and new paragraphs are first paired in order by word similarity (shared words in order, at least 0.5; `PAIR_MIN`), and diffed pair by pair; what lies between pairs is diffed on its own, and edits don't cross a pair's edges. A paragraph split in two (or two merged) pairs with both. Before 2026-11-19, lines were paired by position: a paragraph inserted before one edited in place showed as "old → new paragraph" plus the edited one inserted again (bug report C42).
+   - **Unrelated replacements:** a change whose old and new text are less alike than that, and cover whole paragraphs, is widened to the whole paragraphs and keeps its two halves (a deletion and an insertion, each with a paragraph break). At submit, the halves replace it when one of them may belong to a move (§6.4.7: a pure deletion or insertion elsewhere at least 0.5 alike); otherwise it stays one replacement.
+   - **Structure lines:** for this pairing, a sectioning line or `\begin`/`\end` line is a paragraph of its own, so a heading isn't glued to the paragraph after it. A paragraph also pairs with one that holds at least 80% of it in order (most sentences deleted, or many added).
+   - **Several paragraphs replaced by unrelated text** (between pairs, or in a region without pairs) are one replacement, not a token diff that matches stray words.
+   - **Sliding:** an insertion or deletion that could sit a few tokens earlier or later goes where the whitespace around it matches exactly, then where it starts a sentence, after a space. A sentence moved inside its paragraph then comes out as whole sentences.
 4. **Merge** neighbouring edits when the gap between them has at most `mergeGap` non-whitespace tokens (default **2**) and contains no *boundary*. Boundaries are:
    - a paragraph break
    - a sentence end: `.`, `?` or `!` followed by whitespace, except after abbreviations on a configurable list (`e.g.`, `i.e.`, `et al.`, `Fig.`, `Eq.`, `Sec.`, `cf.`, `vs.`, …)
@@ -237,7 +242,8 @@ Input: the tree diff `refs/stet/base..stet/<agent>` for the newly submitted comm
    - **Math is atomic:** an edit touching inline math takes in the whole math span; an edit touching display math takes in the whole display block or environment.
    - **Key arguments are atomic:** an edit inside the argument of `\label`, the `\ref` and `\cite` families, `\input`/`\include`, `\includegraphics`, `\usepackage`, `\begin`/`\end` and similar takes in the whole command, e.g. `\label{sec:intro}` → `\label{sec:introduction}`.
    - Items that now overlap are merged.
-6. **Coarsen for rewrites:** if more than `rewriteRatio` (default **0.5**) of a paragraph's tokens changed, its edits become a single item. The ratio is (deleted + inserted tokens) / (old + new tokens), whitespace excluded.
+5a. **One change per paragraph:** a pure insertion or deletion of several paragraphs is cut into one change per paragraph, and per heading or environment (an environment the run opens stays whole, with its contents), each taking a paragraph break along, so each can be decided alone. A deletion right next to an insertion is one replacement, and a change of whitespace only goes with its neighbour.
+6. **Coarsen for rewrites:** if more than `rewriteRatio` (default **0.5**) of a paragraph's tokens changed, its edits become a single item. The ratio is (deleted + inserted tokens) / (old + new tokens), whitespace excluded. The same for a **sentence**: more than 0.4 of it changed, or four or more pieces in it, make it one item (bug report C31: its pieces rarely read right alone). Line breaks `\\`, `&`, `;` and the boundary commands of step 4 end a "sentence" too, so formulas, tables, pseudocode and TikZ stay fine-grained.
 7. **Reflow filter:** edits that only change whitespace and never add or remove a paragraph break are dropped by default (`ignoreReflow: true`). Agent instructions also ask agents not to reflow text.
 
 The defaults are tuned on real papers in M1. All thresholds live in `config.json`.
@@ -269,10 +275,10 @@ Typical `linked` cases: a `\label` rename plus its references, a new or renamed 
 3. **Automatic detection** (`source: "auto"`), always on:
    - **Repeated substitution:** 3 or more items (`autoRepeatMin`) in the changeset with the same normalized (`oldText`, `newText`) become a `related` group titled `Replace "X" → "Y" (n×)`.
    - **Label rename:** an item changing `\label{a}` → `\label{b}`, together with the items changing `a` → `b` inside `\ref`, `\eqref`, `\pageref`, `\autoref`, `\cref`, `\Cref`, `\nameref`, becomes a `linked` group. Each item is proposed as its own part (§6.4.6): a missing label is only a warning. Detection compares how often each key occurs in an item's old and new window, since the window's context is the original text and may contain an unchanged reference nearby.
-   - **Macro definition and use:** an item that adds or renames a definition (`\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, `\def`, `\newenvironment`), together with items in the same changeset that introduce uses of it, becomes a `linked` group.
+   - **Definitions and uses** (`macro`): an item that adds, removes or renames a definition, together with the items that start using the new name or stop using the old one, becomes a `linked` group (*Rename macro \est → \estim*, *Define \R and use it*): a use without its definition is an error, not a warning. Definitions are commands (`\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, xparse forms, `\def`, `\let`, …), environments (`\newenvironment`, `\newtheorem`, …) and TikZ styles (`name/.style=`, `\tikzstyle`; used in option lists). Until 2026-11-19 this was described here but not implemented.
    - **Citation key:** a changed or added `.bib` key, together with items changing that key inside `\cite`-family commands, becomes a `linked` group, again with one proposed part per item.
 
-   An auto group with exactly the same members and kind as an agent group is dropped as a duplicate. The agent can remove auto groups with `stet_ungroup`, and the user can remove them from the UI.
+   An auto group with exactly the same members and kind as an agent group is dropped as a duplicate, and so is an automatic related group whose changes are all in one linked group. The agent can remove auto groups with `stet_ungroup`, and the user can remove them from the UI.
 
 #### 6.4.3 Hint syntax (`where`)
 Agents point at code by location in **their own worktree after their edits**. They know those line numbers reliably, whereas text snippets can be ambiguous.
@@ -294,6 +300,11 @@ An item matches when its new-side range overlaps a `where` range. For a pure del
 - An item belongs to at most one atomic merge. An atomic group disappears once its merged item exists; the item keeps the group's title and rationale as `note`.
 
 #### 6.4.5 Linked-group semantics
+**When a group is linked.** All-or-nothing is tiring to review, so `linked` is kept for changes where accepting only some would break the document or lose text. Stet links what it detects itself: moves and passages moved and rewritten (§6.4.7), label and citation-key renames (with a part per change, §6.4.6). An agent's linked group (2026-11-19) is checked: Stet finds the sets of changes that need each other by the joining rules of §6.4.6, starting from single changes, plus **the same symbol or term replaced** (`$n$` → `$m$`, `\alpha` → `\beta`, a word of four letters or more; short words only in math; never the keys of a rename). Identical changes and the same symbol count only within one of the agent's parts, so a notation change it split by section stays split.
+- If all changes form one set, the group stays linked.
+- Otherwise, in `stet_submit`, the group becomes `related` (title and rationale kept, so *Accept all* still works), each set of two or more changes becomes a linked group of its own (titled after the agent's part, if it lies in one), and the submit result tells the agent, with the way out. `stet_group` refuses such a linked group instead, naming the sets.
+- The way out: a `reason` on the hint (`stet_group`: `reason`; CLI: `--reason`), one sentence on why accepting only some breaks the document. The group then stays linked as given, and its rationale starts with "Linked because: …" for the reviewer.
+
 - **Accept:**
   - Accepting any member offers "accept all *n* linked items".
   - *Accept all* is all-or-nothing: every member is anchored first (§8), and if any member fails, nothing is applied and the UI shows which member failed.
@@ -330,8 +341,11 @@ The two halves of a move (§6.4.7) always end up in one part.
 #### 6.4.7 Moves
 Moving a passage gives a deletion in one place and an insertion in another. Reviewed as two unrelated changes, that is hard to read, and the reviewer can't easily tell whether the text changed on the way. At submit, Stet pairs them as a **move** (`moves.ts`, `detectMoves`):
 - **Same agent:** a pure deletion and a pure insertion among the agent's pending items, in the same file or another one, of this round or earlier ones. Until 2026-11-13 only items of one submission were paired; but a later submit re-splits pending items (§6.3), which can leave the two sides of a move in different rounds.
-- **Long enough:** at least `grouping.moves.minWords` words (15), and two sentences or more (sentence ends as in §6.2, abbreviations excluded) or a whole paragraph (blank lines, or a structure line such as `\section` or `\begin`, on both sides) or environment (`\begin{X}` … `\end{X}`). A handful of moved words stays a deletion and an insertion.
-- **Word for word:** words are compared with spacing and line breaks ignored. Up to `maxChangedWords` (3) changed words, and at most one per 20 words, still make a move, with `changed` set; anything more is not a move. For each differing stretch, the longer side counts.
+- **Long enough:** at least `grouping.moves.minWords` words (7), and a sentence or more (sentence ends as in §6.2, abbreviations excluded) or a whole paragraph (blank lines, or a structure line such as `\section` or `\begin`, on both sides) or environment (`\begin{X}` … `\end{X}`). A handful of moved words stays a deletion and an insertion. (Until 2026-11-19: 15 words and two sentences.)
+- **Nearly word for word:** words are compared with spacing and line breaks ignored. One changed word per 10 words, at least one, still makes a move, with `changed` set; `maxChangedWords`, if set, caps that (default: no cap; until 2026-11-19 one per 20 words, at most 3). For each differing stretch, the longer side counts.
+- **Headings and environment lines** moved as they are count as moves however short: alone, the deletion or insertion would lose or duplicate them.
+- **Neighbouring blocks:** moves whose deletions are next to each other, or whose insertions are at one place, are one move (each paragraph is a change of its own, §6.2 step 5a).
+- **Moved and rewritten:** a deletion and an insertion that miss that but are at least 0.5 alike (word similarity, each a sentence or more of at least `minWords` words) are not a move, but are linked, as *Moved and rewritten "…"* (`detectRewritten`): accepting only one would lose or duplicate the passage.
 - Exact moves are paired first; each item is in at most one move. `grouping.moves.enabled: false` turns detection off.
 - **Several blocks** (bug report 2026-11-13): blocks moved from different places that land next to each other form one insertion, and blocks next to each other that go to different places one deletion. Stet finds the deletions (insertions) of at least 5 words each that occur, in one stretch each, inside one insertion (deletion), and makes them one move if together they cover it, with the thresholds above applied to the whole.
 - **Reordered blocks:** a deletion and an insertion that hold the same paragraphs (split at blank lines) in another order are one move too. This happens when two blocks that were next to each other move together and swap places, or when a block moves next to another one's pending move: re-splitting joins both deletions and both insertions. Each paragraph of the insertion is compared with the closest one of the deletion; the changed words of all pairs count against the thresholds, and the display compares paragraph with paragraph.
@@ -598,7 +612,7 @@ reaches the real document until a human accepts it.
   "grouping": {
     "autoRepeatMin": 3,
     "autoDetect": ["repeat", "label", "macro", "cite"],
-    "moves": { "enabled": true, "minWords": 15, "maxChangedWords": 3 },
+    "moves": { "enabled": true, "minWords": 7, "maxChangedWords": null },
     "refCommands": ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref"],
     "citeCommands": ["cite", "citep", "citet", "parencite", "textcite", "autocite"]
   },
@@ -801,6 +815,27 @@ A review pass for security, efficiency and duplication before publishing the ext
 - **Fix found on the way:** label-rename detection missed references whose window (original-text context) contained another, unchanged reference to the old key nearby; it now compares key counts between the old and new window.
 - **Not covered:** the compile condition is checked by rules, not by compiling. A part relying on something only another part's changed line provides in a way the rules don't see (say, a counter or a `\makeatletter` block) is not detected.
 - Tests: `parts.test.ts` (rules, label rename review with `group_partial`, agent parts per section with and without a repeated change, `stet_group` parts), `workflow.test.ts` (auto label group parts; agent-linked groups without parts still all-or-nothing), extension `model.test.ts` (part nodes, `linkedRest` per part).
+
+### Splitting and linking, from scenarios (2026-11-19)
+- **Why:** bug reports C42, C38, C31 and C36: a paragraph inserted next to one edited in place showed as "old → new paragraph" plus a re-insertion (lines paired by position), which hid moves and made partial accepts drop or duplicate text; a heavily rewritten sentence came as seven fragments; a sync during submit then left a paragraph twice in the agent's workspace (the re-insertion was replayed while the replacement went stale). The reviewer also found agents' linked groups too large: all-or-nothing for changes that merely belong together.
+- **Where:** `split.ts` (`alignTokens`, `pairBlocks`, `slide`, sentence coarsening, `unrelated` with `Edit.halves`), `moves.ts` (`allowedChanges`, single sentences, `detectRewritten`, `separateMoved`), `parts.ts` (`replacements`, rules restricted to the agent's parts on request), `Stet.dependencies` and the linked check in `itemize` and `group`, `describeSubmit` (what a stale change means for the workspace), the guard (`isStetReadOnly`: help; `onlyReads`: chains of reading commands, output thrown away).
+- **Decided with the user:** an unrelated paragraph replacing another is one change; one changed word per 10 (at least one, no cap) still makes a move; a passage moved and rewritten beyond that is linked; a sentence of 7 words or more counts as a move; an agent's linked group without a dependency Stet sees is made related and the agent told, unless it gives a reason.
+- Tests: `scenarios.test.ts` (one scenario per kind of edit, each with the most natural outcome, accepting subsets alone, the C36 sync), plus updated `moves.test.ts` and guard checks in `inbox.test.ts`.
+- **Real-world revisions** (`realworld.test.ts`): five submissions with many kinds of change at once: polishing a paper with its bibliography; restructuring with every kind of move and the agent's own groups; moving a proof into an appendix file; a section full of math (align, cases, labelled equations, a new macro); a TikZ figure. Besides what each change should be, they check that accepting everything gives the agent's text, and that accepting any one decision unit alone, or all but it, gives a well-formed document: no paragraph twice; environments, braces, `$` and `\left`/`\right` balanced; no defined macro missing. They found:
+  - headings glued to the next paragraph in pairing;
+  - several paragraphs replaced by unrelated text, token-diffed into fragments;
+  - a paragraph with most sentences deleted not counted as the same paragraph;
+  - runs of new paragraphs as one change (decided with the user: one per paragraph);
+  - macro, environment and TikZ-style renames not linked (described in §6.4.2, never implemented);
+  - a TikZ picture coarsened into one change;
+  - a whitespace-only change split off a new line.
+
+### One set of actions on a change (2026-11-19)
+- **Why:** the same action had different names in different places ("Edit" / "Edit and accept…", "Revise" / "Request revision…", "PDF" / "Preview in PDF"), each place showed a different subset, and *Accept* on a linked change accepted the group from the CodeLens but asked from the hover. Settings were split between View options and a separate title-bar button.
+- **Where:** `actions.ts` (`changeActions`, `acceptAction`): one list of actions per change, with name, codicon, panel key and order (decide, talk, view, other). The hover, the CodeLens (Accept, Reject…, More…), *More…* (`stet.changeActions`, a quick pick) and a Quick Fix provider (Ctrl+.) all use it; the panel's context menu and keys follow the same names and order in `package.json`. Accept is scoped the same way everywhere (the move, linked group or part); the panel's button and `a`, which can't show the scope, ask; `stet.acceptOnly` breaks the group on purpose.
+- **Panel title:** only state-driven actions (Share my edits, Finish review) and View options; the rest is in the `…` menu. The green-text switch and `stet.newTextStyle` moved into View options.
+- **Agents:** one inline icon (notifications, showing their state); *Notify now* is a button in that checklist and in the context menu.
+- Tests: integration suite (CodeLens set, Ctrl+. list, hover links, highlight toggle, new commands).
 
 ### Rounds and history (2026-10-21)
 - **Ids:** with hundreds of changes the global numbering (S412) got long and the panel crowded. A round is one submission (changeset `C12` → round 12); new items are `<round>.<n>` (`12.3`), numbered at submit; a merged (atomic) item gets the next free number of its round. Old `S` ids stay valid; `compareItemIds` sorts both (old first). Ids stay plain strings for the store, CLI and MCP (`SAFE_ID` already allows dots; the CLI and MCP tell groups and rounds apart by their `G`/`C` prefix).

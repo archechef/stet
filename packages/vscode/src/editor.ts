@@ -1,7 +1,8 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
-import { moveChanges, moveOthers, movesOut, moveTexts, partId, partIndexOf, type Item } from "@stet/core";
+import { moveChanges, movesOut, moveTexts, partIndexOf, type Item } from "@stet/core";
 import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
+import { acceptAction, changeActions, withIcon } from "./actions.js";
 import type { Project } from "./project.js";
 
 export interface Located {
@@ -17,29 +18,31 @@ export interface Host {
   previewHover?(p: Project, item: Item): string | undefined;
 }
 
-/** Where pending items sit in open documents (cached per document version). */
+/**
+ * Where pending items sit in open documents. Cached per document version and per state of the
+ * file's changes: a refresh of the project that leaves them as they were (a note, another file,
+ * the watcher) keeps the cache, so the next hover needn't wait for the changes to be located again.
+ */
 export class Locator {
-  private cache = new Map<string, { version: number; gen: number; located: Promise<Located[]> }>();
-  private gen = 0;
+  private cache = new Map<string, { version: number; sig: string; located: Promise<Located[]> }>();
 
-  constructor(private host: Host) {
-    host.onDidChange(() => this.gen++);
-  }
+  constructor(private host: Host) {}
 
   locate(doc: vscode.TextDocument): Promise<Located[]> {
     const key = doc.uri.toString();
+    const p = this.host.projectFor(doc.uri);
+    const rel = p?.relPath(doc.uri);
+    // Locating a change depends on it and on the changes accepted before it in the same file.
+    const inFile = p && rel ? p.snapshot.items.filter((i) => i.kind === "modify" && i.file === rel) : [];
+    const sig = JSON.stringify(inFile);
     const hit = this.cache.get(key);
-    if (hit && hit.version === doc.version && hit.gen === this.gen) return hit.located;
-    const located = this.compute(doc);
-    this.cache.set(key, { version: doc.version, gen: this.gen, located });
+    if (hit && hit.version === doc.version && hit.sig === sig) return hit.located;
+    const located = p ? this.compute(doc, p, inFile.filter(isLive)) : Promise.resolve([]);
+    this.cache.set(key, { version: doc.version, sig, located });
     return located;
   }
 
-  private async compute(doc: vscode.TextDocument): Promise<Located[]> {
-    const p = this.host.projectFor(doc.uri);
-    const rel = p?.relPath(doc.uri);
-    if (!p || !rel) return [];
-    const items = p.snapshot.items.filter((i) => isLive(i) && i.kind === "modify" && i.file === rel);
+  private async compute(doc: vscode.TextDocument, p: Project, items: Item[]): Promise<Located[]> {
     if (!items.length) return [];
     const lf = toLf(doc.getText());
     const idx = new LineIndex(lf);
@@ -134,7 +137,26 @@ function marks(doc: vscode.TextDocument, shownItem: Item, range: vscode.Range): 
 
 const cmd = (command: string, args: unknown[]) => `command:${command}?${encodeURIComponent(JSON.stringify(args))}`;
 
-export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.InlayHintsProvider, vscode.Disposable {
+/**
+ * The area a change's hover answers to: the change plus the word before and after it (up to 30
+ * characters each), so a short change, or an insertion that takes no room, is easy to hit.
+ */
+export function hoverArea(doc: vscode.TextDocument, range: vscode.Range): vscode.Range {
+  const before = /\S{0,30}\s*$/.exec(doc.lineAt(range.start.line).text.slice(0, range.start.character))![0];
+  const after = /^\s*\S{0,30}/.exec(doc.lineAt(range.end.line).text.slice(range.end.character))![0];
+  return new vscode.Range(range.start.line, range.start.character - before.length, range.end.line, range.end.character + after.length);
+}
+
+/** How far `pos` is from `range`, in characters on its line (lines away count as far). */
+function distance(range: vscode.Range, pos: vscode.Position): number {
+  if (range.contains(pos)) return 0;
+  const edge = pos.isBefore(range.start) ? range.start : range.end;
+  return edge.line === pos.line ? Math.abs(edge.character - pos.character) : 1e6 * Math.abs(edge.line - pos.line);
+}
+
+const previewsOn = () => vscode.workspace.getConfiguration("stet").get<string>("pdfPreviews", "both") !== "off";
+
+export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.InlayHintsProvider, vscode.CodeActionProvider, vscode.Disposable {
   private readonly removed = vscode.window.createTextEditorDecorationType({
     textDecoration: "line-through",
     color: new vscode.ThemeColor("stet.removedText.foreground"),
@@ -163,6 +185,8 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   readonly onDidChangeInlayHints = this.hintsChanged.event;
   private disposables: vscode.Disposable[] = [];
   private timer: NodeJS.Timeout | undefined;
+  /** Which change each inline hint shows, for its tooltip (see resolveInlayHint). */
+  private hintItems = new WeakMap<vscode.InlayHint, { uri: vscode.Uri; item: Item }>();
 
   constructor(
     private host: Host,
@@ -174,6 +198,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       vscode.languages.registerHoverProvider(selector, this),
       // New text as inlay hints: unlike decoration text, they take part in word wrap.
       vscode.languages.registerInlayHintsProvider(selector, this),
+      vscode.languages.registerCodeActionsProvider(selector, this, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }),
       host.onDidChange(() => this.update()),
       vscode.window.onDidChangeVisibleTextEditors(() => this.update()),
       vscode.workspace.onDidChangeTextDocument((e) => {
@@ -240,12 +265,12 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const hints: vscode.InlayHint[] = [];
     for (const { item, range: span } of await this.locator.locate(doc)) {
       if (!item.newText || item.move || !range.intersection(span)) continue;
-      const tip = new vscode.MarkdownString(`**${item.id}** proposes:\n\n${fence(item.newText, "latex")}`);
       for (const ins of marks(doc, item, span).inserted) {
         if (!range.contains(ins.at)) continue;
         // Kind "parameter": its colour can be set apart from other hints (Stet: Highlight proposed text).
         const hint = new vscode.InlayHint(ins.at, ghostText(ins.text, max), vscode.InlayHintKind.Parameter);
-        hint.tooltip = tip;
+        // The tooltip is the change's full hover (actions, PDF preview), made when it's hovered.
+        this.hintItems.set(hint, { uri: doc.uri, item });
         hints.push(hint);
       }
     }
@@ -261,67 +286,72 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const ref = (id: string): Ref => ({ path: p.mainPath, id });
     for (const { item, range } of await this.locator.locate(doc)) {
       const at = new vscode.Range(range.start, range.start);
-      const linked = model.linkedGroup(item);
-      const part = model.partOf(item);
-      const rest = model.linkedRest([item.id]);
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
-      // Linked changes are accepted together: the whole group, or the item's part of it.
-      const unit = part ? partId(part.group.id, part.index) : linked?.id;
-      if (item.move && rest.every((r) => moveOthers(item).includes(r.id))) {
-        // A move on its own: one decision for all of it (the commands take the rest along).
-        const other = model.others(item).find((o) => movesOut(o) !== movesOut(item));
-        lenses.push(
-          new vscode.CodeLens(at, { title: `${item.id}${tag}: ✓ Accept move`, command: "stet.accept", arguments: [ref(item.id)] }),
-          new vscode.CodeLens(at, { title: "✗ Reject move", command: "stet.reject", arguments: [ref(item.id)] }),
-          new vscode.CodeLens(at, { title: "↻ Revise", command: "stet.revise", arguments: [ref(item.id)] }),
-          new vscode.CodeLens(at, { title: "💬 Comment", command: "stet.comment", arguments: [ref(item.id)] }),
-          ...(other ? [new vscode.CodeLens(at, { title: movesOut(item) ? "↓ Go to destination" : "↑ Go to source", command: "stet.showItem", arguments: [ref(other.id)] })] : []),
-        );
-        continue;
-      }
-      const accept = !rest.length
-        ? `${item.id}${tag}: ✓ Accept`
-        : part
-          ? `${item.id}${tag}: ✓ Accept part ${part.index + 1} of ${part.group.parts!.length} (${rest.length + 1} changes)`
-          : `${item.id}${tag}: ✓ Accept all ${rest.length + 1} linked`;
+      // The two decisions everyone needs, and More… for the rest (the same list as everywhere).
+      const accept = acceptAction(model, p.mainPath, item);
       lenses.push(
-        new vscode.CodeLens(at, {
-          title: accept,
-          command: rest.length && unit ? "stet.acceptGroup" : "stet.accept",
-          arguments: [ref(rest.length && unit ? unit : item.id)],
-        }),
-        new vscode.CodeLens(at, { title: "✗ Reject", command: "stet.reject", arguments: [ref(item.id)] }),
-        new vscode.CodeLens(at, { title: "✎ Edit", command: "stet.edit", arguments: [ref(item.id)] }),
-        new vscode.CodeLens(at, { title: "↻ Revise", command: "stet.revise", arguments: [ref(item.id)] }),
-        new vscode.CodeLens(at, { title: "💬 Comment", command: "stet.comment", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: `${item.id}${tag}: ${withIcon(accept)}`, tooltip: accept.detail, command: accept.command, arguments: accept.args }),
+        new vscode.CodeLens(at, { title: withIcon({ icon: "close", label: item.move ? "Reject move…" : "Reject…" }), command: "stet.reject", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: withIcon({ icon: "ellipsis", label: "More…" }), tooltip: "Every action on this change (also Ctrl+. in the change)", command: "stet.changeActions", arguments: [ref(item.id)] }),
       );
     }
     return lenses;
   }
 
+  resolveInlayHint(hint: vscode.InlayHint): vscode.InlayHint {
+    const of = this.hintItems.get(hint);
+    const p = of && this.host.projectFor(of.uri);
+    if (of && p) hint.tooltip = this.hoverMarkdown(p, of.item);
+    return hint;
+  }
+
   async provideHover(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.Hover | undefined> {
     const p = this.host.projectFor(doc.uri);
     if (!p) return undefined;
-    const hits = (await this.locator.locate(doc)).filter(({ range }) => range.contains(pos) || range.end.isEqual(pos));
+    const located = await this.locator.locate(doc);
+    // Over a change itself: that change (several, if they meet there). Next to one: the nearest.
+    const on = located.filter(({ range }) => range.contains(pos) || range.end.isEqual(pos));
+    const near = located
+      .map((l) => ({ ...l, area: hoverArea(doc, l.range) }))
+      .filter(({ area }) => area.contains(pos))
+      .sort((x, y) => distance(x.range, pos) - distance(y.range, pos));
+    const hits = on.length ? on : near.slice(0, 1);
     if (!hits.length) return undefined;
+    // The hover stays open while the mouse is anywhere in this area, not just over the changed text.
+    const area = hits.map((h) => hoverArea(doc, h.range)).reduce((a, b) => a.union(b));
+    return new vscode.Hover(hits.map(({ item }) => this.hoverMarkdown(p, item)), area);
+  }
+
+  /** A change's hover: what it is, its PDF preview, and its actions. */
+  private hoverMarkdown(p: Project, item: Item): vscode.MarkdownString {
     const model = this.host.model(p);
-    const ref = (id: string): Ref => ({ path: p.mainPath, id });
-    const parts = hits.map(({ item }) => {
-      const md = new vscode.MarkdownString(undefined, true);
-      md.isTrusted = { enabledCommands: ["stet.accept", "stet.acceptGroup", "stet.reject", "stet.edit", "stet.revise", "stet.comment", "stet.showDiff", "stet.preview", "stet.reviewFile", "stet.clearDraft"] };
-      md.supportHtml = false;
-      md.appendMarkdown(itemMarkdown(item, model));
-      const pdf = this.host.previewHover?.(p, item);
-      if (pdf) md.appendMarkdown(`\n\n${pdf}`);
-      md.appendMarkdown(
-        `\n\n[✓ Accept](${cmd("stet.accept", [ref(item.id)])}) · [✗ Reject](${cmd("stet.reject", [ref(item.id)])}) · ` +
-          `[✎ Edit](${cmd("stet.edit", [ref(item.id)])}) · [↻ Revise](${cmd("stet.revise", [ref(item.id)])}) · ` +
-          `[💬 Comment](${cmd("stet.comment", [ref(item.id)])}) · [Diff](${cmd("stet.showDiff", [ref(item.id)])}) · [All changes](${cmd("stet.reviewFile", [ref(item.id)])}) · [PDF](${cmd("stet.preview", [ref(item.id)])})` +
-            (item.draft !== undefined ? ` · [↺ Agent's wording](${cmd("stet.clearDraft", [ref(item.id)])})` : ""),
-      );
-      return md;
-    });
-    return new vscode.Hover(parts, hits[0]!.range);
+    const actions = changeActions(model, p.mainPath, item, { previews: previewsOn() });
+    const md = new vscode.MarkdownString(undefined, true);
+    md.isTrusted = { enabledCommands: [...new Set(actions.map((a) => a.command))] };
+    md.supportHtml = false;
+    md.appendMarkdown(itemMarkdown(item, model));
+    const pdf = this.host.previewHover?.(p, item);
+    if (pdf) md.appendMarkdown(`\n\n${pdf}`);
+    md.appendMarkdown(`\n\n${actions.map((a) => `[${withIcon(a)}](${cmd(a.command, a.args)}${a.detail ? ` "${a.detail.replace(/"/g, "'")}"` : ""})`).join(" · ")}`);
+    return md;
+  }
+
+  /** Ctrl+. (Quick Fix) in a change: its actions, as everywhere else. */
+  async provideCodeActions(doc: vscode.TextDocument, range: vscode.Range | vscode.Selection): Promise<vscode.CodeAction[]> {
+    const p = this.host.projectFor(doc.uri);
+    if (!p) return [];
+    const pos = range.start;
+    const located = await this.locator.locate(doc);
+    const on = located.filter((l) => l.range.contains(pos) || l.range.end.isEqual(pos));
+    const hits = on.length ? on : located.filter((l) => hoverArea(doc, l.range).contains(pos)).slice(0, 1);
+    const model = this.host.model(p);
+    return hits.flatMap(({ item }) =>
+      changeActions(model, p.mainPath, item, { previews: previewsOn() }).map((a) => {
+        const ca = new vscode.CodeAction(`Stet ${item.id}: ${a.label}`, vscode.CodeActionKind.QuickFix);
+        ca.command = { title: a.label, command: a.command, arguments: a.args };
+        return ca;
+      }),
+    );
   }
 
   dispose(): void {

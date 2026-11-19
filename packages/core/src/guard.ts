@@ -75,7 +75,7 @@ const GIT_REMOTE_WRITE = new RegExp(GIT_OPTS + String.raw`remote\s+(add|set-url|
 const GIT_DIR_OVERRIDE =
   /\bgit\b[^;&|]*\s(--git-dir|--work-tree)\b|\bGIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|CONFIG\w*)=|core\.hooksPath|\balias\.|STET_INTERNAL/i;
 const READ_ONLY_START = /^\s*(cat|less|more|head|tail|ls|dir|grep|rg|find|wc|type|file|stat|Get-Content|Get-ChildItem|Select-String|diff|cmp)\b/i;
-const WRITE_HINT = /(^|[^<>])>{1,2}(?!&)|\|\s*tee\b|\b(rm|mv|cp|touch|mkdir|rmdir|sed\s+-i|perl\s+-i|truncate|dd|ln|chmod|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b/i;
+const WRITE_HINT = /(^|[^<>])>{1,2}(?!&)|\|\s*tee\b|\b(rm|mv|cp|touch|mkdir|rmdir|sed\s+-i|perl\s+-i|truncate|dd|ln|chmod|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b|\s-(?:delete|exec|execdir|ok|fprint\w*|fls)\b/i;
 
 /**
  * Files in the worktree that belong to Stet: its settings and instructions, the `.claude` and
@@ -93,12 +93,23 @@ function isOwnFile(rel: string): boolean {
 
 const unquote = (t: string) => t.replace(/^["']|["']$/g, "");
 
+/** Output thrown away or merged into another stream: not a write (`2>/dev/null`, `2>&1`, `>$null`). */
+const discardRedirects = (cmd: string) => cmd.replace(/(?:\d|&)?>{1,2}\s*(?:\/dev\/null|\$null|nul)(?![\w/.])/gi, " ").replace(/\d?>&\d/g, " ");
+
+/** Every command of a chain (`a && b | c; d`) only reads: a reading command, or `cd`. */
+function onlyReads(cmd: string): boolean {
+  const c = discardRedirects(cmd);
+  if (WRITE_HINT.test(c) || /[`$]\(|`/.test(c)) return false;
+  return c.split(/&&|\|\||;|\|/).every((part) => !part.trim() || READ_ONLY_START.test(part) || /^\s*cd\b/.test(part));
+}
+
 /**
- * Whether `cmd` is exactly the workspace's Stet CLI running `watch` (only reads the inbox): its
- * environment, runtime and script, then `watch` and its flags. Nothing else may follow, so it
- * cannot carry another command into the project folder.
+ * Whether `cmd` is exactly the workspace's Stet CLI running a command that only reads: `watch`
+ * (the inbox) or help (`help`, `--help`, `<command> --help`). Its environment, runtime and
+ * script, then the command and its flags; nothing else may follow, so it cannot carry another
+ * command into the project folder.
  */
-function isStetWatch(cmd: string, cli: CliCommand | undefined, cwd: string): boolean {
+function isStetReadOnly(cmd: string, cli: CliCommand | undefined, cwd: string): boolean {
   if (!cli || /[;&|<>`$()\r\n]/.test(cmd)) return false;
   const tokens = (cmd.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map(unquote);
   let i = 0;
@@ -115,7 +126,10 @@ function isStetWatch(cmd: string, cli: CliCommand | undefined, cwd: string): boo
       return false;
     }
   }
-  return tokens[i] === "watch" && tokens.slice(i + 1).every((t) => t === "--once" || t === "--json");
+  const rest = tokens.slice(i);
+  if (rest[0] === "watch") return rest.slice(1).every((t) => t === "--once" || t === "--json");
+  if (rest.length === 1 && ["help", "--help", "-h"].includes(rest[0]!)) return true;
+  return rest.length === 2 && /^[a-z][a-z-]*$/.test(rest[0]!) && ["--help", "-h"].includes(rest[1]!);
 }
 
 /** Returns a reason to block, or null to allow. */
@@ -166,7 +180,7 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
     if (GIT_CONFIG_WRITE.test(cmd)) return gitMsg("changing git config (it is shared with the reviewer's project)") + " Reading it with `git config --get <key>` is fine.";
     if (GIT_REMOTE_WRITE.test(cmd)) return gitMsg("changing git remotes");
 
-    if (isStetWatch(cmd, shown.cli, cwd)) return null;
+    if (isStetReadOnly(cmd, shown.cli, cwd)) return null;
 
     // Paths mentioned in the command that lead into the user's project.
     const tokens = cmd.match(/"[^"]*"|'[^']*'|[^\s;&|<>()]+/g) ?? [];
@@ -182,7 +196,7 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
     });
     const gitC = /\bgit\s+-C\s+("[^"]*"|'[^']*'|\S+)/.exec(cmd);
     if (gitC && !isInside(abs(gitC[1]!, cwd), ctx.worktree)) return gitMsg("running git in another folder");
-    if (touchesMain && (WRITE_HINT.test(cmd) || !READ_ONLY_START.test(cmd))) {
+    if (touchesMain && !onlyReads(cmd)) {
       return (
         `Stet: this command refers to the reviewer's project folder (${shown.mainPath}). ` +
         `Work only inside your proposal workspace (${shown.worktree}).`
@@ -202,7 +216,7 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
         return false;
       }
     });
-    if (touchesOwn && (WRITE_HINT.test(cmd) || /\b(python3?|node|perl|ruby|powershell|pwsh)\b/i.test(cmd) || !READ_ONLY_START.test(cmd))) {
+    if (touchesOwn && (/\b(python3?|node|perl|ruby|powershell|pwsh)\b/i.test(cmd) || !onlyReads(cmd))) {
       return `Stet: this command would change files that Stet manages in this workspace (settings, MCP config, instructions). Leave them as they are.`;
     }
     return null;

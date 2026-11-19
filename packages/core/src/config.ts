@@ -11,16 +11,17 @@ export interface SplitConfig {
 
 export interface GroupingConfig {
   autoRepeatMin: number;
-  autoDetect: ("repeat" | "label" | "cite")[];
+  autoDetect: ("repeat" | "label" | "cite" | "macro")[];
   refCommands: string[];
   citeCommands: string[];
   /**
    * Moves (spec §6.4.7): a passage deleted in one place and inserted in another is shown as one
-   * move if it has at least `minWords` words and is two sentences or more, or a whole paragraph or
-   * environment. Up to `maxChangedWords` changed words (and one per 20 words) still count as a
-   * move, with the changes shown.
+   * move if it has at least `minWords` words and is a sentence or more, or a whole paragraph or
+   * environment. One changed word per 10 words (at least one) still counts as a move, with the
+   * changes shown; `maxChangedWords`, if set, caps that. A passage moved and changed more than
+   * that is a deletion and an insertion, linked.
    */
-  moves: { enabled: boolean; minWords: number; maxChangedWords: number };
+  moves: { enabled: boolean; minWords: number; maxChangedWords: number | null };
 }
 
 export type ShareMode = "manual" | "saved" | "committed";
@@ -69,10 +70,10 @@ export function defaultConfig(mainBranch: string): StetConfig {
     },
     grouping: {
       autoRepeatMin: 3,
-      autoDetect: ["repeat", "label", "cite"],
+      autoDetect: ["repeat", "label", "cite", "macro"],
       refCommands: ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref", "vref", "Vref"],
       citeCommands: ["cite", "citep", "citet", "citealp", "citeauthor", "citeyear", "parencite", "textcite", "autocite", "footcite"],
-      moves: { enabled: true, minWords: 15, maxChangedWords: 3 },
+      moves: { enabled: true, minWords: 7, maxChangedWords: null },
     },
     files: {
       tex: ["*.tex", "*.sty", "*.cls", "*.ltx", "*.dtx"],

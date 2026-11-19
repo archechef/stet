@@ -114,7 +114,13 @@ describe("agent inbox", () => {
     const ctx = { worktree: a.worktree, mainPath: stet.mainPath, commonDir: stet.commonDir, cli: FAKE_CLI };
     const bash = (command: string) => checkToolUse({ cwd: a.worktree, tool_name: "Bash", tool_input: { command } }, ctx);
     expect(bash("tail -n 0 -f .stet/inbox")).toBeNull();
+    // Reading .stet with errors thrown away, or in a chain of reading commands (bug report C36).
+    expect(bash("grep -rn accepted .stet/ 2>/dev/null")).toBeNull();
+    expect(bash("cd .stet && grep -c sync inbox | head -1")).toBeNull();
     expect(bash("echo hi > .stet/inbox")).toMatch(/Stet manages/);
+    expect(bash("grep x .stet/inbox > .stet/inbox2")).toMatch(/Stet manages/);
+    expect(bash("cat .stet/inbox; rm .stet/inbox")).toMatch(/Stet manages/);
+    expect(bash("find .stet -name inbox -delete")).toMatch(/Stet manages/);
     expect(checkToolUse({ cwd: a.worktree, tool_name: "Write", tool_input: { file_path: join(a.worktree, INBOX_FILE) } }, ctx)).toMatch(/managed by Stet/);
   });
 });
@@ -235,6 +241,11 @@ describe("stet watch", () => {
     const cmd = `ELECTRON_RUN_AS_NODE='1' ${q(process.execPath)} ${q(cli.args[0]!)}`;
     expect(bash(`${cmd} watch`)).toBeNull();
     expect(bash(`${cmd} watch --once`)).toBeNull();
+    // Help only reads too, so agents can find the CLI's commands (bug report C36).
+    expect(bash(`${cmd} help`)).toBeNull();
+    expect(bash(`${cmd} --help`)).toBeNull();
+    expect(bash(`${cmd} submit --help`)).toBeNull();
+    expect(bash(`${cmd} help; touch x`)).not.toBeNull();
     expect(bash(`stet watch --once`)).toBeNull();
     // Anything more still refers to the project's git dir.
     expect(bash(`${cmd} watch; rm -rf x`)).not.toBeNull();

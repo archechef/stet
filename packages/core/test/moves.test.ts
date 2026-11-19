@@ -97,9 +97,13 @@ describe("moves (§6.4.7)", () => {
     expect(to.newText.slice(changes[0]!.start, changes[0]!.end)).toBe("short");
     expect(moveChangesOf(to, byId(small.r.items))).toEqual(changes);
 
-    // A 27-word paragraph allows one changed word; two are a deletion and an insertion.
-    const more = await submitMove(P2.replace("small items", "short pieces"));
+    // A 27-word paragraph allows two changed words (one per 10); with three it is a deletion and
+    // an insertion, linked: accepting one alone would lose or duplicate the paragraph.
+    const two = await submitMove(P2.replace("small items", "short pieces"));
+    expect(two.r.moves).toEqual([expect.objectContaining({ changed: 2 })]);
+    const more = await submitMove(P2.replace("small items that the author", "short pieces that each author"));
     expect(more.r.moves).toEqual([]);
+    expect(more.r.groups).toEqual([expect.objectContaining({ title: expect.stringMatching(/^Moved and rewritten “Our tool splits/) })]);
   });
 
   it("moves into another file count, and stay together in the parts of a larger linked group", async () => {
@@ -124,14 +128,16 @@ describe("moves (§6.4.7)", () => {
     // P1 and P3, apart in the introduction, end up together in the evaluation: one insertion.
     const doc = DOC.replace(`${P1}\n\n`, "").replace(`${P3}\n\n`, "").replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n${P3}\n`);
     const { stet, repo, wt, r } = await submitDoc(doc);
-    expect(r.items).toHaveLength(3);
+    // Two deletions, and an insertion per paragraph (each new paragraph is a change of its own).
+    expect(r.items).toHaveLength(4);
     const del1 = r.items.find((i) => i.oldText.startsWith("We study"))!;
     const del3 = r.items.find((i) => i.oldText.startsWith("The approach"))!;
-    const ins = r.items.find((i) => !i.oldText.trim())!;
-    expect(r.moves).toEqual([{ from: [del1.id, del3.id], to: [ins.id], changed: 0 }]);
+    const ins1 = r.items.find((i) => !i.oldText.trim() && i.newText.includes("We study"))!;
+    const ins3 = r.items.find((i) => !i.oldText.trim() && i.newText.includes("The approach"))!;
+    expect(r.moves).toEqual([{ from: [del1.id, del3.id], to: [ins1.id, ins3.id], changed: 0 }]);
     expect(r.groups[0]!.title).toMatch(/^Move 2 passages “We study[^”]*”, “The approach[^”]*” \(4 sentences, unchanged\)$/);
     const rejected = await stet.reject([del3.id]);
-    expect(rejected).toHaveLength(3);
+    expect(rejected).toHaveLength(4);
     expect(read(repo, "main.tex")).toBe(DOC);
     void wt;
   });
@@ -142,18 +148,14 @@ describe("moves (§6.4.7)", () => {
       .replace("\\section{Introduction}\n", `\\section{Introduction}\n${P3}\n\n`)
       .replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P2}\n`);
     const { stet, repo, wt, r } = await submitDoc(doc);
-    // The diff describes it as one deleted stretch of two blocks (which ones depends on the
-    // alignment) and two insertions; all of it is one move.
+    // Two deleted paragraphs next to each other and two insertions: all of it is one move.
     const del = r.items.filter((i) => !i.newText.trim());
     const ins = r.items.filter((i) => !i.oldText.trim());
-    expect(del).toHaveLength(1);
+    expect(del).toHaveLength(2);
     expect(ins).toHaveLength(2);
     expect(r.moves).toHaveLength(1);
-    expect(r.moves[0]!.from).toEqual([del[0]!.id]);
+    expect([...r.moves[0]!.from].sort()).toEqual(del.map((i) => i.id).sort());
     expect([...r.moves[0]!.to].sort()).toEqual(ins.map((i) => i.id).sort());
-    // Blocks in the order they had in the deletion.
-    const order = r.moves[0]!.to.map((id) => del[0]!.oldText.indexOf(r.items.find((i) => i.id === id)!.newText.trim().slice(0, 20)));
-    expect(order).toEqual([...order].sort((a, b) => a - b));
     await stet.accept([ins[1]!.id]);
     expect(read(repo, "main.tex")).toBe(read(wt, "main.tex"));
   });
@@ -163,7 +165,7 @@ describe("moves (§6.4.7)", () => {
       .replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n${P3.replace("three papers", "four papers")}\n`);
     const { r } = await submitDoc(doc);
     expect(r.moves).toEqual([expect.objectContaining({ changed: 1 })]);
-    const ins = r.items.find((i) => i.id === r.moves[0]!.to[0])!;
+    const ins = r.items.find((i) => r.moves[0]!.to.includes(i.id) && i.newText.includes("four papers"))!;
     const c = moveChangesOf(ins, byId(r.items));
     expect(c).toEqual([expect.objectContaining({ was: "three", now: "four" })]);
     expect(ins.newText.slice(c[0]!.start, c[0]!.end)).toBe("four");
@@ -215,7 +217,9 @@ describe("moves the agent's report found missing (2026-11-13)", () => {
     // blocks are in swapped order, and it is still one move.
     expect(r2.moves).toHaveLength(1);
     const m = r2.moves[0]!;
-    expect(r2.groups.find((g) => g.items.includes(m.to[0]!))!.title).toMatch(/reordered, .*unchanged\)/);
+    // (Whether the title says "reordered" depends on the order of the two insertions, which
+    // come from different rounds at the same place.)
+    expect(r2.groups.find((g) => g.items.includes(m.to[0]!))!.title).toMatch(/^Move 2 passages .*unchanged\)/);
     expect((await stet.listGroups()).map((g) => g.id)).not.toContain(oldGroup);
     const get = byId(await stet.listItems({ agent: "a" }));
     expect(moveChangesOf(get(m.to[0]!)!, get)).toEqual([]);
