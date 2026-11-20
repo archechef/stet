@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 — 2026-11-20
 
 - **Faster submits of large revisions:** paragraphs are paired from the words they share, counted once for the whole region, and the word-by-word comparison runs only for pairs that can be alike. Move detection skips pairs with too few words in common the same way. A section of 60 paragraphs reordered takes 0.2 s instead of 1.2 s, a 400-paragraph paper with an edit in every paragraph 0.3 s instead of 2 s, with the same results.
 - **Fewer git calls:** opening a project takes one git call instead of four from the project folder, and two from an agent workspace (`stet` commands, the agent guard on every tool call, the extension). The guard no longer looks up the repository twice. A submit reads each file and the list of changed files once.
