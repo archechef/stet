@@ -222,16 +222,22 @@ export class Stet {
   /** Locate the repository containing `cwd` (main worktree or any agent worktree). */
   static async locate(cwd: string): Promise<{ repo: Repo; mainPath: string; commonDir: string; toplevel: string }> {
     const probe = new Repo(cwd);
-    const top = await probe.tryRun(["rev-parse", "--show-toplevel"]);
-    if (!top) throw new StetError(`Not inside a git repository: ${cwd}`);
-    let common = await probe.run(["rev-parse", "--git-common-dir"]);
-    if (!isAbsolute(common)) common = resolve(cwd, common);
-    const main = (await probe.worktrees())[0]?.path ?? top;
+    // One git call for both (each call costs a process start, the most of opening a repository).
+    const out = await probe.tryRun(["rev-parse", "--show-toplevel", "--git-common-dir"]);
+    const [top, dir] = out?.split("\n") ?? [];
+    if (!top || !dir) throw new StetError(`Not inside a git repository: ${cwd}`);
+    const common = isAbsolute(dir) ? dir : resolve(cwd, dir);
+    // In the main folder of an ordinary repository (git dir `.git` right inside it) that folder is
+    // the main worktree; elsewhere (an agent workspace, a submodule) git lists where it is.
+    const inMain = basename(common) === ".git" && samePath(dirname(common), top);
+    const main = inMain ? top : ((await probe.worktrees(common))[0]?.path ?? top);
     return { repo: new Repo(main), mainPath: main, commonDir: common, toplevel: top };
   }
 
-  static async open(cwd: string): Promise<Stet> {
-    const { repo, mainPath, commonDir } = await Stet.locate(cwd);
+  /** `located`: what `Stet.locate(cwd)` returned, when the caller has it already. */
+  static async open(cwd: string, located?: Awaited<ReturnType<typeof Stet.locate>>): Promise<Stet> {
+    const { mainPath, commonDir } = located ?? (await Stet.locate(cwd));
+    const repo = new Repo(mainPath);
     const store = new Store(join(commonDir, "stet"));
     if (!(await store.exists())) throw new StetError("Stet is not set up in this repository. Run `stet init` in the project folder.");
     return new Stet(mainPath, repo, store);
@@ -304,12 +310,30 @@ export class Stet {
     return "text";
   }
 
-  /** Cached reads of blobs at commits. */
+  /** Cached reads of blobs at commits (by commit id: what they hold never changes). */
   private textCache = new Map<string, TextFile | null>();
   private async textAt(rev: string, path: string): Promise<TextFile | null> {
     const key = rev + ":" + path;
-    if (!this.textCache.has(key)) this.textCache.set(key, await this.repo.readText(rev, path));
+    if (!this.textCache.has(key)) this.cacheText(key, await this.repo.readText(rev, path));
     return this.textCache.get(key)!;
+  }
+  private cacheText(key: string, t: TextFile | null) {
+    // A long-lived instance (the extension's) reads many commits: keep the recent ones.
+    if (this.textCache.size >= 500) this.textCache.delete(this.textCache.keys().next().value!);
+    this.textCache.set(key, t);
+  }
+
+  /** Changed paths between two commits, cached: submit asks for the same pair twice on an agent's first submit. */
+  private namesCache = new Map<string, Awaited<ReturnType<Repo["diffNames"]>>>();
+  private async diffNames(a: string, b: string) {
+    const key = a + ".." + b;
+    let hit = this.namesCache.get(key);
+    if (!hit) {
+      hit = await this.repo.diffNames(a, b);
+      if (this.namesCache.size >= 50) this.namesCache.delete(this.namesCache.keys().next().value!);
+      this.namesCache.set(key, hit);
+    }
+    return hit;
   }
 
   private treeView(rev: string): FileView {
@@ -966,7 +990,7 @@ export class Stet {
 
   private async candidatesFor(cfg: StetConfig, base: string, tip: string, touched: Set<string>): Promise<Candidate[]> {
     const out: Candidate[] = [];
-    const changes = await this.repo.diffNames(base, tip);
+    const changes = await this.diffNames(base, tip);
     for (const ch of changes) {
       if (!touched.has(ch.path) && !(ch.oldPath && touched.has(ch.oldPath))) continue;
       for (const p of [ch.path, ch.oldPath ?? ch.path]) {
@@ -980,6 +1004,9 @@ export class Stet {
       const binary = (oldBuf && isBinary(oldBuf)) || (newBuf && isBinary(newBuf));
       const oldText = oldBuf ? toLf(oldBuf.toString("utf8")) : "";
       const newText = newBuf ? toLf(newBuf.toString("utf8")) : "";
+      // Read again later in the submit (anchoring, re-merging): keep what was read.
+      if (oldBuf && !binary) this.cacheText(base + ":" + oldPath, { text: oldText, eol: detectEol(oldBuf.toString("utf8")) });
+      if (newBuf && !binary) this.cacheText(tip + ":" + ch.path, { text: newText, eol: detectEol(newBuf.toString("utf8")) });
       const whole = (kind: Item["kind"]): Candidate => ({
         file: ch.path,
         ...(ch.status === "R" ? { oldFile: oldPath } : {}),
@@ -1048,7 +1075,7 @@ export class Stet {
   ): Promise<void> {
     const base = agent.baseCommit;
     const touched = new Set<string>();
-    for (const ch of await this.repo.diffNames(agent.lastTip, tip)) {
+    for (const ch of await this.diffNames(agent.lastTip, tip)) {
       touched.add(ch.path);
       if (ch.oldPath) touched.add(ch.oldPath);
     }

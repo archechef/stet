@@ -103,19 +103,27 @@ async function checkReviews(before: Files, after: Files, groups?: any[]) {
   const readAll = (repo: string) => Object.fromEntries(Object.keys({ ...before, ...after }).map((f) => [f, read(repo, f)]));
   await r.stet.accept(r.items.map((i) => i.id), { overrideLinked: true });
   expect(readAll(r.repo)).toEqual({ ...before, ...after });
-  for (const u of units(r)) {
-    const fresh = await submit(before, after, groups);
+  const check = async (u: string[]) => {
+    const shown = u.map((id) => r.items.find((i) => i.id === id)!).map((i) => `${i.id} ${JSON.stringify(n(i.oldText).slice(0, 30))}→${JSON.stringify(n(i.newText).slice(0, 30))}`).join(", ");
+    const [fresh, other] = await Promise.all([submit(before, after, groups), submit(before, after, groups)]);
     // Ids are the same in every copy: the same submission splits the same way.
     await fresh.stet.accept(u);
-    const shown = u.map((id) => r.items.find((i) => i.id === id)!).map((i) => `${i.id} ${JSON.stringify(n(i.oldText).slice(0, 30))}→${JSON.stringify(n(i.newText).slice(0, 30))}`).join(", ");
     wellFormed(readAll(fresh.repo), before, after, `accepting only ${shown}`);
     // Rejecting it instead leaves the rest acceptable: accepting all others then works too.
-    const other = await submit(before, after, groups);
     await other.stet.reject(u);
     const rest = other.items.filter((i) => !u.includes(i.id)).map((i) => i.id);
     if (rest.length) await other.stet.accept(rest, { overrideLinked: true });
     wellFormed(readAll(other.repo), before, after, `accepting all but ${shown}`);
-  }
+  };
+  // Each unit in its own repositories, a few at a time: most of the time is git starting up
+  // (slow on Windows), which runs side by side.
+  const todo = units(r);
+  const workers = Array.from({ length: Math.min(4, todo.length) }, async () => {
+    for (let u = todo.shift(); u; u = todo.shift()) await check(u);
+  });
+  // All settled before reporting a failure: none still runs when the test's folders are removed.
+  const failed = (await Promise.allSettled(workers)).find((x) => x.status === "rejected");
+  if (failed) throw failed.reason;
   return r;
 }
 

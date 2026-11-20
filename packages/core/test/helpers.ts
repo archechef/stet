@@ -1,5 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,13 +41,13 @@ export async function setup(
   dirs.push(root);
   const repo = join(root, "paper");
   mkdirSync(repo);
-  git(repo, "init", "-q", "-b", "master");
-  git(repo, "config", "user.name", "Test User");
-  git(repo, "config", "user.email", "test@example.com");
-  git(repo, "config", "core.autocrlf", "false");
+  // Few git calls, and none blocking: tests that build many repositories run them side by side.
+  const run = (...args: string[]) => promisify(execFile)("git", args, { cwd: repo, windowsHide: true });
+  await run("init", "-q", "-b", "master");
+  appendFileSync(join(repo, ".git", "config"), "[user]\n\tname = Test User\n\temail = test@example.com\n[core]\n\tautocrlf = false\n");
   for (const [p, c] of Object.entries(files)) write(repo, p, c);
-  git(repo, "add", "-A");
-  git(repo, "commit", "-qm", "init");
+  await run("add", "-A");
+  await run("commit", "-qm", "init");
   const stet = await Stet.init(repo, opts.cli ? { cli: opts.cli } : {});
   return { stet, repo };
 }

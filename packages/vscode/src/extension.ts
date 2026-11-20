@@ -169,7 +169,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const loc = await Stet.locate(f.uri.fsPath);
         // Agent workspaces are for the agent; review happens in the project window.
         if (foldPath(loc.toplevel) !== foldPath(loc.mainPath)) continue;
-        const stet = await Stet.open(f.uri.fsPath);
+        const stet = await Stet.open(f.uri.fsPath, loc);
         found.set(foldPath(stet.mainPath), stet);
       } catch {
         /* not a git repo, or Stet not set up */
@@ -1195,7 +1195,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const storeRoot = join(loc.commonDir, "stet");
       let keepCli = false;
       try {
-        const cfg = await (await Stet.open(dir)).config();
+        const cfg = await (await Stet.open(dir, loc)).config();
         keepCli = !!cfg.cli && !isManaged(cfg.cli, storeRoot) && (await pathExists(cfg.cli.command));
       } catch {
         /* first setup */

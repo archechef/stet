@@ -106,8 +106,8 @@ export interface HookStatus {
   missing: string[];
 }
 
-export async function hookStatus(repo: Repo, commonDir: string): Promise<HookStatus> {
-  const { dir, custom } = await hooksDir(repo, commonDir);
+export async function hookStatus(repo: Repo, commonDir: string, known?: { dir: string; custom: boolean }): Promise<HookStatus> {
+  const { dir, custom } = known ?? (await hooksDir(repo, commonDir));
   const installed: string[] = [];
   const missing: string[] = [];
   for (const n of HOOK_NAMES) ((await readIf(join(dir, n)))?.includes(HOOK_MARKER) ? installed : missing).push(n);
@@ -119,8 +119,9 @@ export async function hookStatus(repo: Repo, commonDir: string): Promise<HookSta
  * and chained. With a custom core.hooksPath (e.g. husky) nothing is installed unless `force`.
  */
 export async function installHooks(repo: Repo, commonDir: string, cfg: StetConfig, opts: { force?: boolean } = {}): Promise<HookStatus> {
-  const { dir, custom } = await hooksDir(repo, commonDir);
-  if (custom && !opts.force) return hookStatus(repo, commonDir);
+  const where = await hooksDir(repo, commonDir);
+  const { dir, custom } = where;
+  if (custom && !opts.force) return hookStatus(repo, commonDir, where);
   await mkdir(dir, { recursive: true });
   for (const n of HOOK_NAMES) {
     const p = join(dir, n);
@@ -132,7 +133,7 @@ export async function installHooks(repo: Repo, commonDir: string, cfg: StetConfi
     await writeFile(p, script(n, cfg).replace(/\r\n/g, "\n"), "utf8");
     await chmod(p, 0o755).catch(() => {});
   }
-  return hookStatus(repo, commonDir);
+  return hookStatus(repo, commonDir, where);
 }
 
 export async function uninstallHooks(repo: Repo, commonDir: string): Promise<void> {

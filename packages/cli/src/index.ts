@@ -271,8 +271,9 @@ async function guard(): Promise<void> {
     if (!existsSync(cwd)) return block(`Stet: this workspace folder (${cwd}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
   }
   try {
-    const { toplevel, mainPath, commonDir } = await Stet.locate(cwd);
-    const stet = await Stet.open(cwd);
+    const located = await Stet.locate(cwd);
+    const { toplevel, mainPath, commonDir } = located;
+    const stet = await Stet.open(cwd, located);
     const cfg = await stet.config();
     const branch = await new Repo(toplevel).tryRun(["symbolic-ref", "--short", "HEAD"]);
     if (!branch?.startsWith(cfg.agentBranchPrefix)) return; // not an agent workspace

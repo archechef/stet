@@ -216,7 +216,8 @@ export class Repo {
     }
   }
 
-  async worktrees(): Promise<{ path: string; head: string | null; branch: string | null }[]> {
+  /** `commonDir`: the repository's shared git dir, when already known (saves asking git). */
+  async worktrees(commonDir?: string): Promise<{ path: string; head: string | null; branch: string | null }[]> {
     const out = await this.run(["worktree", "list", "--porcelain"]);
     const res: { path: string; head: string | null; branch: string | null }[] = [];
     for (const block of out.split(/\n\n+/)) {
@@ -228,7 +229,7 @@ export class Repo {
         branch: /^branch refs\/heads\/(.*)$/m.exec(block)?.[1] ?? null,
       });
     }
-    if (res[0]) res[0].path = await this.mainWorktreePath(res[0].path);
+    if (res[0]) res[0].path = await this.mainWorktreePath(res[0].path, commonDir);
     return res;
   }
 
@@ -239,8 +240,8 @@ export class Repo {
    * that case is `core.worktree` consulted, so for an ordinary repository the setting (which an
    * agent's git could write) cannot move the project.
    */
-  private async mainWorktreePath(listed: string): Promise<string> {
-    let common = await this.run(["rev-parse", "--git-common-dir"]);
+  private async mainWorktreePath(listed: string, commonDir?: string): Promise<string> {
+    let common = commonDir ?? (await this.run(["rev-parse", "--git-common-dir"]));
     if (!isAbsolute(common)) common = resolve(this.cwd, common);
     if (foldPath(listed) !== foldPath(common)) return listed;
     const wt = await this.tryRun(["config", "--file", join(common, "config"), "--get", "core.worktree"]);

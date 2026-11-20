@@ -5,7 +5,7 @@
 import { diffArrays, diffLines } from "diff";
 import { isBlank, tokenize, type Token } from "./tokenizer.js";
 import type { SplitConfig } from "./config.js";
-import { paragraphSimilarity, wordSimilarity } from "./text.js";
+import { paragraphSimilarity, sharedWordsMatrix, wordSimilarity } from "./text.js";
 
 export interface Edit {
   /** Range in the old (base) text. */
@@ -634,11 +634,13 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
   const nw = nb.map((b) => wordsOf(nt, b));
   const m = ob.length;
   const k = nb.length;
-  const score = Array.from({ length: m + 1 }, () => new Array<number>(k + 1).fill(0));
-  const sim = Array.from({ length: m }, () => new Array<number>(k).fill(0));
+  const score = Array.from({ length: m + 1 }, () => new Float64Array(k + 1));
+  const sim = Array.from({ length: m }, () => new Float64Array(k));
+  // Most pairs share too few words to be alike: known from the counts, without diffing them.
+  const shared = sharedWordsMatrix(ow, nw);
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= k; j++) {
-      const s = paragraphSimilarity(ow[i - 1]!, nw[j - 1]!, PAIR_MIN);
+      const s = paragraphSimilarity(ow[i - 1]!, nw[j - 1]!, PAIR_MIN, shared[i - 1]![j - 1]!);
       sim[i - 1]![j - 1] = s;
       score[i]![j] = Math.max(score[i - 1]![j]!, score[i]![j - 1]!, s >= PAIR_MIN ? score[i - 1]![j - 1]! + s : 0);
     }
@@ -656,7 +658,7 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
   // Take in unpaired neighbours while that makes the pair more alike: a split or merged paragraph.
   const usedO = new Set(pairs.map((p) => p.o[0]));
   const usedN = new Set(pairs.map((p) => p.n[0]));
-  const simOf = (p: BlockPair) => wordSimilarity(ow.slice(p.o[0], p.o[1] + 1).flat(), nw.slice(p.n[0], p.n[1] + 1).flat());
+  const simOf = (p: BlockPair, min = 0) => wordSimilarity(ow.slice(p.o[0], p.o[1] + 1).flat(), nw.slice(p.n[0], p.n[1] + 1).flat(), min);
   for (const p of pairs) {
     let cur = simOf(p);
     for (let grown = true; grown; ) {
@@ -671,7 +673,7 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
         if (newO >= 0 && (newO >= m || usedO.has(newO))) continue;
         if (newN >= 0 && (newN >= k || usedN.has(newN))) continue;
         if (newO < -1 || newN < -1 || t.o[0] < 0 || t.n[0] < 0) continue;
-        const sc = simOf(t);
+        const sc = simOf(t, cur + 0.05);
         if (sc > cur + 0.05) {
           [p.o, p.n, cur] = [t.o, t.n, sc];
           if (newO >= 0) usedO.add(newO);

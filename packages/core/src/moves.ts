@@ -6,7 +6,7 @@
 import { diffArrays } from "diff";
 import { isLive, moveFrom, moveTo, movesOut, type Item, type MoveInfo } from "./model.js";
 import type { Edit } from "./split.js";
-import { normalizeWs, wordSimilarity } from "./text.js";
+import { normalizeWs, sharedWords, wordSimilarity } from "./text.js";
 
 export interface MoveSettings {
   enabled: boolean;
@@ -49,6 +49,12 @@ export function changedWords(a: string[], b: string[]): number {
   return n + Math.max(removed, added);
 }
 
+/**
+ * A lower bound of `changedWords` from the words shared in any order, without the diff: the words
+ * of the longer side that the other doesn't have all count as changed.
+ */
+const fewestChanged = (a: string[], b: string[]): number => Math.max(a.length, b.length) - sharedWords(a, b);
+
 /** How many changed words a passage of `words` words may have and still count as a move: one per 10, at least one. */
 export const allowedChanges = (words: number, max: number | null): number => Math.min(max ?? Infinity, Math.max(1, Math.floor(words / 10)));
 
@@ -79,6 +85,7 @@ function sameBlocks(a: string[][], b: string[][], allowed: number): { order: num
     let bestN = Infinity;
     for (const k of left) {
       if (Math.abs(a[k]!.length - bb.length) > allowed - changed) continue;
+      if (fewestChanged(a[k]!, bb) >= Math.min(bestN, allowed - changed + 1)) continue;
       const n = changedWords(a[k]!, bb);
       if (n < bestN) [best, bestN] = [k, n];
       if (!n) break;
@@ -166,7 +173,7 @@ function within(small: string[], big: string[], allowed: number): [number, numbe
     for (let j = 0; j < small.length; j++) if (big[k + j] !== small[j]) continue outer;
     return [k, k + small.length - 1];
   }
-  if (!allowed) return null;
+  if (!allowed || small.length - sharedWords(small, big) > allowed) return null;
   let bi = 0;
   let first = -1;
   let last = -1;
@@ -221,6 +228,8 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
         continue;
       }
       if (Math.abs(dw.length - iw.length) > allowed) continue;
+      // Also bounds a reordering (`sameBlocks`): its blocks hold the same words.
+      if (fewestChanged(dw, iw) > allowed) continue;
       let changed = changedWords(dw, iw);
       // Two blocks that were next to each other at both ends, in swapped order, come out as one
       // deletion and one insertion (bug report 2026-11-13).

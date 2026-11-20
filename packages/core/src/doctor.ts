@@ -85,7 +85,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
 
   let stet: Stet;
   try {
-    stet = await Stet.open(cwd);
+    stet = await Stet.open(cwd, located);
   } catch {
     add({ name: "stet setup", status: "warn", message: "Stet is not set up in this repository", fix: "stet init" });
     return checks;

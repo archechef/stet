@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Faster submits of large revisions:** paragraphs are paired from the words they share, counted once for the whole region, and the word-by-word comparison runs only for pairs that can be alike. Move detection skips pairs with too few words in common the same way. A section of 60 paragraphs reordered takes 0.2 s instead of 1.2 s, a 400-paragraph paper with an edit in every paragraph 0.3 s instead of 2 s, with the same results.
+- **Fewer git calls:** opening a project takes one git call instead of four from the project folder, and two from an agent workspace (`stet` commands, the agent guard on every tool call, the extension). The guard no longer looks up the repository twice. A submit reads each file and the list of changed files once.
+- Tests: the real-world review checks run four at a time and build their repositories with fewer git calls. One of them hit the 120 s limit where starting git is slow.
+
 ## 0.13.0 — 2026-11-19
 
 - **Fix: a paragraph inserted next to one edited in place** showed as "old paragraph → new paragraph" plus the edited paragraph inserted again, so accepting only some of them dropped or duplicated text (bug report C42). Paragraphs are now paired by similarity, not position: you get an insertion, and small edits in place. An unrelated paragraph replacing another is still one replacement, unless the old one moved elsewhere: then it's an insertion and a move.

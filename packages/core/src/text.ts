@@ -85,48 +85,82 @@ export function similarity(a: string, b: string): number {
  * How alike two passages are, word by word: twice the words they share in order over all their
  * words (1 = the same, 0 = nothing in common). Below `min`, returns 0 without the full comparison.
  */
-export function wordSimilarity(a: string[], b: string[], min = 0): number {
+export function wordSimilarity(a: string[], b: string[], min = 0, shared?: number): number {
   if (!a.length || !b.length) return 0;
-  // Shared words in any order bound the result from above.
+  // Shared words in any order bound the result from above; the diff only runs when it can reach `min`.
+  if (min > 0 && (2 * (shared ?? sharedWords(a, b))) / (a.length + b.length) < min) return 0;
+  return (2 * commonWords(a, b)) / (a.length + b.length);
+}
+
+/** How many words two passages share in any order (a word counts as often as both have it). An upper bound of `commonWords`. */
+export function sharedWords(a: string[], b: string[]): number {
+  const [small, big] = a.length <= b.length ? [a, b] : [b, a];
   const counts = new Map<string, number>();
-  for (const w of a) counts.set(w, (counts.get(w) ?? 0) + 1);
+  for (const w of small) counts.set(w, (counts.get(w) ?? 0) + 1);
   let shared = 0;
-  for (const w of b) {
+  for (const w of big) {
     const c = counts.get(w);
     if (c) {
       shared++;
       counts.set(w, c - 1);
     }
   }
-  if ((2 * shared) / (a.length + b.length) < min) return 0;
+  return shared;
+}
+
+/** How many words two passages share in order (the longest common subsequence). */
+export function commonWords(a: string[], b: string[]): number {
   let common = 0;
   for (const ch of diffArrays(a, b)) if (!ch.added && !ch.removed) common += ch.count ?? ch.value.length;
-  return (2 * common) / (a.length + b.length);
+  return common;
+}
+
+/**
+ * `sharedWords` for every pair of passages in `as` and `bs` (`[i][j]`), through an index of
+ * where each word occurs: pairs with no word in common cost nothing. Words are compared as
+ * `sharedWords` compares them.
+ */
+export function sharedWordsMatrix(as: string[][], bs: string[][]): Int32Array[] {
+  const ids = new Map<string, number>();
+  const bag = (ws: string[]) => {
+    const m = new Map<number, number>();
+    for (const w of ws) {
+      let id = ids.get(w);
+      if (id === undefined) ids.set(w, (id = ids.size));
+      m.set(id, (m.get(id) ?? 0) + 1);
+    }
+    return m;
+  };
+  const aBags = as.map(bag);
+  // For each word, the passages of `as` that have it, and how often.
+  const where: { at: number; n: number }[][] = [];
+  aBags.forEach((m, i) => {
+    for (const [id, n] of m) (where[id] ??= []).push({ at: i, n });
+  });
+  const out = as.map(() => new Int32Array(bs.length));
+  bs.forEach((ws, j) => {
+    for (const [id, n] of bag(ws)) for (const { at, n: k } of where[id] ?? []) out[at]![j]! += Math.min(n, k);
+  });
+  return out;
 }
 
 /**
  * Whether two paragraphs are one paragraph edited: alike by `wordSimilarity`, or the shorter one
  * (5 words or more) found almost whole, in order, in the other (most sentences deleted, or many
- * added). Returns a score; at least `min` means alike.
+ * added). Returns a score; at least `min` means alike. `shared` (`sharedWords`) may be given when
+ * already known.
  */
-export function paragraphSimilarity(a: string[], b: string[], min: number): number {
-  const d = wordSimilarity(a, b, min);
-  if (d >= min) return d;
+export function paragraphSimilarity(a: string[], b: string[], min: number, shared?: number): number {
+  if (!a.length || !b.length) return 0;
   const short = Math.min(a.length, b.length);
-  if (short < 5) return d;
-  const counts = new Map<string, number>();
-  for (const w of a) counts.set(w, (counts.get(w) ?? 0) + 1);
-  let shared = 0;
-  for (const w of b) {
-    const c = counts.get(w);
-    if (c) {
-      shared++;
-      counts.set(w, c - 1);
-    }
-  }
-  if (shared / short < 0.8) return d;
-  let common = 0;
-  for (const ch of diffArrays(a, b)) if (!ch.added && !ch.removed) common += ch.count ?? ch.value.length;
+  const s = shared ?? sharedWords(a, b);
+  // Neither test can pass without enough words in common: skip the diff.
+  const maybeAlike = (2 * s) / (a.length + b.length) >= min;
+  const maybeContained = short >= 5 && s / short >= 0.8;
+  if (!maybeAlike && !maybeContained) return 0;
+  const common = commonWords(a, b);
+  const d = maybeAlike ? (2 * common) / (a.length + b.length) : 0;
+  if (d >= min || !maybeContained) return d;
   return common / short >= 0.8 ? Math.max(d, min) : d;
 }
 
