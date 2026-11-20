@@ -1791,6 +1791,21 @@ export class Stet {
   }
 
   /**
+   * What Finish review would commit, without committing: the accepted items, and the files that
+   * also hold edits of the user's (committed along, whole files). For its question (test report v0.16.0, D6).
+   */
+  async commitPreview(): Promise<{ items: Item[]; yourEdits: string[] }> {
+    return this.store.withLock(async () => {
+      const cfg = await this.config();
+      await this.ensureBase();
+      const items = (await this.uncommittedAccepted()).sort((a, b) => compareItemIds(a.id, b.id));
+      if (!items.length) return { items, yourEdits: [] };
+      const paths = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
+      return { items, yourEdits: await this.filesWithOtherEdits(items, paths, await this.mainHead(cfg)) };
+    });
+  }
+
+  /**
    * Commit accepted-but-uncommitted items ("Finish review"). Commits their whole files,
    * so the user's own edits in those files are included.
    */
@@ -1920,7 +1935,7 @@ export class Stet {
 
   /**
    * Warnings for the linked groups of these items that are now decided differently: some members
-   * accepted, others rejected, withdrawn or stale (parts decided one at a time, or `--only`). The
+   * accepted, others rejected, withdrawn, stale or still pending (parts decided one at a time, or `--only`). The
    * agent was told (group_partial, group_broken); the reviewer heard nothing, and a \ref could be
    * committed without its \label (test report 2026-11-20, D3).
    */
@@ -1932,7 +1947,18 @@ export class Stet {
       const members = (await Promise.all(g.items.map((i) => this.store.getItem(i)))).filter((x): x is Item => !!x && x.status !== "superseded");
       const yes = members.filter((m) => m.status === "accepted");
       const no = members.filter((m) => m.status === "rejected" || m.status === "withdrawn" || m.status === "stale");
-      if (!yes.length || !no.length) continue;
+      const open = members.filter((m) => isLive(m.status));
+      if (!yes.length) continue;
+      if (!no.length) {
+        // Accepted a part, the rest still to decide: say so, or a \label is committed and its
+        // \refs left dangling without a word (test report v0.16.0, D3).
+        if (open.length)
+          out.push(
+            `${g.id} (${g.title}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
+              `${open.map((m) => m.id).join(", ")} still to decide. The document is inconsistent until they are accepted too.`,
+          );
+        continue;
+      }
       out.push(
         `${g.id} (${g.title}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
           `${no.map((m) => m.id).join(", ")} ${no.every((m) => m.status === "rejected") ? "rejected" : "not"}. ` +
@@ -1964,53 +1990,91 @@ export class Stet {
     return this.accept(pending, opts);
   }
 
+  /**
+   * The checks of an accept and its edits, in `view`, without writing anything: what `accept`
+   * applies, or the error it gives. Call under lock.
+   */
+  private async planAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean }, view: FileView) {
+    const cfg = await this.config();
+    const items = await this.withMovePartners(await this.requireItems(ids));
+    for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
+    const bad = items.flatMap((i) => [i.file, ...(i.oldFile !== undefined ? [i.oldFile] : [])]).filter((f) => !isSafeRepoPath(f));
+    if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
+    const onBranch = await this.projectBranch();
+    if (onBranch !== cfg.mainBranch)
+      throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before accepting.`);
+
+    const warnings: string[] = [];
+    const missing = (await this.linkedMembers(items)).filter((m) => !items.some((i) => i.id === m.id));
+    if (missing.length) {
+      if (!opts.overrideLinked) {
+        throw new StetError(
+          `${items.map((i) => i.id).join(", ")} ${items.length > 1 ? "are" : "is"} linked with ${missing.map((m) => m.id).join(", ")}: ` +
+            `accepting only part of a linked group can break the document. Accept the whole group, or override explicitly.`,
+        );
+      }
+      warnings.push(`Accepted without linked items ${missing.map((m) => m.id).join(", ")}; the group is now broken.`);
+    }
+    // The reviewer's drafts (from a file's review document), unless this accept gives other text.
+    const overrides = new Map(items.filter((i) => i.draft !== undefined).map((i) => [i.id, i.draft!]));
+    for (const [k, v] of Object.entries(opts.edited ?? {})) overrides.set(k.toUpperCase(), toLf(v));
+    const res = await applyItems(items, view, { refText: this.refText, overrides, neighbours: this.neighbours });
+    return { cfg, items, warnings, missing, overrides, res };
+  }
+
+  private static failedMessage(failed: { item: Item; reason: string }[]): string {
+    const lost = failed.filter((f) => /can't be located/.test(f.reason)).map((f) => f.item.id);
+    return (
+      "Nothing was applied, because some items could not be applied:\n" +
+      failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n") +
+      // What to do next, for a change whose words were edited meanwhile (test report v0.16.0, UX).
+      (lost.length ? `\nYou edited the text around ${lost.join(", ")} since: reject ${lost.length > 1 ? "them" : "it"}, or ask the agent for a revision against your current text.` : "")
+    );
+  }
+
+  /**
+   * Throws what `accept` would, with `unsaved` (an editor's unsaved texts, by file) in place of
+   * those files; writes nothing. An editor saves its buffers only for an accept that will work:
+   * a failed accept had already saved them (test report v0.16.0, D7).
+   */
+  async checkAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean; unsaved?: Record<string, string> } = {}): Promise<void> {
+    return this.store.withLock(async () => {
+      await this.recoverInterrupted();
+      const disk = this.workingView();
+      const unsaved = new Map(Object.entries(opts.unsaved ?? {}));
+      const view: FileView = {
+        read: async (p) => {
+          const t = unsaved.get(p);
+          if (t === undefined) return disk.read(p);
+          return { text: toLf(t), eol: (await disk.read(p).catch(() => null))?.eol ?? detectEol(t) };
+        },
+        blobId: (p) => disk.blobId(p),
+      };
+      const { res } = await this.planAccept(ids, opts, view);
+      if (res.failed.length) throw new StetError(Stet.failedMessage(res.failed));
+    });
+  }
+
   async accept(
     ids: string[],
     opts: { edited?: Record<string, string>; overrideLinked?: boolean; commit?: boolean } = {},
   ): Promise<AcceptResult> {
     return this.store.withLock(async () => {
       await this.recoverInterrupted();
-      const cfg = await this.config();
-      const items = await this.withMovePartners(await this.requireItems(ids));
-      for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
-      const bad = items.flatMap((i) => [i.file, ...(i.oldFile !== undefined ? [i.oldFile] : [])]).filter((f) => !isSafeRepoPath(f));
-      if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
-      const onBranch = await this.projectBranch();
-      if (onBranch !== cfg.mainBranch)
-        throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before accepting.`);
-
-      const warnings: string[] = [];
-      const missing = (await this.linkedMembers(items)).filter((m) => !items.some((i) => i.id === m.id));
-      if (missing.length) {
-        if (!opts.overrideLinked) {
-          throw new StetError(
-            `${items.map((i) => i.id).join(", ")} ${items.length > 1 ? "are" : "is"} linked with ${missing.map((m) => m.id).join(", ")}: ` +
-              `accepting only part of a linked group can break the document. Accept the whole group, or override explicitly.`,
-          );
-        }
-        warnings.push(`Accepted without linked items ${missing.map((m) => m.id).join(", ")}; the group is now broken.`);
-      }
-
       const view = this.workingView();
+      const { cfg, items, warnings, missing, overrides, res } = await this.planAccept(ids, opts, view);
       const files = new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]));
       const wantCommit = opts.commit ?? cfg.autoCommit === "when-clean";
       const dirtyBefore = new Set<string>();
       if (wantCommit) for (const f of files) if ((await this.repo.status([f])).length) dirtyBefore.add(f);
 
-      // The reviewer's drafts (from a file's review document), unless this accept gives other text.
-      const overrides = new Map(items.filter((i) => i.draft !== undefined).map((i) => [i.id, i.draft!]));
-      for (const [k, v] of Object.entries(opts.edited ?? {})) overrides.set(k.toUpperCase(), toLf(v));
-      const res = await applyItems(items, view, { refText: this.refText, overrides, neighbours: this.neighbours });
       if (res.failed.length) {
         // Remembered, so rejecting such an item afterwards doesn't block the change for good.
         for (const f of res.failed) {
           f.item.acceptFailed = { at: now(), reason: f.reason };
           await this.store.putItem(f.item);
         }
-        throw new StetError(
-          "Nothing was applied, because some items could not be applied:\n" +
-            res.failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n"),
-        );
+        throw new StetError(Stet.failedMessage(res.failed));
       }
 
       // Other live items overlapping what we accept become stale.
@@ -2149,7 +2213,7 @@ export class Stet {
 
   /**
    * Undo the reviewer's decision on an item, together with the items decided with it (the rest of
-   * its linked group or move): a rejection, or an accept not committed yet, whose change is taken
+   * its linked group or move): a revision request, a rejection, or an accept not committed yet, whose change is taken
    * out of the working copy again. The items are pending again, and so are items the accept made
    * stale. The agent is told. A committed accept is in git's history: revert it with git.
    */
@@ -2157,8 +2221,15 @@ export class Stet {
     return this.store.withLock(async () => {
       await this.recoverInterrupted();
       const [item] = await this.requireItems([id]);
+      if (item!.status === "needs_revision") {
+        // A revision request the agent hasn't answered yet (an answer supersedes the change):
+        // taken back, the change is pending again, and the agent is told (test report v0.16.0, B5).
+        await this.reopen(item!, "revision request taken back", "needs_revision");
+        await this.updateGroups([item!]);
+        return { reopened: [item!], restored: [] };
+      }
       if (item!.status !== "accepted" && item!.status !== "rejected")
-        throw new StetError(`${item!.id} is ${item!.status}: only accepted and rejected changes can be undone.`);
+        throw new StetError(`${item!.id} is ${item!.status}: only accepted and rejected changes, and revision requests, can be undone.`);
       const unit = await this.decidedWith(item!);
       if (item!.status === "rejected") {
         // The revision requests this rejection sent to the rest of its linked group (reject
@@ -2180,15 +2251,37 @@ export class Stet {
       if (onBranch !== cfg.mainBranch)
         throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before undoing.`);
 
-      // The inverse changes: from the applied text back to the old one.
+      // The inverse changes: from the applied text back to the old one. Each is found against its
+      // base with what is accepted there made (this change, and the other accepted ones not
+      // committed yet), as the working copy has it: text where nothing changed since is then
+      // known for what it is, and another accepted change's same words are never taken for this
+      // one's (test report v0.16.0, D1).
+      const unitIds = new Set(unit.map((i) => i.id));
+      const acceptedOthers = (await this.store.items()).filter(
+        (o) => o.kind === "modify" && o.status === "accepted" && o.resolution && !o.resolution.committed && !unitIds.has(o.id),
+      );
       const refs = new Map<string, string>();
       const inverse: Item[] = [];
       for (const it of unit) {
         const applied = it.resolution!.appliedText;
         if (it.kind === "modify") {
           const ref = (await this.refText(it)) ?? "";
-          const after = ref.slice(0, it.range.start) + applied + ref.slice(it.range.end);
-          const range = { start: it.range.start, end: it.range.start + applied.length };
+          const sameText = (o: Item) => o.kind === "modify" && o.id !== it.id && o.file === it.file && o.baseCommit === it.baseCommit && !!o.resolution;
+          const made = [it, ...unit.filter(sameText), ...acceptedOthers.filter(sameText)]
+            .map((o) => ({ id: o.id, range: o.range, oldText: o.oldText, text: o.resolution!.appliedText }))
+            .sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
+          let after = "";
+          let pos = 0;
+          let start = it.range.start;
+          for (const m of made) {
+            // Changes that overlap another or no longer match their base are left out (this one never is).
+            if (m.id !== it.id && (m.range.start < pos || ref.slice(m.range.start, m.range.end) !== m.oldText)) continue;
+            if (m.id === it.id) start = after.length + (m.range.start - pos);
+            after += ref.slice(pos, m.range.start) + m.text;
+            pos = m.range.end;
+          }
+          after += ref.slice(pos);
+          const range = { start, end: start + applied.length };
           refs.set(it.id, after);
           inverse.push({ ...it, oldText: applied, newText: it.oldText, range, context: captureContext(after, range.start, range.end) });
         } else if (it.kind === "add-file") inverse.push({ ...it, kind: "delete-file", oldText: applied, newText: "" });
@@ -2391,12 +2484,29 @@ export class Stet {
     const mapped = mapReviewEdits(doc, toLf(edited));
     if ("error" in mapped) return mapped;
     return this.store.withLock(async () => {
-      const changed: string[] = [];
-      for (const [id, text] of mapped.texts) {
+      // Changes that grew over words reworded next to them: the same change, written wider
+      // (old and new text both take in those words), if the words are as the change's base has them.
+      const wider = new Map<string, Item>();
+      for (const [id, g] of mapped.grown) {
         const it = await this.store.getItem(id);
         if (!it || !isLive(it.status)) continue;
+        const r = doc.regions.find((x) => x.id === id)!;
+        const before = doc.content.slice(r.start - g.before, r.start);
+        const after = doc.content.slice(r.end, r.end + g.after);
+        const ref = await this.refText(it);
+        const { start, end } = it.range;
+        if (it.kind !== "modify" || it.move || ref === undefined || ref.slice(start - before.length, start) !== before || ref.slice(end, end + after.length) !== after) {
+          return { error: `You reworded text next to ${id} that you changed yourself since: edit that in your file itself, or only ${id}'s own words here.` };
+        }
+        const range = { start: start - before.length, end: end + after.length };
+        wider.set(id, { ...it, range, oldText: before + it.oldText + after, newText: before + it.newText + after, context: captureContext(ref, range.start, range.end) });
+      }
+      const changed: string[] = [];
+      for (const [id, text] of mapped.texts) {
+        const it = wider.get(id) ?? (await this.store.getItem(id));
+        if (!it || !isLive(it.status)) continue;
         const shown = it.draft ?? it.newText;
-        if (text === shown) continue;
+        if (text === shown && !wider.has(id)) continue;
         if (text === it.newText) delete it.draft;
         else it.draft = text;
         await this.store.putItem(it);

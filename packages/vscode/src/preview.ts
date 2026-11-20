@@ -143,7 +143,9 @@ export class PreviewPanel implements vscode.Disposable {
     }
     const roots = r?.status === "ready" ? [vscode.Uri.file(r.pages ? previewCacheRoot(t.project) : dirname(r.after.file))] : [];
     w.options = { enableScripts: true, localResourceRoots: roots };
-    this.panel.title = `Preview ${t.item.id}`;
+    // Which project, when the window has several: their ids are the same (test report v0.16.0, accessibility).
+    const several = (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
+    this.panel.title = `Preview ${t.item.id}${several ? ` (${t.project.name})` : ""}`;
     const img = (file: string) => `${w.asWebviewUri(vscode.Uri.file(file))}?v=${Date.now()}`;
     let body: string;
     let pageData: unknown = null;

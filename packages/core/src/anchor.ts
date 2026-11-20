@@ -90,7 +90,10 @@ export function chainInsertions(
  * Map an offset from `ref` to `target` through a line diff.
  * Returns null when the offset lies inside a changed region.
  */
-type Mapper = (offset: number, isEnd: boolean) => number | null;
+type Mapper = ((offset: number, isEnd: boolean) => number | null) & {
+  /** Whether [start, end) of the target lies in text unchanged from the reference (somewhere). */
+  unchanged(start: number, end: number): boolean;
+};
 
 /**
  * Recently built mappers. Locating many items of one file against the same two texts (an editor
@@ -125,7 +128,7 @@ function buildMapper(ref: string, target: string): Mapper {
     }
     lastEqual = !ch.added && !ch.removed;
   }
-  return (offset, isEnd) => {
+  const map = (offset: number, isEnd: boolean) => {
     // Binary search for the stretch containing the offset (ends are inclusive for range ends).
     let lo = 0;
     let hi = equal.length - 1;
@@ -140,6 +143,8 @@ function buildMapper(ref: string, target: string): Mapper {
     if (offset === ref.length && isEnd !== undefined && lastEqual) return target.length;
     return null;
   };
+  const unchanged = (start: number, end: number) => equal.some((s) => s.tgtStart <= start && end <= s.tgtStart + (s.refEnd - s.refStart));
+  return Object.assign(map, { unchanged });
 }
 
 /**
@@ -183,9 +188,16 @@ function findOldText(item: Anchorable, target: string, ref?: string): Span | nul
   // 1. Fast path.
   if (ref !== undefined && ref === target) return check(range.start, range.end) ? { ...range } : null;
 
+  const mapper = ref !== undefined ? makeMapper(ref, target) : null;
+  // Where the old text is in text unchanged from the reference but not at the item's place, it
+  // is another occurrence (the mapped path would have found the item's own): never the item's.
+  // An undo found another accepted change's words there and reverted that one (test report
+  // v0.16.0, D1).
+  const elsewhere = (sp: Span) => !!oldText && !!mapper?.unchanged(sp.start, sp.end);
+
   // 2. Mapped path.
   if (ref !== undefined) {
-    const map = makeMapper(ref, target);
+    const map = mapper!;
     if (oldText) {
       const s = map(range.start, false);
       const e = map(range.end, true);
@@ -211,12 +223,13 @@ function findOldText(item: Anchorable, target: string, ref?: string): Span | nul
 
   // 3. Exact search with full context.
   const exact = exactWithContext(item, target);
-  if (exact) return exact;
+  if (exact && !elsewhere(exact)) return exact;
 
   // 4. Fuzzy: candidate positions scored by context similarity.
   const candidates = new Set<number>();
-  if (oldText) for (const i of allIndexesOf(target, oldText)) candidates.add(i);
-  else {
+  if (oldText) {
+    for (const i of allIndexesOf(target, oldText)) if (!elsewhere({ start: i, end: i + oldText.length })) candidates.add(i);
+  } else {
     const tail = context.before.slice(-20);
     const head = context.after.slice(0, 20);
     if (tail) for (const i of allIndexesOf(target, tail)) candidates.add(i + tail.length);

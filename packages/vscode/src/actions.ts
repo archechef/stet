@@ -24,28 +24,70 @@ export interface ChangeAction {
 /** "$(check) Accept": an action's label with its icon, for CodeLens, hovers and lists. */
 export const withIcon = (a: Pick<ChangeAction, "icon" | "label">): string => `$(${a.icon}) ${a.label}`;
 
+/** One answer to "what to accept with this change": the changes it takes, and whether that breaks a linked group. */
+export interface AcceptChoice {
+  label: string;
+  detail: string;
+  ids: string[];
+  overrideLinked: boolean;
+}
+
+/**
+ * What Accept asks when `item` is in a linked group with other pending changes: its part (or the
+ * group's linked changes), the whole group, or this change only, the recommended one first. Null
+ * when there is nothing to ask (a change alone, or a move: its halves always go together). Every
+ * Accept of such a change asks, wherever it is clicked: one click on a label's part used to leave
+ * its \refs dangling, and Edit & accept took 57 changes along unasked (test report v0.16.0, D3 and D5).
+ */
+export function acceptQuestion(model: TreeModel, item: Item): { title: string; choices: AcceptChoice[] } | null {
+  const own = model.withMove(item);
+  const unit = [...own, ...model.linkedRest(own).map((i) => i.id)];
+  const g = model.linkedGroup(item);
+  const others = g ? model.members(g).filter((m) => isLive(m) && !unit.includes(m.id)).map((m) => m.id) : [];
+  if (unit.length === own.length && !others.length) return null;
+  const part = model.partOf(item);
+  const choices: AcceptChoice[] = [];
+  if (unit.length > own.length) {
+    choices.push({
+      label: part ? `Accept part ${part.index + 1} “${part.group.parts![part.index]!.title}” (${unit.length} changes)` : `Accept all ${unit.length} linked changes`,
+      detail: `${unit.join(", ")} belong together.${others.length ? ` The other parts of ${g!.id} stay pending.` : ""}`,
+      ids: unit,
+      overrideLinked: false,
+    });
+  }
+  if (g && others.length) {
+    choices.push({ label: `Accept all ${unit.length + others.length} changes of ${g.id}`, detail: `“${g.title}”, every part at once.`, ids: [...unit, ...others], overrideLinked: false });
+  }
+  choices.push({
+    label: `Accept only ${own.join(" + ")}`,
+    detail:
+      unit.length > own.length
+        ? "Breaks the linked group; the agent is asked to repair the document."
+        : `The rest of ${g!.id} stays pending: the document is inconsistent until it is accepted too.`,
+    ids: own,
+    overrideLinked: unit.length > own.length,
+  });
+  const linked = [...unit, ...others].filter((id) => !own.includes(id));
+  return { title: `${own.join(" + ")} ${own.length > 1 ? "are" : "is"} linked with ${linked.join(", ")} (${g?.id ?? "a move"} “${g?.title ?? ""}”)`, choices };
+}
+
 /**
  * Accept, as the change must be decided: a change alone, a move with its other half, or a linked
- * change with its group (or its part of a large group). The label says which.
+ * change, which asks what to take along (`acceptQuestion`). The label says which.
  */
 export function acceptAction(model: TreeModel, mainPath: string, item: Item): ChangeAction {
   const ref = (id: string): Ref => ({ path: mainPath, id });
-  const rest = model.linkedRest([item.id]);
-  const base = { icon: "check", key: "a", tier: "decide" as const };
-  if (item.move && rest.every((r) => moveOthers(item).includes(r.id))) {
-    return { ...base, label: "Accept move", command: "stet.accept", args: [ref(item.id)], detail: "Removes the passage from its old place and inserts it at the new one." };
+  const base = { icon: "check", key: "a", tier: "decide" as const, command: "stet.accept", args: [ref(item.id)] };
+  const q = acceptQuestion(model, item);
+  if (!q) {
+    return item.move
+      ? { ...base, label: "Accept move", detail: "Removes the passage from its old place and inserts it at the new one." }
+      : { ...base, label: "Accept", detail: "Applies the change to your file." };
   }
   const part = model.partOf(item);
-  const unit = part ? partId(part.group.id, part.index) : model.linkedGroup(item)?.id;
-  if (!rest.length || !unit) return { ...base, label: "Accept", command: "stet.accept", args: [ref(item.id)], detail: "Applies the change to your file." };
-  const n = rest.length + 1;
-  return {
-    ...base,
-    label: part ? `Accept part ${part.index + 1} of ${part.group.parts!.length} (${n} changes)` : `Accept all ${n} linked`,
-    command: "stet.acceptGroup",
-    args: [ref(unit)],
-    detail: `${[item.id, ...rest.map((r) => r.id)].join(", ")} belong together: accepting only some would break the document.`,
-  };
+  const first = q.choices[0]!;
+  const label = part ? `Accept part ${part.index + 1} of ${part.group.parts!.length}…` : first.ids.length > 1 && !first.overrideLinked ? `Accept all ${first.ids.length} linked…` : "Accept…";
+  return { ...base, label, detail: `${q.title}: asks which to accept.` };
 }
 
 /** Every action on `item`, in the order they're shown everywhere. */
@@ -58,7 +100,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
   if (live) {
     const accept = acceptAction(model, mainPath, item);
     out.push(accept);
-    if (accept.command === "stet.acceptGroup") {
+    if (acceptQuestion(model, item)?.choices.some((c) => c.overrideLinked)) {
       out.push({ label: `Accept only ${item.id}`, icon: "check", command: "stet.acceptOnly", args: r, tier: "decide", detail: "Breaks the linked group; the agent is asked to repair the document." });
     }
     out.push({ label: item.move ? "Reject move…" : "Reject…", icon: "close", key: "r", command: "stet.reject", args: r, tier: "decide", detail: "With an optional reason, which the agent gets." });

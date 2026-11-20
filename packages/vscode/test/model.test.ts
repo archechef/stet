@@ -321,7 +321,7 @@ describe("test report 2026-11-20: confirmations and screen readers", () => {
 
   it("reads a change out in words", () => {
     expect(itemSpoken(item("2.1", "C2", { oldText: "problem", newText: "task" }), 4)).toBe("Change 2.1, replace “problem” with “task”, in main.tex line 4, pending");
-    expect(itemSpoken(item("2.2", "C2", { oldText: "", newText: "very ", status: "needs_revision" }))).toBe("Change 2.2, insert “very”, in main.tex, needs revision");
+    expect(itemSpoken(item("2.2", "C2", { oldText: "", newText: "very ", status: "needs_revision" }))).toBe("Change 2.2, insert “very”, in main.tex, revision requested");
     expect(itemSpoken(item("2.3", "C2", { kind: "add-file", file: "a.tex" }))).toBe("Change 2.3, add file in a.tex, pending");
   });
 });

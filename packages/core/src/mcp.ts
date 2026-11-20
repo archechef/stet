@@ -242,6 +242,12 @@ export function describeSubmit(r: SubmitResult): string {
   return lines.join("\n");
 }
 
+/** `text` as the end of a sentence: a full stop added, unless it ends in one already ("speed.." in feedback, test report v0.16.0, B13). */
+function sentence(text: string): string {
+  const t = text.trimEnd();
+  return /[.!?…]["'”’)]*$/.test(t) ? t : t + ".";
+}
+
 export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): string {
   const label = style.label ?? ((t: string) => t);
   const reply = style.reply ?? (() => "stet_reply");
@@ -253,16 +259,16 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
     case "rejected":
       if (d.acceptFailed)
         return (
-          `${label("REJECTED", "bad")} ${it}${d.reason ? `; reason: ${d.reason}` : ""}. The reviewer tried to accept it, but it could not be applied ` +
+          `${label("REJECTED", "bad")} ${sentence(`${it}${d.reason ? `; reason: ${d.reason}` : ""}`)} The reviewer tried to accept it, but it could not be applied ` +
           `(${d.acceptFailed}): sync, and if it is still wanted, propose it again against the current text.`
         );
-      return `${label("REJECTED", "bad")} ${it}${d.reason ? `; reason: ${d.reason}` : ""}. Do not propose this change again.`;
+      return `${label("REJECTED", "bad")} ${sentence(`${it}${d.reason ? `; reason: ${d.reason}` : ""}`)} Do not propose this change again.`;
     case "revision_requested":
       return `${label("REVISION REQUESTED", "warn")} for ${it}: ${d.comment}`;
     case "comment":
       return `${label("COMMENT", "info")} on ${it}: ${d.text} (answer with ${reply(d.item?.id ?? "")})`;
     case "stale":
-      return `${label("STALE", "warn")} ${it}: ${d.reason}.${d.currentText ? ` Current text around it: "${oneLine(d.currentText, 400)}"` : ""} Re-propose if still relevant.`;
+      return `${label("STALE", "warn")} ${it}: ${sentence(String(d.reason))}${d.currentText ? ` Current text around it: "${oneLine(d.currentText, 400)}"` : ""} Re-propose if still relevant.`;
     case "repeat_rejected":
       return `${label("AUTO-REJECTED", "bad")} ${it}: it repeats an earlier rejected change (${d.previous}).`;
     case "group_broken":
@@ -270,6 +276,7 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
     case "note_comment":
       return `${label("REVIEWER ON NOTE", "info")} ${d.note} (${d.file}): ${d.text} (answer with ${reply(String(d.note ?? ""))})`;
     case "reopened":
+      if (d.was === "needs_revision") return `${label("PENDING AGAIN", "info")} ${it}: the reviewer took back the request to revise it. Nothing to do.`;
       return d.was === "stale"
         ? `${label("PENDING AGAIN", "info")} ${it}: it was stale because of an accept the reviewer has undone. Nothing to do.`
         : `${label("REOPENED", "info")} ${it}: the reviewer undid ${d.was === "accepted" ? "accepting" : "rejecting"} it; it is pending again${d.was === "accepted" ? " and no longer part of the document" : ""}. Nothing to do.`;

@@ -20,7 +20,7 @@ export { installHooks, uninstallHooks, hookStatus, HOOK_NAMES, type HookStatus }
 export { writeWorkspaceFiles, WORKSPACE_FILES, isWorkspaceFile, cliShellCommand, type CliCommand, type WorkspaceResult } from "./workspace.js";
 export { InboxWriter, INBOX_FILE, INBOX_TIMING, findInbox, followInbox, parseInboxLine, type InboxLine } from "./inbox.js";
 export { agentInstructions, archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
-export { Repo } from "./git.js";
+export { gitIdentity, Repo } from "./git.js";
 export { CHANGED_FILE } from "./store.js";
 export { foldPath, isInside, pathExists, samePath } from "./paths.js";
 export { verifyAgentWorktree, WorktreeIntegrityError } from "./worktree.js";

@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code focus).
+
+**Your files and decisions**
+- **Fix: undoing an accept could revert a different accepted change.** With two accepted changes of the same words (both "in every round" → "all rounds") and the second one edited since, `stet undo` of the second one reverted the first one instead. Undo now refuses when an accepted change is no longer as accepted.
+- **Edit & accept in VS Code shows where the change is.** The input box holds the change in the words around it on its line, with the change selected, and only that part can be edited: a reworded phrase no longer doubles the words next to it ("a simplea simple idea").
+- **Accepting one part of a linked group warns that the rest is still to decide** (a renamed `\label` without its `\ref`s), in `stet accept` and VS Code. In VS Code every Accept of a linked change asks what to accept (its part, the whole group, or only it), from the CodeLens, the hover and *Edit & accept* too; *Edit & accept* took a whole group of 57 changes along without asking.
+- **Accepting saves your unsaved wording first**, in the Review file and in a change's own tab: `a` in the panel used the agent's wording.
+- **Finish review says what it commits:** the files with edits of yours, that undo ends there, and which files have unsaved edits; those are no longer saved and committed without asking (*Save and commit* does).
+- **A failed accept no longer saves your unsaved edits first.** VS Code checks the accept against the editor's text, and saves only for one that works.
+
+**Bugs**
+- **Set up project** asks for your name and email when git has none (saved for this project), instead of failing with git's message and leaving a repository without a commit and with staged files. In an agent's workspace it offers to open the project instead of setting it up again.
+- **The VS Code panel redraws much faster with many changes:** the lines of all changes are found in one go (424 changes: about 6.5 s per decision before). While it redraws, keys act on the change you had selected.
+- `j`/`k` on a round or group row go to the change after or before it, not to the top or bottom of the panel.
+- **Undo goes back further:** `u` takes back one decision per press, revision requests included (`stet undo` takes back a revision request the agent hasn't answered yet). Finish review clears the accepts it committed from it, and the Undo button with them.
+- Commands from the palette or your own key bindings leave the focus where it is, and act on the change at the cursor when a round or group is selected in the panel.
+- **Share my edits set from View options** applies to one project in a window with several (it changed both projects' setting).
+- **Rewording a change as a whole in the Review file** is saved: words retyped right next to a change become part of it. It was refused as "outside the proposed changes".
+- An archived agent no longer shows as "behind your latest text" in the status bar.
+- Hovers with your wording show it as a code block again; small wording slips ("when i pause", "speed.. Do not", the change's number twice in the More… title).
+- Agent and round rows count changes waiting for the agent's revision apart ("3 pending · 1 awaiting revision").
+- When an accept fails because the text around a change was edited since, the message says what to do next.
+
+**Accessibility**
+- Results reach screen readers (as notifications when VS Code's screen-reader mode is on), and comments, revision requests, replies and resolved notes say they were sent.
+- A change's spoken label says what its row says: *revision requested*, *your wording*, the number of messages, and the wording a change was accepted with.
+- The PDF preview's title names the project in a window with several; the Reject… CodeLens has a tooltip.
+- Setting texts match what is shown (`stet.codeLens`, `stet.longChanges`, `stet.shareEdits`).
+
 - **Internal: language profiles.** Everything Stet knows about LaTeX and BibTeX (tokens, structure, maths, labels, citations, macros, included files, and PDF previews with latexmk and SyncTeX) is now in one place per language, `packages/core/src/lang/`, and the rest of Stet asks the file's profile. Nothing changes in use: same items, groups, parts and previews, and `config.json` keeps its shape. This is the groundwork for other document languages (Typst).
 
 ## 0.16.0 — 2026-11-20

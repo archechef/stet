@@ -527,7 +527,7 @@
         },
         {
           "command": "stet.setup",
-          "when": "view == stet.review",
+          "when": "view == stet.review && !stet.agentWorkspace",
           "group": "2_tools@4"
         }
       ],
@@ -716,6 +716,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "stet.setup",
+          "when": "!stet.agentWorkspace"
+        },
         {
           "command": "stet.replyThread",
           "when": "false"
@@ -1003,7 +1007,7 @@
         "stet.codeLens": {
           "type": "boolean",
           "default": true,
-          "description": "Show Accept / Reject / Edit / Comment actions above each proposed change."
+          "description": "Show Accept, Reject… and More… above each proposed change (More… lists every action, as Ctrl+. does)."
         },
         "stet.diffShowsProposals": {
           "type": "boolean",
@@ -1028,7 +1032,7 @@
             "The same panel, closed: click the change's marker in the gutter to open it.",
             "Only in the hover (and in Diff)."
           ],
-          "description": "How proposed changes are shown whose new text is too long for one line of grey text."
+          "description": "How proposed changes are shown whose new text is too long to show on one line in the editor."
         },
         "stet.newTextStyle": {
           "type": "string",
@@ -1062,6 +1066,7 @@
         },
         "stet.shareEdits": {
           "type": "string",
+          "scope": "resource",
           "enum": [
             "manual",
             "saved",
@@ -1069,7 +1074,7 @@
           ],
           "default": "manual",
           "enumDescriptions": [
-            "Agents see your saved edits when you click Share my edits (in the Stet panel or status bar).",
+            "Agents see your saved edits when you click Share my edits (the cloud button in the Stet panel's title bar).",
             "Agents see your saved edits automatically, whenever they sync.",
             "Agents see only committed text (and the changes you accepted)."
           ],

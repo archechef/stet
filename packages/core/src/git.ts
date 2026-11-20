@@ -119,6 +119,18 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/**
+ * Who git commits as in `cwd` ("Name <email>"), or null if it can't commit: no user.name /
+ * user.email and none it can guess. Asked before setup commits anything, so a missing identity
+ * doesn't leave a half set up folder (test report v0.16.0, B1).
+ */
+export async function gitIdentity(cwd: string): Promise<string | null> {
+  const r = new Repo(cwd);
+  const author = await r.tryRun(["var", "GIT_AUTHOR_IDENT"]);
+  if (!author || !(await r.tryRun(["var", "GIT_COMMITTER_IDENT"]))) return null;
+  return author.replace(/\s+\d+\s+[+-]\d{4}$/, "");
+}
+
 /** A repository location: commands run in `cwd` (any worktree of the repo). */
 export class Repo {
   /** `config`: extra settings for every git call in this repo (see `untrustedWorktreeConfig`). */

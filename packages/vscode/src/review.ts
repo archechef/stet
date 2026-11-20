@@ -179,7 +179,7 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
       lenses.push(
         lens(at, accept, `${item.id}${tag}: ${withIcon(accept)}${yours ? " (your wording)" : ""}`),
-        lens(at, { label: item.move ? "Reject move…" : "Reject…", icon: "close", command: "stet.reject", args: [ref], tier: "decide" }),
+        lens(at, { label: item.move ? "Reject move…" : "Reject…", icon: "close", command: "stet.reject", args: [ref], tier: "decide", detail: `Reject ${item.id}, with an optional reason for the agent` }),
         ...(yours ? [lens(at, { label: "Use agent's wording", icon: "discard", command: "stet.clearDraft", args: [ref], tier: "decide" })] : []),
         lens(at, { label: "More…", icon: "ellipsis", command: "stet.changeActions", args: [ref], tier: "other", detail: "Every action on this change (also Ctrl+. in the change)" }),
       );

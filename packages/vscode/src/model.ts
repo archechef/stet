@@ -68,6 +68,13 @@ export interface Ref {
 export const isRef = (v: unknown): v is Ref =>
   !!v && typeof v === "object" && typeof (v as Ref).path === "string" && typeof (v as Ref).id === "string";
 
+/**
+ * Whether a command's argument means it came from the Review panel (a key there, or a row's
+ * button or menu), so the focus stays there for the next change. From the palette or a key
+ * binding of the user's the argument is undefined: the focus stays where it is (test report v0.16.0, B6).
+ */
+export const fromPanel = (arg: unknown): boolean => arg === "panel" || (!!arg && typeof arg === "object" && "project" in arg && !isRef(arg));
+
 export const LIVE: readonly ItemStatus[] = ["pending", "needs_revision"];
 export const isLive = (i: Item) => LIVE.includes(i.status);
 const num = (id: string) => Number(id.slice(1));
@@ -231,6 +238,16 @@ export class TreeModel {
     return this.snap.items.filter((i) => isLive(i) && pred(i)).length;
   }
 
+  /**
+   * "3 pending · 1 awaiting revision" for the open changes matching `pred`: those waiting for the
+   * agent's revision are not yours to review, as in the badge (test report v0.16.0, B14).
+   */
+  openText(pred: (i: Item) => boolean): string {
+    const pending = this.snap.items.filter((i) => i.status === "pending" && pred(i)).length;
+    const revising = this.snap.items.filter((i) => i.status === "needs_revision" && pred(i)).length;
+    return [`${pending} pending`, ...(revising ? [`${revising} awaiting revision`] : [])].join(" · ");
+  }
+
   /** How the decided changes matching `pred` were decided, e.g. "5 accepted · 2 rejected". */
   outcome(pred: (i: Item) => boolean): string {
     const counts = new Map<ItemStatus, number>();
@@ -307,6 +324,11 @@ export const shortId = (id: string): string => String(numberInRound(id) ?? id);
 /** Words a list of move changes touches (the longer side of each). */
 const changedCount = (cs: { was: string; now: string }[]) => cs.reduce((n, c) => n + Math.max(words(c.was), words(c.now)), 0);
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
+
+/** Title of a change's More… list: its id, then its label without the number again ("1.1: 1 …", test report v0.16.0, B13). */
+export function actionsTitle(it: Item, get?: (id: string) => Item | undefined): string {
+  return `${it.id}: ${itemLabel(it, get).slice(shortId(it.id).length).trim()}`;
+}
 
 export function itemLabel(it: Item, get?: (id: string) => Item | undefined): string {
   const n = shortId(it.id);
@@ -439,6 +461,72 @@ export function positionIn(start: { line: number; character: number }, text: str
 }
 
 /** Whether ghost text can show `s` in full: one line, not longer than ghostText's limit. */
+/**
+ * The words around a change on its line, for editing it in an input box: the box holds
+ * `pre + text + post` with the change selected, so its bounds are visible and the words next to
+ * it aren't typed twice (test report v0.16.0, D2: "relies on a simplea simple idea"). At most
+ * about `max` characters each side, cut at a space.
+ */
+export function editFrame(item: Pick<Item, "context">, max = 60): { pre: string; post: string } {
+  let pre = item.context.before.slice(item.context.before.lastIndexOf("\n") + 1);
+  if (pre.length > max) {
+    const cut = pre.indexOf(" ", pre.length - max);
+    pre = cut < 0 ? "" : pre.slice(cut + 1).trimStart();
+  }
+  const nl = item.context.after.indexOf("\n");
+  let post = nl < 0 ? item.context.after : item.context.after.slice(0, nl);
+  if (post.length > max) {
+    const cut = post.lastIndexOf(" ", max);
+    post = cut < 0 ? "" : post.slice(0, cut).trimEnd();
+  }
+  return { pre, post };
+}
+
+/** The change's new wording in an edited `pre + text + post`, or null if the edit reaches the words around it. */
+export function editedPart(frame: { pre: string; post: string }, value: string): string | null {
+  if (value.length < frame.pre.length + frame.post.length || !value.startsWith(frame.pre) || !value.endsWith(frame.post)) return null;
+  return value.slice(frame.pre.length, value.length - frame.post.length);
+}
+
+/** The button of Finish review's question that saves unsaved editors into the commit. */
+export const FINISH_SAVE = "Save and commit";
+
+/**
+ * Finish review's question: which files are committed, which hold edits of yours that go along,
+ * which have unsaved text (not committed unless saved), and that undo ends with the commit.
+ */
+export function finishQuestion(count: number, files: string[], yourEdits: string[], unsaved: string[]): { message: string; detail: string; buttons: string[] } {
+  const list = (xs: string[]) => xs.join(", ");
+  const detail = [`Files: ${list(files)}.`];
+  if (yourEdits.length) detail.push(`Your own edits in ${list(yourEdits)} are committed too (Stet commits whole files).`);
+  if (unsaved.length) detail.push(`${list(unsaved)} ${unsaved.length === 1 ? "has" : "have"} unsaved edits: “Commit” leaves them out, “${FINISH_SAVE}” saves them into the commit.`);
+  detail.push("After the commit, Undo no longer takes these changes back (git revert can).");
+  return { message: `Commit ${count} accepted change${count === 1 ? "" : "s"}?`, detail: detail.join("\n"), buttons: unsaved.length ? ["Commit", FINISH_SAVE] : ["Commit"] };
+}
+
+/**
+ * `j` / `k`: the row of the next (dir 1) or previous (-1) change after row `cur` of the panel's
+ * rows (`isItem` tells changes from rounds, groups, …); from no row, the first or last change.
+ * -1 if there is none that way.
+ */
+export function nextItemIndex(isItem: boolean[], cur: number, dir: 1 | -1): number {
+  if (cur < 0) {
+    const i = dir > 0 ? isItem.indexOf(true) : isItem.lastIndexOf(true);
+    return i;
+  }
+  for (let i = cur + dir; i >= 0 && i < isItem.length; i += dir) if (isItem[i]) return i;
+  // Already at the last (first) change: stay on it.
+  return isItem[cur] ? cur : -1;
+}
+
+/**
+ * The active agents behind the user's latest text. The check runs a little after each refresh;
+ * until then an agent archived meanwhile was still named in the status bar (test report v0.16.0, B11).
+ */
+export function behindAgents(snap: Pick<Snapshot, "agents" | "syncNeeded">): string[] {
+  return snap.agents.filter((a) => a.state === "active" && snap.syncNeeded.has(a.id)).map((a) => a.id);
+}
+
 export const fitsInline = (s: string, max = 80): boolean => !/[\r\n]/.test(s) && s.length <= max;
 
 /** The full new text of a proposal, for the editor's inline widget. Agent text: fenced, never rendered. */
@@ -448,6 +536,11 @@ export function proposalMarkdown(item: Item): string {
 }
 
 /** Markdown fenced block that is safe for any content. */
+/** The reviewer's wording of a change, for hovers: the code block on lines of its own (test report v0.16.0, B12). */
+export function draftMarkdown(item: Pick<Item, "draft" | "file">): string {
+  return `✎ **Your wording** (from the review of this file), which Accept uses:\n\n${fence(item.draft ?? "", profileByName(item.file).fence)}`;
+}
+
 export function fence(text: string, lang = ""): string {
   const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((m) => m.length));
   const f = "`".repeat(longest + 1);
@@ -555,12 +648,20 @@ export function dissolveQuestion(g: { id: string; kind: string; title: string })
  */
 export function itemSpoken(it: Item, line?: number): string {
   const where = `in ${it.file}${line && it.kind === "modify" ? ` line ${line}` : ""}`;
-  const state = it.status.replace(/_/g, " ");
+  // As the row says it (test report v0.16.0, accessibility): "revision requested", your wording,
+  // the conversation.
+  const extra = [
+    ...(it.draft !== undefined && isLive(it) ? ["your wording"] : []),
+    ...(it.thread.length ? [`${it.thread.length} message${it.thread.length === 1 ? "" : "s"}`] : []),
+  ];
+  const state = [STATUS_TEXT[it.status], ...extra].join(", ");
   if (it.kind !== "modify") return `Change ${it.id}, ${it.kind.replace("-", " ")} ${where}, ${state}`;
-  const [o, n] = changeSummary(it.oldText, it.newText, 60);
-  const breaks = paragraphChange(it.oldText, it.newText);
+  // What it says: your wording if you have one, or the text it was accepted with.
+  const text = it.status === "accepted" && it.resolution ? it.resolution.appliedText : isLive(it) ? (it.draft ?? it.newText) : it.newText;
+  const [o, n] = changeSummary(it.oldText, text, 60);
+  const breaks = paragraphChange(it.oldText, text);
   const what = breaks
     ? `${breaks}, “${o}” to “${n}”`
-    : !it.oldText ? `insert “${n}”` : !it.newText ? `delete “${o}”` : `replace “${o}” with “${n}”`;
+    : !it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`;
   return `Change ${it.id}, ${what}, ${where}, ${state}${it.supersedes ? `, revises ${it.supersedes}` : ""}`;
 }

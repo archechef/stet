@@ -29,6 +29,21 @@ describe("review document of a file", () => {
     expect("error" in r && r.error).toMatch(/outside the proposed changes \(near “/);
   });
 
+  it("grows a change over words reworded right next to it (test report v0.16.0, B9)", () => {
+    // "the task" retyped as "a hard task": by letters, "the" is outside the change "task".
+    const r = mapReviewEdits(doc, "We study a hard task of reviewing changes. It scales to long documents.") as { texts: Map<string, string>; grown: Map<string, unknown> };
+    expect(r.texts.get("1.1")).toBe("a hard task");
+    expect(r.grown.get("1.1")).toEqual({ before: "the ".length, after: 0 });
+    expect(r.texts.get("1.2")).toBe("long");
+    expect(r.grown.has("1.2")).toBe(false);
+    // Across punctuation and spaces too, never across a word, a paragraph, or into another change.
+    const d = reviewDocument("Fast, cheap and good.\n\nNext.", [{ id: "a", start: 6, end: 11, text: "cheap" }]);
+    expect((mapReviewEdits(d, "Quick, cheap and good.\n\nNext.") as { texts: Map<string, string> }).texts.get("a")).toBe("Quick, cheap");
+    expect(mapReviewEdits(d, "Fast, cheap and great.\n\nNext.")).toHaveProperty("error");
+    expect(mapReviewEdits(d, "Fast, cheap and good.\n\nLast.")).toHaveProperty("error");
+    expect(mapReviewEdits(doc, "We study the task of reviewing changes. It grows to long documents.")).toHaveProperty("error");
+  });
+
   it("gives text typed where two changes meet to the later one", () => {
     const d = reviewDocument("ab", [{ id: "x", start: 0, end: 1, text: "A" }, { id: "y", start: 1, end: 2, text: "B" }]);
     const r = mapReviewEdits(d, "A-B") as { texts: Map<string, string> };

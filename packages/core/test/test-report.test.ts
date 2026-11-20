@@ -93,7 +93,8 @@ describe("D3: a linked group decided differently in its parts", () => {
   it("tells the reviewer, on the accept and on the reject", async () => {
     const { stet, label, refs } = await renamed();
     const acc = await stet.accept(refs.map((i) => i.id));
-    expect(acc.warnings).toEqual([]);
+    // The label is still pending: that is said too (test report v0.16.0, D3).
+    expect(acc.warnings.join(" ")).toMatch(/partly accepted: .* still to decide/);
     const rejected = await stet.reject([label.id]);
     const w = await stet.partlyDecided(rejected);
     expect(w).toHaveLength(1);

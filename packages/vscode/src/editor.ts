@@ -1,7 +1,7 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
 import { moveChanges, movesOut, moveTexts, partIndexOf, profileByName, type Item } from "@stet/core";
-import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
+import { diffBlock, draftMarkdown, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
 import type { Project } from "./project.js";
 
@@ -295,7 +295,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       const accept = acceptAction(model, p.mainPath, item);
       lenses.push(
         new vscode.CodeLens(at, { title: `${item.id}${tag}: ${withIcon(accept)}`, tooltip: accept.detail, command: accept.command, arguments: accept.args }),
-        new vscode.CodeLens(at, { title: withIcon({ icon: "close", label: item.move ? "Reject move…" : "Reject…" }), command: "stet.reject", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: withIcon({ icon: "close", label: item.move ? "Reject move…" : "Reject…" }), tooltip: `Reject ${item.id}, with an optional reason for the agent`, command: "stet.reject", arguments: [ref(item.id)] }),
         new vscode.CodeLens(at, { title: withIcon({ icon: "ellipsis", label: "More…" }), tooltip: "Every action on this change (also Ctrl+. in the change)", command: "stet.changeActions", arguments: [ref(item.id)] }),
       );
     }
@@ -387,7 +387,7 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   }
   if (item.status === "accepted" && item.resolution?.edited && item.kind === "modify")
     lines.push(`✎ **Accepted with your wording:** ${diffBlock(item.oldText, item.resolution.appliedText)}\n\nThe agent proposed:`);
-  if (item.draft !== undefined) lines.push(`✎ **Your wording** (from the review of this file), which Accept uses: ${fence(item.draft, profileByName(item.file).fence)}`);
+  if (item.draft !== undefined) lines.push(draftMarkdown(item));
   for (const gid of item.groups) {
     const g = model.group(gid);
     if (g && g.kind !== "atomic") lines.push(`${g.kind === "linked" ? "🔗 linked" : "▣ related"}: ${esc(g.title)} (${g.items.join(", ")})${g.state === "broken" ? " ⚠ broken" : ""}`);
