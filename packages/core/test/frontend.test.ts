@@ -1,10 +1,32 @@
 /** Service calls used by frontends (VS Code extension): locating in unsaved text, finishing a review, runtime config. */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { edit, git, PAPER, read, setup } from "./helpers.js";
 
 describe("frontend support", () => {
+  it("signals every change to records in the store's folder, also without an event (bug report 2026-11-20)", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    edit(wt, "main.tex", "proposed by an AI", "proposed by an agent");
+    const { items } = await stet.submit("a", { title: "t" });
+    expect(items).toHaveLength(2);
+    const marker = join(repo, ".git", "stet", "changed");
+    const signalled = async (fn: () => Promise<unknown>) => {
+      rmSync(marker, { force: true });
+      await fn();
+      return existsSync(marker);
+    };
+    // Reading signals nothing (the panel's own reloads would loop).
+    expect(await signalled(() => Promise.all([stet.listItems(), stet.listGroups(), stet.listChangesets()]))).toBe(false);
+    const { group } = await stet.group("a", items.map((i) => i.id), "related", "Wording");
+    // Removing a group: items, changeset and group change, no event.
+    expect(await signalled(() => stet.ungroup(group!.id, "a"))).toBe(true);
+    // Merging changes into one: the old ones superseded, a new one made, no event.
+    expect(await signalled(() => stet.group("a", items.map((i) => i.id), "atomic", "One change"))).toBe(true);
+  });
+
   it("locates items in unsaved editor text", async () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");

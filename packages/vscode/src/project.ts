@@ -2,7 +2,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import { relative, resolve } from "node:path";
 import * as vscode from "vscode";
-import { foldPath, isSafeRepoPath, Stet } from "@stet/core";
+import { CHANGED_FILE, foldPath, isSafeRepoPath, Stet } from "@stet/core";
 import type { Snapshot } from "./model.js";
 
 export class Project implements vscode.Disposable {
@@ -49,11 +49,14 @@ export class Project implements vscode.Disposable {
   /** Watch the store for changes made by agents, the CLI or other windows. */
   startWatching(): void {
     try {
-      // Every change of interest appends an event or allocates an id; ignore the lock file,
+      // The records live in subfolders, which this doesn't watch: the store rewrites `changed`
+      // after an operation changed any of them, events and ids aside. Ignore the lock file,
       // which our own reads take (reacting to it would loop).
+      // (Prefixes: an atomic write may be reported under its temporary name.)
+      const signals = ["events.jsonl", "state.json", "config.json", CHANGED_FILE];
       this.watcher = watch(this.storeRoot, { persistent: false }, (_e, file) => {
         const f = String(file ?? "");
-        if (!f || /^(events\.jsonl|state\.json|config\.json)/.test(f)) this.scheduleRefresh();
+        if (!f || signals.some((s) => f.startsWith(s))) this.scheduleRefresh();
       });
     } catch {
       /* fall back to refresh on focus and after our own actions */

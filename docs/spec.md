@@ -93,6 +93,7 @@ The store lives in the git *common* dir (`git rev-parse --git-common-dir`). That
   items/S<n>.json
   notes/N<n>.json        # reviewer notes to agents (§7.8)
   events.jsonl           # append-only event log (feedback + UI live updates)
+  changed                # rewritten after an operation changes any record (UI live updates)
   previews/              # PDF preview cache
   lock                   # advisory lock file
 ```
@@ -634,7 +635,7 @@ An optional **committed** `stet.json` in the repo root supplies team defaults (f
 - `accept(ids, {editedText?, overrideLinked?})`, `reject(ids, reason?)`, `requestRevision(id, text)`, `comment(id, text)`, `revertAccepted(id)`, `restore(id)`
 - `acceptGroup(id)` (all-or-nothing for linked groups; `G7.2` accepts one part), `groupTarget(id)` (a group or part and its pending items), `rejectGroup(id, reason?)`, `rejectAndRevise(id, reason)` (§6.4.5), `ungroup(id)`
 - `preview(id) → {before: png, after: png, page}` (asynchronous, cached)
-- `subscribe(listener)`: a live event stream, backed by watching `events.jsonl`
+- `subscribe(listener)`: a live event stream, backed by watching `events.jsonl`; frontends that show records reload when `changed` is rewritten, since not every change appends an event (merging changes into one, removing a group)
 - `commitAccepted()`, `sync remote` (pull / push according to config)
 
 The web UI will expose this API as REST plus Server-Sent Events on `localhost`, protected by a random token, with no other code changes.

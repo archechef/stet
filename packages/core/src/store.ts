@@ -57,6 +57,9 @@ async function readJson<T>(path: string): Promise<T | null> {
 
 const lockContext = new AsyncLocalStorage<Store>();
 
+/** The file in the store's folder rewritten after records change (see `Store.signalChange`). */
+export const CHANGED_FILE = "changed";
+
 type Kind = "agents" | "changesets" | "groups" | "items" | "notes";
 
 /** Item, group, changeset and agent ids: a name, never a path. */
@@ -142,9 +145,12 @@ export class Store {
     beat.unref();
     this.session = new Map();
     this.token = token;
+    this.wrote = false;
     try {
       return await lockContext.run(this, fn);
     } finally {
+      // One signal per operation that changed records, while the lock is still held.
+      if (this.wrote) await this.signalChange();
       this.session = null;
       this.token = null;
       clearInterval(beat);
@@ -268,6 +274,24 @@ export class Store {
     if (kind === "notes") await mkdir(this.dir(kind), { recursive: true });
     await writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
     this.cached(kind)?.set(v.id, structuredClone(v));
+    await this.changedRecords();
+  }
+
+  /** Whether the operation holding the lock wrote a record (see `signalChange`). */
+  private wrote = false;
+  private async changedRecords() {
+    if (lockContext.getStore() === this) this.wrote = true;
+    else await this.signalChange();
+  }
+
+  /**
+   * Rewrite `changed` in the store's folder: a record (item, group, changeset, agent, note) was
+   * written or removed. Watchers of the folder (the VS Code panel) see the records' own files
+   * only in subfolders, and not every operation appends an event (bug report 2026-11-20: merging
+   * changes into one, removing a group).
+   */
+  private async signalChange() {
+    await writeFile(join(this.root, CHANGED_FILE), `${Date.now()}\n`).catch(() => undefined);
   }
 
   getAgent = (id: string) => this.getOne<Agent>("agents", id);
@@ -289,6 +313,7 @@ export class Store {
     await this.fence();
     await rm(join(this.dir("groups"), `${id}.json`), { force: true });
     this.cached("groups")?.delete(id);
+    await this.changedRecords();
   };
 
   /** Append an event. Call while holding the lock. */

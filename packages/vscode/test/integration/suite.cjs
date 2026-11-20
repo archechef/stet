@@ -58,6 +58,18 @@ exports.run = async function run() {
     });
     const titles = lenses.map((l) => l.command && l.command.title);
     check("code lenses for both items", titles.includes(`${fx.items[0]}: $(check) Accept`) && titles.includes(`${fx.items[1]}: $(check) Accept`), titles.join(" | "));
+
+    // A change made outside the extension that appends no event (removing a group) still
+    // reaches the editor and the panel: the store signals it (bug report 2026-11-20).
+    {
+      const stetCli = (...a) => execFileSync(cfg.cli.command, [...cfg.cli.args, ...a, "--json"], { cwd: fx.repo, env: { ...process.env, ...(cfg.cli.env || {}) }, encoding: "utf8" });
+      const lens0 = async () => ((await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri)) || []).map((l) => l.command && l.command.title).find((t) => t && t.startsWith(`${fx.items[0]}:`)) || "";
+      const g = JSON.parse(stetCli("group", fx.items[0], fx.items[1], "--kind", "linked", "-t", "Test", "--reason", "integration test")).group.id;
+      const linked = await until("linked lens", async () => ((await lens0()).includes("linked") ? true : null), 10000).catch(() => false);
+      stetCli("ungroup", g);
+      const unlinked = await until("lens after ungroup", async () => ((await lens0()) === `${fx.items[0]}: $(check) Accept` ? true : null), 10000).catch(() => false);
+      check("a group removed outside the extension disappears without a reload", linked && unlinked, JSON.stringify({ linked, lens: await lens0() }));
+    }
     const first = lenses.find((l) => l.command.title === `${fx.items[0]}: $(check) Accept`);
     check("lens on the right line", first.range.start.line === 3, first.range.start.line);
     // Above each change: Accept, Reject… and More… (every action, the same list as everywhere).
