@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
-import { applyChanges, changeMarks, containerArgs, findWords, markRuns, parseWords, plainWords, wordDiff, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
+import { applyChanges, changeMarks, containerArgs, findWords, findWordsIn, markRuns, parseWords, plainWords, wordDiff, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -186,6 +186,18 @@ describe("preview: finding a change's words on the page", () => {
       .join("") +
     `</block></flow></page></doc>`;
 
+  it("rebuilds lines around maths: a superscript, or a line's halves out of order", () => {
+    const word = (t: string, x: number, y0: number, y1: number) => `<word xMin="${x}" yMin="${y0}" xMax="${x + 8}" yMax="${y1}">${t}</word>`;
+    const xml =
+      `<doc><page width="612" height="792"><flow><block>` +
+      `<line>${word("first", 100, 100, 109)}${word("line", 140, 100, 109)}</line>` +
+      `<line>${word("t", 190, 111, 117)}</line>` +
+      `<line>${word("and", 160, 112, 121)}${word("more", 200, 112, 121)}</line>` +
+      `<line>${word("X", 100, 112, 121)}${word("then", 120, 112, 121)}</line>` +
+      `</block></flow></page></doc>`;
+    expect(parseWords(xml, 1).map((x) => x.text)).toEqual(["first", "line", "X", "then", "and", "t", "more"]);
+  });
+
   it("reads the words in order and joins a word hyphenated at a line end", () => {
     const w = parseWords(xhtml([["Sentence", "one", "repre-"], ["sentation", "ends."]]), 3);
     expect(w.map((x) => x.text)).toEqual(["Sentence", "one", "representation", "ends."]);
@@ -215,6 +227,14 @@ describe("preview: finding a change's words on the page", () => {
     expect(f.map((w) => w.text)).toEqual(["14", "says"]);
   });
 
+  it("finds a long change from its first word, not just its end", () => {
+    // A paragraph of 150 words rewritten: matched by its first and last 20 words, in a stretch of the page as long as it.
+    const target = Array.from({ length: 150 }, (_, k) => `word${k}`);
+    const lines = [["before", "one", "two"], ...Array.from({ length: 15 }, (_, l) => target.slice(l * 10, l * 10 + 10)), ["after", "three", "four"]];
+    const f = findWordsIn(parseWords(xhtml(lines), 1), ["before", "one", "two"], target, ["after", "three", "four"], 1)!;
+    expect([f.words[0]!.text, f.before?.text, f.after?.text]).toEqual(["word0", "two", "after"]);
+  });
+
   it("gives up when the words aren't there", () => {
     expect(findWords(page, ["lorem"], ["ipsum", "dolor"], ["amet"], 1)).toBeNull();
   });
@@ -236,9 +256,22 @@ describe("preview: marking the changed words", () => {
   it("compares words as typeset: punctuation counts, hyphens from reflowing don't", () => {
     // `k` → `k^2` before the equation number (2): the exponent is the change, not the number.
     const d = wordDiff([w("k.", 0, 0), w("(2)", 300, 0)], [w("k", 0, 0), w("2", 8, -3), w(".", 14, 0), w("(2)", 300, 0)]);
-    expect(d.inserted.map((x) => x.text)).toEqual(["k", "2", "."]);
+    expect(d.inserted.map((x) => x.text)).toEqual(["2"]);
     expect(wordDiff([w("However", 0, 0)], [w("However,", 0, 0)]).inserted).toHaveLength(1);
     expect(wordDiff([w("change-by-change", 0, 0)], [w("changeby-change", 0, 0)]).inserted).toHaveLength(0);
+  });
+
+  it("reads maths alike however the line is spaced or broken", () => {
+    // pdftotext splits "p+i" by the spacing of the line.
+    const spaced = wordDiff([w("so", 0, 0), w("p+i", 20, 0), w("holds", 60, 0)], [w("so", 0, 0), w("p", 20, 0), w("+", 30, 0), w("i", 40, 0), w("holds", 60, 0)]);
+    expect([spaced.inserted, spaced.removed]).toEqual([[], []]);
+    // A formula that stays while the words around it change is not a change.
+    const moved = wordDiff(
+      [w("in", 0, 0), w("R", 10, 0), w("for", 20, 0), w("a", 40, 0), w("≥", 50, 0), w("0.", 60, 0), w("Let", 80, 0)],
+      [w("for", 0, 0), w("every", 20, 0), w("a", 40, 0), w("≥", 50, 0), w("0.", 60, 0), w("Then", 80, 0)],
+    );
+    expect(moved.inserted.map((x) => x.text)).toEqual(["every", "Then"]);
+    expect(moved.removed.map((x) => x.text)).toEqual(["in", "R", "Let"]);
   });
 
   describe("only where the changes are", () => {

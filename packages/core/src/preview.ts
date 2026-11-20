@@ -26,6 +26,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, utim
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, posix, sep } from "node:path";
 import { filterOverrides, Repo } from "./git.js";
+import { diffArrays } from "diff";
 import { inlineDiff } from "./inline.js";
 import { writeInside } from "./safefs.js";
 import { fromLf, lineOf, type Eol } from "./text.js";
@@ -958,24 +959,56 @@ export interface PdfWord {
   y1: number;
 }
 
-/** The words of `pdftotext -bbox-layout` output, in reading order; a word hyphenated at a line end is joined. */
+/**
+ * The words of `pdftotext -bbox-layout` output, in reading order; a word hyphenated at a line end
+ * is joined. Around maths pdftotext cuts a printed line into pieces in no stable order (a
+ * superscript on a line of its own, the second half of a line before the first), so each block's
+ * lines are rebuilt from where the words are: words of the block's usual size on one level make
+ * a line, smaller ones (sub- and superscripts, operators) join the line their middle is in, and
+ * every line is read left to right. Blocks stay as they are, so columns stay apart, and both
+ * versions of a page read maths alike.
+ */
 export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
-  const out: PdfWord[] = [];
+  const blocks: PdfWord[][] = [];
   let page = firstPage - 1;
-  const re = /<page\b|<line\b[^>]*>|<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g;
-  let lineStart = 0;
+  let block: PdfWord[] | null = null;
+  const re = /<page\b|<block\b|<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g;
   for (let m = re.exec(xhtml); m; m = re.exec(xhtml)) {
-    if (m[0] === "<page") page++;
-    else if (m[0].startsWith("<line")) lineStart = out.length;
-    else {
-      const text = decodeXml(m[5]!);
-      const prev = out[out.length - 1];
-      // "repre-" at the end of the line before, then "sentation": one word.
-      if (prev && out.length === lineStart && prev.page === page && /[A-Za-z]-$/.test(prev.text)) {
-        prev.text = prev.text.slice(0, -1) + text;
-        continue;
+    if (m[0] === "<page") (page++, (block = null));
+    else if (m[0] === "<block") blocks.push((block = []));
+    else (block ?? blocks[blocks.push((block = [])) - 1]!).push({ text: decodeXml(m[5]!), page, x0: Number(m[1]), y0: Number(m[2]), x1: Number(m[3]), y1: Number(m[4]) });
+  }
+  const out: PdfWord[] = [];
+  for (const words of blocks) {
+    if (!words.length) continue;
+    const h = (w: PdfWord) => w.y1 - w.y0;
+    const mid = (w: PdfWord) => (w.y0 + w.y1) / 2;
+    const usual = [...words].map(h).sort((a, b) => a - b)[Math.floor(words.length / 2)]!;
+    // Lines: the usual-size words, by level.
+    const rows: { mid: number; y0: number; y1: number; words: PdfWord[] }[] = [];
+    for (const w of [...words].filter((w) => h(w) >= 0.85 * usual).sort((a, b) => mid(a) - mid(b))) {
+      const row = rows.find((r) => Math.abs(r.mid - mid(w)) < 0.3 * usual);
+      if (row) row.words.push(w), (row.y0 = Math.min(row.y0, w.y0)), (row.y1 = Math.max(row.y1, w.y1));
+      else rows.push({ mid: mid(w), y0: w.y0, y1: w.y1, words: [w] });
+    }
+    // The rest: into the line its middle is in, else the nearest.
+    for (const w of words.filter((w) => h(w) < 0.85 * usual)) {
+      const near = (r: (typeof rows)[number]) => (mid(w) >= r.y0 && mid(w) <= r.y1 ? 0 : Math.min(Math.abs(mid(w) - r.y0), Math.abs(mid(w) - r.y1)));
+      const row = rows.reduce<(typeof rows)[number] | undefined>((best, r) => (!best || near(r) < near(best) ? r : best), undefined);
+      if (row) row.words.push(w);
+      else rows.push({ mid: mid(w), y0: w.y0, y1: w.y1, words: [w] });
+    }
+    for (const row of rows.sort((a, b) => a.mid - b.mid)) {
+      const lineStart = out.length;
+      for (const w of row.words.sort((a, b) => a.x0 - b.x0)) {
+        const prev = out[out.length - 1];
+        // "repre-" at the end of the line before, then "sentation": one word.
+        if (prev && out.length === lineStart && prev.page === w.page && /[A-Za-z]-$/.test(prev.text)) {
+          prev.text = prev.text.slice(0, -1) + w.text;
+          continue;
+        }
+        out.push(w);
       }
-      out.push({ text, page, x0: Number(m[1]), y0: Number(m[2]), x1: Number(m[3]), y1: Number(m[4]) });
     }
   }
   return out;
@@ -1039,12 +1072,14 @@ export interface Located {
 
 /** `findWords`, saying whether it found the change's own words or only those around it. */
 export function findWordsIn(words: PdfWord[], before: string[], target: string[], after: string[], hint?: number): Located | null {
-  // Long changes: their beginning and end are enough.
+  // Long changes: their beginning and end are enough to match...
   const t = target.length > 40 ? [...target.slice(0, 20), ...target.slice(-20)] : target;
   const seq = [...before, ...t, ...after];
   if (seq.length < 2) return null;
   const pdf = words.map((w) => norm(w.text));
-  const span = seq.length + Math.max(6, Math.ceil(seq.length / 2));
+  // ...in a stretch of the page as long as the whole change, and then some: maths typesets as more
+  // words than the source shows (a long rewritten paragraph was found by its end only).
+  const span = before.length + after.length + target.length + Math.max(6, Math.ceil(target.length * 1.5));
   let best: { score: number; pairs: [number, number][]; at: number } | null = null;
   for (let s = 0; s < pdf.length; s++) {
     if (!seq.slice(0, 4).includes(pdf[s]!) && !t.includes(pdf[s]!)) continue; // windows start at a likely word
@@ -1071,14 +1106,73 @@ export function findWordsIn(words: PdfWord[], before: string[], target: string[]
  * reflowing a paragraph adds and removes.
  */
 export function wordDiff(before: PdfWord[], after: PdfWord[]): { inserted: PdfWord[]; removed: PdfWord[] } {
-  // Between two PDFs a change of case is a change (unlike matching source words to the page).
-  const exact = (w: string) => w.normalize("NFKC").replace(/[\s\-\u00ad\u2010\u2011]/g, "");
-  const b = before.filter((w) => exact(w.text));
-  const a = after.filter((w) => exact(w.text));
-  const pairs = lcs(b.map((w) => exact(w.text)), a.map((w) => exact(w.text)));
-  const inB = new Set(pairs.map(([i]) => i));
-  const inA = new Set(pairs.map(([, j]) => j));
-  return { inserted: a.filter((_, j) => !inA.has(j)), removed: b.filter((_, i) => !inB.has(i)) };
+  // Maths in pieces, letters apart from digits and each symbol: how pdftotext splits maths into
+  // words depends on the spacing of the line ("p+i" in one version is "p + i" in the other). A
+  // word differs if a piece of it does. Between two PDFs a change of case is a change.
+  type Piece = { text: string; k: number };
+  type Tok = { key: string; pieces: Piece[]; prose: boolean };
+  const tokens = (ws: PdfWord[]): Tok[] => {
+    const out: Tok[] = [];
+    ws.forEach((w, k) => {
+      const text = w.text.normalize("NFKC").replace(/[\s\-\u00ad\u2010\u2011]/g, "");
+      if (!text) return;
+      // A prose word, with the punctuation on it, compares whole ("document." is not "document"
+      // and a full stop from elsewhere).
+      if (/^[^\p{L}\p{M}\p{N}]*\p{L}[\p{L}\p{M}]+[^\p{L}\p{M}\p{N}]*$/u.test(text)) return void out.push({ key: "", pieces: [{ text, k }], prose: true });
+      // Maths, numbers and punctuation between two prose words: one formula, compared by its pieces
+      // in any order (sub- and superscripts are read in another order when lines break differently).
+      const last = out[out.length - 1];
+      const pieces = (text.match(/[\p{L}\p{M}]+|\p{N}+|[^\p{L}\p{M}\p{N}]/gu) ?? []).map((t) => ({ text: t, k }));
+      if (last && !last.prose) last.pieces.push(...pieces);
+      else out.push({ key: "", pieces, prose: false });
+    });
+    for (const t of out) t.key = t.prose ? t.pieces[0]!.text : "\u0001" + t.pieces.map((p) => p.text).sort().join("\u0001");
+    return out;
+  };
+  const [bt, at] = [tokens(before), tokens(after)];
+  // Replacements: what goes and what comes between two parts that stay the same.
+  const hunks: { gone: Tok[]; come: Tok[] }[] = [];
+  let open: { gone: Tok[]; come: Tok[] } | null = null;
+  for (const ch of diffArrays(bt, at, { comparator: (x, y) => x.key === y.key })) {
+    if (!ch.added && !ch.removed) {
+      open = null;
+      continue;
+    }
+    if (!open) hunks.push((open = { gone: [], come: [] }));
+    (ch.removed ? open.gone : open.come).push(...ch.value);
+  }
+  // A formula that only moved (it stays, and the prose around it changed) is no change.
+  const goneByKey = new Map<string, Tok[]>();
+  for (const h of hunks) for (const t of h.gone) if (!t.prose) goneByKey.set(t.key, [...(goneByKey.get(t.key) ?? []), t]);
+  const stayed = new Set<Tok>();
+  for (const h of hunks) {
+    for (const t of h.come) {
+      const twin = t.prose ? undefined : goneByKey.get(t.key)?.shift();
+      if (twin) stayed.add(t).add(twin);
+    }
+  }
+  for (const h of hunks) [h.gone, h.come] = [h.gone.filter((t) => !stayed.has(t)), h.come.filter((t) => !stayed.has(t))];
+  const removed = new Set<number>();
+  const inserted = new Set<number>();
+  for (const h of hunks) {
+    for (const t of h.gone) if (t.prose) removed.add(t.pieces[0]!.k);
+    for (const t of h.come) if (t.prose) inserted.add(t.pieces[0]!.k);
+    // Formulas changed here: their pieces in order, so only the symbols that differ are marked
+    // (`k` → `k^2` marks the exponent, not an equation number "(2)" next to it); a piece that
+    // only moved within them is no change.
+    const bs = h.gone.filter((t) => !t.prose).flatMap((t) => t.pieces);
+    const as = h.come.filter((t) => !t.prose).flatMap((t) => t.pieces);
+    const gone: Piece[] = [];
+    const come: Piece[] = [];
+    for (const ch of diffArrays(bs, as, { comparator: (x, y) => x.text === y.text })) (ch.removed ? gone : ch.added ? come : []).push(...ch.value);
+    for (const x of gone) {
+      const same = come.findIndex((y) => y.text === x.text);
+      if (same >= 0) come.splice(same, 1);
+      else removed.add(x.k);
+    }
+    for (const y of come) inserted.add(y.k);
+  }
+  return { inserted: after.filter((_, k) => inserted.has(k)), removed: before.filter((_, k) => removed.has(k)) };
 }
 
 /**

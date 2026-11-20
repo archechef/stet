@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: PDF previews of long rewrites highlighted only their end.** A change of more than about 80 words was searched for on the page in too short a stretch, so only the edits near its end were marked. All of it is found now.
+- **PDF previews read maths alike in both versions.** pdftotext breaks lines around formulas into pieces in no stable order, and splits `p+i` or not depending on the line's spacing, so unchanged formulas were marked. Lines are rebuilt from where the words are, maths compares symbol by symbol, and a formula that only moved because the words around it changed isn't marked.
+
 ## 0.14.0 — 2026-11-20
 
 - **Faster submits of large revisions:** paragraphs are paired from the words they share, counted once for the whole region, and the word-by-word comparison runs only for pairs that can be alike. Move detection skips pairs with too few words in common the same way. A section of 60 paragraphs reordered takes 0.2 s instead of 1.2 s, a 400-paragraph paper with an edit in every paragraph 0.3 s instead of 2 s, with the same results.
