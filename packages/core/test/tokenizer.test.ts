@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tokenize } from "../src/tokenizer.js";
+import { tokenize } from "../src/lang/latex.js";
 
 const types = (s: string) => tokenize(s).map((t) => `${t.type}:${t.text}`);
 

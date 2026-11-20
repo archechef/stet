@@ -6,6 +6,7 @@
 import { diffArrays } from "diff";
 import { isLive, moveFrom, moveTo, movesOut, type Item, type MoveInfo } from "./model.js";
 import type { Edit } from "./split.js";
+import type { SyntaxRules } from "./lang/profile.js";
 import { normalizeWs, sharedWords, wordSimilarity } from "./text.js";
 
 export interface MoveSettings {
@@ -25,6 +26,21 @@ export interface MovePair {
   changed: number;
   title: string;
 }
+
+/** What moves need of a language: its structure lines, environments, and how sentences end. */
+export type MoveRules = Pick<SyntaxRules, "isStructureOnly" | "environmentOf" | "isEnvironmentBound" | "structureLine" | "sentenceEnd">;
+
+/** Text without a syntax of its own: sentences only. */
+const PROSE: MoveRules = {
+  isStructureOnly: () => false,
+  environmentOf: () => null,
+  isEnvironmentBound: () => false,
+  structureLine: /$^/,
+  sentenceEnd: /[.?!][)\]}'"’”]*$/,
+};
+
+/** The rules of an item's language (its profile's syntax), else those of prose. */
+export type RulesOf = (it: Item) => MoveRules | undefined;
 
 /** Blocks shorter than this aren't matched as pieces of a move of several blocks. */
 const MIN_PIECE = 5;
@@ -131,29 +147,20 @@ export function moveChanges(fromText: string, toText: string): MoveChange[] {
   return out;
 }
 
-/** A single sectioning or environment line, such as `\section{Results}` or `\end{proof}`. */
-const isStructureLine = (t: string) => /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end)\*?\s*(?:\[[^\]]*\])?\{[^\n]*\}[^\n]*\s*$/.test(t) && !t.trim().includes("\n");
-
-const SENTENCE_END = /[.?!][)\]}'"’”$]*$/;
-
-function sentences(words: string[], abbreviations: Set<string>): number {
-  return words.filter((w) => SENTENCE_END.test(w) && !abbreviations.has(w)).length;
+function sentences(words: string[], abbreviations: Set<string>, r: MoveRules): number {
+  return words.filter((w) => r.sentenceEnd.test(w) && !abbreviations.has(w)).length;
 }
 
-/** A line that starts a LaTeX structure (section, environment, item): a paragraph may follow it directly. */
-const STRUCTURE = /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end|item|label|caption|maketitle|noindent|medskip|bigskip|smallskip|par)\b/;
-
 /** Is `text` (an item's old or new text, inside the item's context) a whole paragraph or environment? */
-function wholeBlock(it: Item, text: string): string | null {
-  const t = text.trim();
-  const env = /^\\begin\s*\{([^}]+)\}/.exec(t)?.[1];
-  if (env && new RegExp(`\\\\end\\s*\\{${env.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\}$`).test(t)) return `${env} environment`;
+function wholeBlock(it: Item, text: string, r: MoveRules): string | null {
+  const env = r.environmentOf(text);
+  if (env) return `${env} environment`;
   const before = it.context.before + /^\s*/.exec(text)![0];
   const after = /\s*$/.exec(text)![0] + it.context.after;
   const prevLine = before.replace(/[ \t]*$/, "").split("\n").slice(-2, -1)[0];
-  const starts = /(^|\n[ \t]*\n)[ \t]*$/.test(before) || (/\n[ \t]*$/.test(before) && prevLine !== undefined && STRUCTURE.test(prevLine));
+  const starts = /(^|\n[ \t]*\n)[ \t]*$/.test(before) || (/\n[ \t]*$/.test(before) && prevLine !== undefined && r.structureLine.test(prevLine));
   const nextLine = after.replace(/^[ \t]*/, "").split("\n")[1];
-  const ends = /^[ \t]*(\n[ \t]*\n|\n?[ \t]*$)/.test(after) || (/^[ \t]*\n/.test(after) && nextLine !== undefined && STRUCTURE.test(nextLine));
+  const ends = /^[ \t]*(\n[ \t]*\n|\n?[ \t]*$)/.test(after) || (/^[ \t]*\n/.test(after) && nextLine !== undefined && r.structureLine.test(nextLine));
   return starts && ends ? "paragraph" : null;
 }
 
@@ -201,9 +208,10 @@ function within(small: string[], big: string[], allowed: number): [number, numbe
  * The moved text must have at least `minWords` words, be two sentences or more or whole
  * paragraphs/environments, and differ in no more words than allowed.
  */
-export function detectMoves(items: Item[], s: MoveSettings, abbreviations: string[]): MovePair[] {
+export function detectMoves(items: Item[], s: MoveSettings, abbreviations: string[], rulesOf: RulesOf = () => undefined): MovePair[] {
   if (!s.enabled) return [];
   const abbr = new Set(abbreviations);
+  const R = (it: Item) => rulesOf(it) ?? PROSE;
   const mods = items.filter((i) => i.kind === "modify" && isLive(i.status) && !i.move);
   const dels = mods.filter((i) => i.oldText.trim() && !i.newText.trim());
   const ins = mods.filter((i) => i.newText.trim() && !i.oldText.trim());
@@ -216,7 +224,7 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
     const dw = moveWords(d.oldText);
     // A heading or environment line moved as it is counts, however short: alone, its deletion
     // or insertion would lose or duplicate it.
-    const line = isStructureLine(d.oldText);
+    const line = R(d).isStructureOnly(d.oldText);
     if (dw.length < s.minWords && !line) continue;
     const allowed = allowedChanges(dw.length, s.maxChangedWords);
     for (const i of ins) {
@@ -224,7 +232,7 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       const iw = moveWords(i.newText);
       if (dw.length < s.minWords && normalizeWs(d.oldText) !== normalizeWs(i.newText)) continue;
       if (dw.length < s.minWords) {
-        cands.push({ from: [d], to: [i], changed: 0, title: `Move “${short(d.oldText)}” (${/\\(?:begin|end)\b/.test(d.oldText) ? "environment line" : "heading"}, unchanged)` });
+        cands.push({ from: [d], to: [i], changed: 0, title: `Move “${short(d.oldText)}” (${R(d).isEnvironmentBound(d.oldText) ? "environment line" : "heading"}, unchanged)` });
         continue;
       }
       if (Math.abs(dw.length - iw.length) > allowed) continue;
@@ -240,8 +248,8 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
         changed = sb.changed;
         blocks = blocksOf(d.oldText);
       }
-      const n = sentences(dw, abbr);
-      const block = wholeBlock(d, d.oldText) ?? wholeBlock(i, i.newText);
+      const n = sentences(dw, abbr, R(d));
+      const block = wholeBlock(d, d.oldText, R(d)) ?? wholeBlock(i, i.newText, R(i));
       if (n < 1 && !block) continue;
       const what = block && block !== "paragraph" ? block : n >= 2 ? `${n} sentences` : n === 1 && !block ? "sentence" : "paragraph";
       const title = blocks
@@ -283,8 +291,8 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       if (pieces.length < 2) continue;
       const changed = changedWords(pieces.flatMap((p) => p.words), bw);
       if (changed > allowed) continue;
-      const n = sentences(bw, abbr);
-      if (n < 1 && !pieces.every((p) => wholeBlock(p.item, smallText(p.item)))) continue;
+      const n = sentences(bw, abbr, R(big));
+      if (n < 1 && !pieces.every((p) => wholeBlock(p.item, smallText(p.item), R(p.item)))) continue;
       for (const x of [big, ...pieces.map((p) => p.item)]) used.add(x.id);
       const blocks = pieces.map((p) => p.item);
       const names = blocks.map((b) => `“${short(smallText(b))}”`).join(", ");
@@ -296,7 +304,7 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       });
     }
   }
-  return mergeNeighbours(out, abbr);
+  return mergeNeighbours(out, abbr, R);
 }
 
 /**
@@ -304,7 +312,7 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
  * each other) or landing together (their insertions at one place). Each new paragraph is a
  * change of its own, so a move of three paragraphs is first found as three.
  */
-function mergeNeighbours(moves: MovePair[], abbr: Set<string>): MovePair[] {
+function mergeNeighbours(moves: MovePair[], abbr: Set<string>, R: (it: Item) => MoveRules): MovePair[] {
   const pos = (i: Item) => [i.file, i.range.start, i.range.end] as const;
   const before = (a: Item, b: Item) => a.file.localeCompare(b.file) || a.range.start - b.range.start || compareIds(a.id, b.id);
   // Next to each other where they left and where they landed, in the same order: one block moved.
@@ -329,7 +337,7 @@ function mergeNeighbours(moves: MovePair[], abbr: Set<string>): MovePair[] {
         from.sort((x, y) => before(landing(x), landing(y)) || before(x, y));
         const names = from.map((d) => `“${short(d.oldText)}”`).join(", ");
         const changed = m1.changed + m2.changed;
-        const n = sentences(from.flatMap((d) => moveWords(d.oldText)), abbr);
+        const n = sentences(from.flatMap((d) => moveWords(d.oldText)), abbr, R(from[0]!));
         const reordered = from.some((d, k) => k > 0 && before(from[k - 1]!, d) > 0);
         list.splice(b, 1);
         list[a] = { from, to, changed, title: `Move ${from.length} passages ${names} (${reordered ? "reordered, " : ""}${n >= 2 ? `${n} sentences` : "paragraphs"}, ${howChanged(changed)})` };
@@ -352,13 +360,14 @@ const compareIds = (a: string, b: string) => {
  * of the same agent, a sentence or more of at least `minWords` words each, at least REWRITTEN_MIN
  * alike. Accepting only one of them would lose or duplicate the passage, so they are linked.
  */
-export function detectRewritten(items: Item[], s: MoveSettings, abbreviations: string[]): { from: Item; to: Item; title: string }[] {
+export function detectRewritten(items: Item[], s: MoveSettings, abbreviations: string[], rulesOf: RulesOf = () => undefined): { from: Item; to: Item; title: string }[] {
   if (!s.enabled) return [];
   const abbr = new Set(abbreviations);
+  const R = (it: Item) => rulesOf(it) ?? PROSE;
   const mods = items.filter((i) => i.kind === "modify" && isLive(i.status) && !i.move);
   const passage = (i: Item, text: string) => {
     const w = moveWords(text);
-    return w.length >= s.minWords && (sentences(w, abbr) >= 1 || !!wholeBlock(i, text)) ? w : null;
+    return w.length >= s.minWords && (sentences(w, abbr, R(i)) >= 1 || !!wholeBlock(i, text, R(i))) ? w : null;
   };
   const dels = mods.flatMap((i) => (i.oldText.trim() && !i.newText.trim() ? [{ i, w: passage(i, i.oldText) }] : [])).filter((x) => x.w);
   const ins = mods.flatMap((i) => (i.newText.trim() && !i.oldText.trim() ? [{ i, w: passage(i, i.newText) }] : [])).filter((x) => x.w);

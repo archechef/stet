@@ -15,6 +15,7 @@ import {
   oneLine,
   changeSummary,
   paragraphChange,
+  profileByName,
   partId,
   partIndexOf,
   roundOf,
@@ -416,12 +417,15 @@ export function ghostText(s: string, max = 80): string {
 
 /** What changes inside an item (removed spans, inserted text), cached: computed on every redraw. */
 const diffs = new Map<string, InlineDiff>();
-export function itemDiff(item: Pick<Item, "oldText" | "newText">): InlineDiff {
-  const key = item.oldText + "\0" + item.newText;
+export function itemDiff(item: Pick<Item, "oldText" | "newText" | "file">): InlineDiff {
+  // Diffed by the tokens of the file's language (LaTeX: `\alpha` is one).
+  const profile = profileByName(item.file);
+  const syntax = profile.syntax;
+  const key = profile.id + "\0" + item.oldText + "\0" + item.newText;
   let d = diffs.get(key);
   if (!d) {
     if (diffs.size > 500) diffs.clear();
-    diffs.set(key, (d = inlineDiff(item.oldText, item.newText)));
+    diffs.set(key, (d = inlineDiff(item.oldText, item.newText, syntax?.tokenize)));
   }
   return d;
 }
@@ -439,7 +443,7 @@ export const fitsInline = (s: string, max = 80): boolean => !/[\r\n]/.test(s) &&
 
 /** The full new text of a proposal, for the editor's inline widget. Agent text: fenced, never rendered. */
 export function proposalMarkdown(item: Item): string {
-  const lang = /\.(tex|sty|cls|ltx|dtx|bib)$/i.test(item.file) ? "latex" : "";
+  const lang = profileByName(item.file).fence;
   return `*Proposed text, replacing the struck-through text above:*\n\n${fence(item.newText, lang)}`;
 }
 

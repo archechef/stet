@@ -6,8 +6,10 @@ import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
 import {
   changeSummary,
+  documentProfile,
   inlineDiff,
   paragraphChange,
+  profileByName,
   foldPath,
   isLive,
   archivedMessage,
@@ -56,7 +58,7 @@ import {
   type Note,
 } from "@stet/core";
 
-const HELP = `stet — review AI-proposed changes to LaTeX projects
+const HELP = `stet — review AI-proposed changes to ${documentProfile().name} projects
 
 Project (run in your project folder):
   stet init [--main <branch>]           set up Stet in this repository
@@ -248,7 +250,7 @@ function itemDiff(it: Item): string {
   if (paragraphChange(it.oldText, it.newText)) {
     // Only the paragraph breaks changed: those, made visible, in the text (not all of it twice).
     const shown = (t: string) => t.replace(/\n[ \t]*\n\s*/g, "¶").replace(/\n/g, "↵").replace(/[ \t]/g, "␣");
-    const d = inlineDiff(it.oldText, it.newText);
+    const d = inlineDiff(it.oldText, it.newText, profileByName(it.file).syntax?.tokenize);
     let out = "";
     let pos = 0;
     for (const { at, text } of d.inserted) {
@@ -790,7 +792,7 @@ async function main() {
           dim(
             opt.extras
               ? "Adding the extra fonts to the preview image (downloads about 2 GB; this takes a while)…"
-              : before.texSource === "image"
+              : before.toolSource === "image"
                 ? "Building the preview image with its own TeX Live (downloads about 1 GB; this takes a while)…"
                 : "Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…",
           ),

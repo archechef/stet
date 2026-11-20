@@ -6,7 +6,7 @@ import { EDIT_SCHEME, EditFiles } from "./edits.js";
 import { closeSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, foldPath, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
+import { doctor, documentProfile, foldPath, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
 import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
 import { esc, inlineProblems, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
@@ -280,7 +280,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       {
         location: vscode.ProgressLocation.Notification,
         title:
-          (await project.stet.previewStatus(true)).texSource === "image"
+          (await project.stet.previewStatus(true)).toolSource === "image"
             ? "Stet: building the PDF preview image with its own TeX Live (about 1 GB, this takes a while)…"
             : "Stet: building the PDF preview image (downloads Debian, Perl and Poppler)…",
       },
@@ -403,7 +403,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** The PDF preview for a change's hover: the image once built, else a note while it builds. */
   previewHover(p: Project, item: Item): string | undefined {
     const place = previewPlace();
-    if ((place !== "hover" && place !== "both") || item.kind !== "modify" || !/\.tex$/i.test(item.file)) return undefined;
+    if ((place !== "hover" && place !== "both") || item.kind !== "modify" || !hasPreview(item.file)) return undefined;
     const t = { project: p, item };
     const r = this.preview.peek(t);
     if (!r) {
@@ -420,7 +420,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()}|${hoverSize(r.after.file)})`,
       ].join("\n\n");
     }
-    if (r.status === "failed") return `⚠ *${esc(r.message)}* The LaTeX error is in *Preview in PDF*${r.missing?.extras ? ", with the offer to install the extra fonts" : ""}.`;
+    if (r.status === "failed") return `⚠ *${esc(r.message)}* The ${esc(r.typesetter ?? "build")} error is in *Preview in PDF*${r.missing?.extras ? ", with the offer to install the extra fonts" : ""}.`;
     return undefined; // no spot on the page, or previews unavailable (said once, elsewhere)
   }
 
@@ -1470,7 +1470,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
 
   async setup(): Promise<void> {
     const folders = vscode.workspace.workspaceFolders ?? [];
-    if (!folders.length) return void vscode.window.showInformationMessage("Open the folder of your LaTeX project first.");
+    if (!folders.length) return void vscode.window.showInformationMessage(`Open the folder of your ${documentProfile().name} project first.`);
     const folder =
       folders.length === 1
         ? folders[0]!

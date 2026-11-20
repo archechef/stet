@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Internal: language profiles.** Everything Stet knows about LaTeX and BibTeX (tokens, structure, maths, labels, citations, macros, included files, and PDF previews with latexmk and SyncTeX) is now in one place per language, `packages/core/src/lang/`, and the rest of Stet asks the file's profile. Nothing changes in use: same items, groups, parts and previews, and `config.json` keeps its shape. This is the groundwork for other document languages (Typst).
+
 ## 0.16.0 — 2026-11-20
 
 Fixes from the test report of 2026-11-20 (three testers, Stet 0.14.0).

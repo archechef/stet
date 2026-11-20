@@ -1,6 +1,6 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
-import { moveChanges, movesOut, moveTexts, partIndexOf, type Item } from "@stet/core";
+import { moveChanges, movesOut, moveTexts, partIndexOf, profileByName, type Item } from "@stet/core";
 import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
 import type { Project } from "./project.js";
@@ -387,7 +387,7 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   }
   if (item.status === "accepted" && item.resolution?.edited && item.kind === "modify")
     lines.push(`✎ **Accepted with your wording:** ${diffBlock(item.oldText, item.resolution.appliedText)}\n\nThe agent proposed:`);
-  if (item.draft !== undefined) lines.push(`✎ **Your wording** (from the review of this file), which Accept uses: ${fence(item.draft, "latex")}`);
+  if (item.draft !== undefined) lines.push(`✎ **Your wording** (from the review of this file), which Accept uses: ${fence(item.draft, profileByName(item.file).fence)}`);
   for (const gid of item.groups) {
     const g = model.group(gid);
     if (g && g.kind !== "atomic") lines.push(`${g.kind === "linked" ? "🔗 linked" : "▣ related"}: ${esc(g.title)} (${g.items.join(", ")})${g.state === "broken" ? " ⚠ broken" : ""}`);
@@ -405,7 +405,7 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     if (changes.length) {
       lines.push(`⚠ **Changed on the way (${item.move.changed} word${item.move.changed > 1 ? "s" : ""}):** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`);
     } else lines.push("Word for word: the text arrives unchanged (spacing and line breaks aside).");
-    lines.push(fence(out ? item.oldText : item.newText, "latex"));
+    lines.push(fence(out ? item.oldText : item.newText, profileByName(item.file).fence));
   } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
   else lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);
   // A decided change shows its whole conversation (History's tooltip showed only three messages,

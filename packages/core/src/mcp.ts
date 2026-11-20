@@ -7,6 +7,10 @@ import type { Readable, Writable } from "node:stream";
 import type { GroupHint, NoteHint } from "./grouping.js";
 
 import { archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
+import { documentProfile } from "./lang/index.js";
+
+/** Examples in the document's language, for the tools' descriptions. */
+const TERMS = documentProfile().agentTerms;
 import { isNoteId, moveFrom, moveTo, partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
 import { describeNote } from "./notes.js";
 import { Stet, StetError, type SubmitResult } from "./service.js";
@@ -64,7 +68,7 @@ const whereSchema = {
   items: { type: "string" },
   description:
     'Locations in YOUR workspace after editing: "file", "file:line" or "file:from-to" (1-based lines), optionally followed by a ' +
-    'quoted snippet of the new text that picks one change on that line: \'main.tex:12 "suggestion"\'. Use the snippet whenever ' +
+    `quoted snippet of the new text that picks one change on that line: '${TERMS?.location ?? 'main.txt:12 "suggestion"'}'. Use the snippet whenever ` +
     "several changes share a line (a paragraph is often one line): it is the only way to put them into different parts.",
 };
 
@@ -79,8 +83,8 @@ export const TOOLS: ToolDef[] = [
     name: "stet_submit",
     description:
       "Submit your current edits in this workspace for human review. Stet splits them into reviewable items. " +
-      "Group edits that break the document unless accepted together as 'linked' (a macro definition and its uses, a \\begin and " +
-      "its \\end, one symbol renamed across formulas; Stet checks this and makes other linked groups related), edits that only read " +
+      `Group edits that break the document unless accepted together as 'linked' (${(TERMS?.linked ?? "a definition and its uses").replace(/`/g, "")}, ` +
+      "one symbol renamed across formulas; Stet checks this and makes other linked groups related), edits that only read " +
       "well together as 'atomic' (one item), and thematic batches as 'related' (any size).",
     inputSchema: obj(
       {
@@ -96,8 +100,8 @@ export const TOOLS: ToolDef[] = [
               where: whereSchema,
               reason: str(
                 "Linked groups only, rarely needed: why accepting only some of these changes would break the document. Stet links only " +
-                  "changes it sees depending on each other (a label or macro and its uses, the same symbol renamed, braces or environments " +
-                  "split across changes, moves, changes touching the same text); without a reason it makes other linked groups related. " +
+                  `changes it sees depending on each other (${TERMS?.dependencies ?? "a definition and its uses, the same symbol renamed"}, ` +
+                  "moves, changes touching the same text); without a reason it makes other linked groups related. " +
                   "The reviewer sees the reason.",
               ),
               parts: {

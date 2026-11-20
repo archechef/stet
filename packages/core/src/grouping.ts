@@ -1,7 +1,9 @@
 /** Grouping helpers (spec §6.4). */
 import type { GroupingConfig } from "./config.js";
 import type { GroupKind, Item } from "./model.js";
-import { changedSides, changeTitle, combineParts, DEF_KINDS, definedIn, usesIn, type PartDraft } from "./parts.js";
+import { changedSides, changeTitle, combineParts, type PartDraft } from "./parts.js";
+import { profileByName, type LanguageProfile } from "./lang/index.js";
+import type { KeyKind } from "./lang/profile.js";
 import { normalizeWs } from "./text.js";
 
 export interface GroupHint {
@@ -90,38 +92,16 @@ export interface GroupDraft {
   parts?: PartDraft[];
 }
 
-const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const short = (s: string) => {
   const t = normalizeWs(s);
   return t.length > 30 ? t.slice(0, 29) + "…" : t;
 };
 
-/** Keys referenced by `\cmd[opt]{a,b}` for the given command names. */
-function keyCounts(text: string, cmds: string[]): Map<string, number> {
-  const re = new RegExp(`\\\\(?:${cmds.map(esc).join("|")})\\*?(?:\\[[^\\]]*\\]){0,2}\\{([^}]*)\\}`, "g");
-  const out = new Map<string, number>();
-  for (const m of text.matchAll(re)) for (const k of m[1]!.split(",")) if (k.trim()) out.set(k.trim(), (out.get(k.trim()) ?? 0) + 1);
-  return out;
-}
-
 /**
- * Keys an item stops and starts referencing. Its two windows share their context (the original
- * text), so only the item's own text makes the counts differ: an unchanged `\ref{a}` nearby in
- * the context must not hide that this item replaces `a`.
+ * Automatic group detection over the items of one changeset. What a language defines, uses and
+ * reads in comes from each file's profile (`profileOf`).
  */
-function keyChange(oldWin: string, newWin: string, cmds: string[]): { removed: string[]; added: string[] } {
-  const o = keyCounts(oldWin, cmds);
-  const n = keyCounts(newWin, cmds);
-  return {
-    removed: [...o].filter(([k, c]) => c > (n.get(k) ?? 0)).map(([k]) => k),
-    added: [...n].filter(([k, c]) => c > (o.get(k) ?? 0)).map(([k]) => k),
-  };
-}
-
-const diffSets = (a: Set<string>, b: Set<string>) => [...a].filter((x) => !b.has(x));
-
-/** Automatic group detection over the items of one changeset. */
-export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
+export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file: string) => LanguageProfile = profileByName): GroupDraft[] {
   const groups: GroupDraft[] = [];
   const text = items.filter((i) => i.kind === "modify" || i.kind === "add-file");
 
@@ -148,55 +128,81 @@ export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
   // Old/new text of an item including its context, so keys cut by the split are still visible.
   const oldWin = (it: Item) => it.context.before + it.oldText + it.context.after;
   const newWin = (it: Item) => it.context.before + it.newText + it.context.after;
+  /** The keys of `kind` an item stops and starts using (`\ref{a}`), in its own language. */
+  const uses = (it: Item, kind: KeyKind["id"]) => profileOf(it.file).references?.uses(kind, oldWin(it), newWin(it), cfg) ?? { removed: [], added: [] };
+  /** The keys of `kind` an item stops and starts defining (`\label{a}`, a bibliography entry). */
+  const definitions = (it: Item, kind: KeyKind["id"]) => (profileOf(it.file).references?.definitions(it) ?? []).filter((d) => d.kind.id === kind);
 
-  const renames = (cmds: string[], defs: (it: Item) => { removed: string[]; added: string[] }, label: string) => {
+  // A key renamed where it is defined, with the changes that rename its uses.
+  const renames = (kind: KeyKind["id"]) => {
     for (const def of text) {
-      const { removed, added } = defs(def);
-      if (removed.length !== 1 || added.length !== 1) continue;
-      const [a, b] = [removed[0]!, added[0]!];
-      const users = text.filter((it) => {
-        if (it === def) return false;
-        const { removed, added } = keyChange(oldWin(it), newWin(it), cmds);
-        return removed.includes(a) && added.includes(b);
-      });
-      if (users.length) {
-        // A missing label or citation key is only a warning: each change can be its own part.
-        const members = [def, ...users];
-        groups.push({
-          kind: "linked",
-          title: `Rename ${label} ${a} → ${b}`,
-          rationale: null,
-          source: "auto",
-          items: members.map((m) => m.id),
-          parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })),
+      for (const d of definitions(def, kind)) {
+        const { removed, added } = d;
+        if (removed.length !== 1 || added.length !== 1) continue;
+        const [a, b] = [removed[0]!, added[0]!];
+        const users = text.filter((it) => {
+          if (it === def) return false;
+          const { removed, added } = uses(it, kind);
+          return removed.includes(a) && added.includes(b);
         });
+        if (users.length) {
+          // A missing label or citation key is only a warning: each change can be its own part.
+          const members = [def, ...users];
+          groups.push({
+            kind: "linked",
+            title: `Rename ${d.kind.noun} ${a} → ${b}`,
+            rationale: null,
+            source: "auto",
+            items: members.map((m) => m.id),
+            parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })),
+          });
+        }
       }
     }
   };
 
-  if (cfg.autoDetect.includes("label")) {
-    renames(cfg.refCommands, (it) => keyChange(oldWin(it), newWin(it), ["label"]), "label");
-  }
+  // A new key (a bibliography entry, in a change of new entries only) with the changes that start using it.
+  const additions = (kind: KeyKind["id"]) => {
+    for (const def of text) {
+      for (const d of definitions(def, kind)) {
+        if (!d.kind.addTitle || d.added.length !== 1 || !d.fresh) continue;
+        const key = d.added[0]!;
+        const users = text.filter((it) => it !== def && uses(it, kind).added.includes(key));
+        if (users.length) {
+          const members = [def, ...users];
+          groups.push({
+            kind: "linked", title: d.kind.addTitle(key), rationale: null, source: "auto",
+            items: members.map((m) => m.id), parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })),
+          });
+        }
+      }
+    }
+  };
+
+  if (cfg.autoDetect.includes("label")) renames("label");
 
   // A macro or environment renamed (or defined, or removed) with the changes that use it:
   // accepting some alone leaves a use undefined, which is an error, not a warning.
   if (cfg.autoDetect.includes("macro")) {
     const sides = new Map(text.filter((i) => i.kind === "modify").map((i) => [i, changedSides(i)]));
     for (const [def, sd] of sides) {
-      const [o, nw] = [definedIn(sd.old), definedIn(sd.new)];
-      for (const kind of DEF_KINDS) {
-        const [a, b] = [o[kind], nw[kind]];
+      const rules = profileOf(def.file).definitions;
+      if (!rules) continue;
+      const [o, nw] = [rules.definedIn(sd.old), rules.definedIn(sd.new)];
+      for (const kind of rules.kinds) {
+        const [a, b] = [o[kind] ?? new Set<string>(), nw[kind] ?? new Set<string>()];
         const removed = [...a].filter((x) => !b.has(x));
         const added = [...b].filter((x) => !a.has(x));
         if (!removed.length && !added.length) continue;
         const users = [...sides].filter(
           ([u, us]) =>
             u !== def &&
-            (added.some((x) => usesIn(us.new, x, kind) && !usesIn(us.old, x, kind)) || removed.some((x) => usesIn(us.old, x, kind) && !usesIn(us.new, x, kind))),
+            (added.some((x) => rules.usesIn(us.new, x, kind) && !rules.usesIn(us.old, x, kind)) ||
+              removed.some((x) => rules.usesIn(us.old, x, kind) && !rules.usesIn(us.new, x, kind))),
         );
         if (!users.length) continue;
-        const name = (x: string) => (kind === "cmd" ? `\\${x}` : x);
-        const what = { cmd: "macro", env: "environment", style: "TikZ style" }[kind];
+        const name = (x: string) => rules.written(x, kind);
+        const what = rules.noun(kind);
         const title =
           removed.length === 1 && added.length === 1
             ? `Rename ${what} ${name(removed[0]!)} → ${name(added[0]!)}`
@@ -208,8 +214,9 @@ export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
     }
   }
 
-  // A file added or deleted with the \input, \include or \includegraphics that starts or stops
-  // reading it: the command alone stops LaTeX ("file not found"). Test report 2026-11-20, D6.
+  // A file added or deleted with the change that starts or stops reading it in (LaTeX: \input,
+  // \include, \includegraphics): that change alone breaks the document ("file not found").
+  // Test report 2026-11-20, D6.
   if (cfg.autoDetect.includes("input")) {
     const edits = items.filter((i) => i.kind === "modify");
     for (const f of items) {
@@ -217,9 +224,11 @@ export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
       const deleted = f.kind === "delete-file" || (f.kind === "binary" && !!f.oldBlob && !f.newBlob);
       if (!added && !deleted) continue;
       const users = edits.filter((it) => {
-        const [was, is] = [includedFiles(oldWin(it)), includedFiles(newWin(it))];
+        const inc = profileOf(it.file).includes;
+        if (!inc) return false;
+        const [was, is] = [inc.filesIn(oldWin(it)), inc.filesIn(newWin(it))];
         const [more, less] = added ? [is, was] : [was, is];
-        return [...more].some(([ref, n]) => n > (less.get(ref) ?? 0) && namesFile(ref, f.file));
+        return [...more].some(([ref, n]) => n > (less.get(ref) ?? 0) && inc.names(ref, f.file));
       });
       if (!users.length) continue;
       groups.push({
@@ -233,52 +242,10 @@ export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
   }
 
   if (cfg.autoDetect.includes("cite")) {
-    const bibKeys = (t: string) => new Set([...t.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,/g)].map((m) => m[1]!));
-    const bibItems = text.filter((it) => it.file.toLowerCase().endsWith(".bib"));
-    renames(cfg.citeCommands, (it) => {
-      if (!bibItems.includes(it)) return { removed: [], added: [] };
-      const o = bibKeys(it.oldText);
-      const n = bibKeys(it.newText);
-      return { removed: diffSets(o, n), added: diffSets(n, o) };
-    }, "citation key");
-    // Newly added entries + the edits that start citing them.
-    for (const bib of bibItems) {
-      const added = diffSets(bibKeys(bib.newText), bibKeys(bib.oldText));
-      if (added.length !== 1 || bibKeys(bib.oldText).size) continue;
-      const key = added[0]!;
-      const users = text.filter((it) => it !== bib && keyChange(oldWin(it), newWin(it), cfg.citeCommands).added.includes(key));
-      if (users.length) {
-        const members = [bib, ...users];
-        groups.push({
-          kind: "linked", title: `Add reference ${key}`, rationale: null, source: "auto",
-          items: members.map((m) => m.id), parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })),
-        });
-      }
-    }
+    renames("citation");
+    additions("citation");
   }
   return groups;
-}
-
-const INCLUDES = /\\(?:input|include|subfile|includegraphics|includepdf|includestandalone|lstinputlisting|verbatiminput|addbibresource|bibliography)\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]*)\}/g;
-
-/** The files a text reads in (\input{chapters/a}, \includegraphics[..]{fig/b}, \bibliography{x,y}), counted. */
-function includedFiles(text: string): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const m of text.matchAll(INCLUDES)) {
-    for (const p of m[1]!.split(",")) {
-      const ref = p.trim();
-      if (ref) out.set(ref, (out.get(ref) ?? 0) + 1);
-    }
-  }
-  return out;
-}
-
-/** Whether `ref` (as written in \input, without extension or with a graphics path left out) names `file`. */
-function namesFile(ref: string, file: string): boolean {
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/^(\.\/)+/, "");
-  const [r, f] = [norm(ref), norm(file)];
-  const stem = f.replace(/\.[A-Za-z0-9]+$/, "");
-  return [f, stem].some((x) => x === r || x.endsWith("/" + r));
 }
 
 /** Merge linked groups that share items (transitively) and drop duplicate groups. */

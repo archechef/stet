@@ -9,6 +9,7 @@ import { verifyAgentWorktree } from "./worktree.js";
 import { isLive } from "./model.js";
 import { BASE_REF, Stet } from "./service.js";
 import { pathExists } from "./paths.js";
+import { PROFILES } from "./lang/index.js";
 
 export interface DoctorCheck {
   name: string;
@@ -71,12 +72,8 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
     message: `core.autocrlf=${autocrlf ?? "unset"}. Stet keeps each file's existing line endings (LF or CRLF).`,
   });
 
-  const latexmk = await which("latexmk", ["-v"]);
-  add(
-    latexmk
-      ? { name: "latexmk", status: "ok", message: latexmk.split("\n").find((l) => /latexmk/i.test(l))?.trim() ?? "found" }
-      : { name: "latexmk", status: "info", message: "not found (only needed for PDF previews)" },
-  );
+  // The tools each language's previews need (LaTeX: latexmk).
+  for (const p of PROFILES) for (const c of (await p.typesetter?.doctor(which)) ?? []) add(c);
 
   // Repository -----------------------------------------------------------------
   let located: Awaited<ReturnType<typeof Stet.locate>>;

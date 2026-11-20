@@ -1,6 +1,9 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
 import { DEFAULT_PREVIEW, type PreviewConfig } from "./preview.js";
+import { documentProfile, PROFILES, type FilePatterns } from "./lang/index.js";
+
+export { matchesAny } from "./lang/index.js";
 
 export interface SplitConfig {
   mergeGap: number;
@@ -77,10 +80,8 @@ export function defaultConfig(mainBranch: string): StetConfig {
       citeCommands: ["cite", "citep", "citet", "citealp", "citeauthor", "citeyear", "parencite", "textcite", "autocite", "footcite"],
       moves: { enabled: true, minWords: 7, maxChangedWords: null },
     },
-    files: {
-      tex: ["*.tex", "*.sty", "*.cls", "*.ltx", "*.dtx"],
-      bib: ["*.bib"],
-    },
+    // Which files each language profile is for (spec §6.1).
+    files: Object.fromEntries(PROFILES.flatMap((p) => (p.files ? [[p.files, [...(p.defaultFiles ?? [])]]] : []))) as FilePatterns,
     preview: { ...DEFAULT_PREVIEW },
     maxFileMB: 20,
   };
@@ -133,9 +134,10 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (typeof cfg.maxFileMB !== "number" || !(cfg.maxFileMB > 0)) bad("maxFileMB (a number of megabytes)");
   const pv = cfg.preview;
   if (typeof pv?.enabled !== "boolean") bad("preview.enabled (true or false)");
-  // The root file becomes a TeX command-line argument: a plain relative .tex path only.
-  if (pv.rootFile !== null && (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+\.tex$/.test(pv.rootFile) || pv.rootFile.startsWith("/")))
-    bad(`preview.rootFile '${pv.rootFile}' (a .tex file relative to the project, or null)`);
+  // The root file becomes a command-line argument of the typesetter: a plain relative path of its own source files only.
+  const ts = documentProfile().typesetter;
+  if (pv.rootFile !== null && (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+$/.test(pv.rootFile) || !ts?.source.test(pv.rootFile) || pv.rootFile.startsWith("/")))
+    bad(`preview.rootFile '${pv.rootFile}' (one of the document's ${ts?.sourceName ?? "source files"} relative to the project, or null)`);
   if (!["auto", "pdflatex", "xelatex", "lualatex"].includes(pv.engine)) bad(`preview.engine '${pv.engine}' (auto, pdflatex, xelatex or lualatex)`);
   if (!["auto", "container", "process"].includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (auto, container or process)`);
   if (typeof pv.image !== "string" || !/^[a-z0-9][a-z0-9._\/:@-]*$/i.test(pv.image)) bad(`preview.image '${pv.image}'`);
@@ -147,11 +149,3 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   return cfg;
 }
 
-/** Match a repo path's basename against simple `*.ext` patterns. */
-export function matchesAny(path: string, patterns: string[]): boolean {
-  const base = path.split("/").pop() ?? path;
-  return patterns.some((p) => {
-    const re = new RegExp("^" + p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$", "i");
-    return re.test(base);
-  });
-}

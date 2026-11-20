@@ -153,7 +153,7 @@ export class PreviewPanel implements vscode.Disposable {
       pageData = { after: side(r.pages.after), before: r.pages.before ? side(r.pages.before) : null };
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
-        (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
+        (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>${html(r.typesetter ?? "Build")} log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
         `<div class="zoom">` +
         `<span class="seg" role="group" aria-label="Version"><button id="show-after" class="on" aria-pressed="true" title="With the change">After</button><button id="show-before" aria-pressed="false" title="Without it"${r.pages.before ? "" : " disabled"}>Before</button></span>` +
         `<button id="prev" title="Previous page" aria-label="Previous page">◀</button><span id="pageno" class="muted" aria-live="polite"></span><button id="next" title="Next page" aria-label="Next page">▶</button>` +
@@ -163,7 +163,7 @@ export class PreviewPanel implements vscode.Disposable {
     } else if (r.status === "ready") {
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
-        (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
+        (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>${html(r.typesetter ?? "Build")} log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
         `<div class="zoom">` + ZOOM_BUTTONS +
         `<span id="level" class="muted" aria-live="polite"></span><span class="muted hint">Ctrl/Cmd + wheel zooms, drag or arrow keys move, double-click zooms in</span></div>` +
         `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page" tabindex="0" role="region" aria-label="After; arrow keys move it, + and − zoom"><img src="${img(r.after.file)}" alt="Page ${r.after.page} with the change" draggable="false"></div>` +
@@ -426,7 +426,7 @@ export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, proje
   if (env.status === "needs-setup") {
     const setup = "Set up";
     const pick = await vscode.window.showInformationMessage(
-      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once (${env.texSource === "image" ? "downloads Debian with TeX Live, about 1 GB" : "downloads Debian, Perl and Poppler, about 150 MB"}).`,
+      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once (${env.toolSource === "image" ? "downloads Debian with TeX Live, about 1 GB" : "downloads Debian, Perl and Poppler, about 150 MB"}).`,
       setup,
       "Not now",
       never,

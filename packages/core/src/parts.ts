@@ -10,9 +10,8 @@
 import { joinTitles } from "./grouping.js";
 import { isLive, moveOthers, type GroupPart, type Item } from "./model.js";
 import { diffArrays } from "diff";
-import { isKeyEdit } from "./split.js";
 import { normalizeWs } from "./text.js";
-import { tokenize } from "./tokenizer.js";
+import { profileByName, type LanguageProfile } from "./lang/index.js";
 
 export interface PartDraft {
   title: string;
@@ -37,29 +36,26 @@ export function changeTitle(it: Item): string {
 
 const substitution = (it: Item) => (it.kind === "modify" ? normalizeWs(it.oldText) + "\u0000" + normalizeWs(it.newText) : null);
 
-/** Changes whose dependants Stet can't see: packages, classes, included files. */
-const GLOBAL = /\\(?:usepackage|RequirePackage|documentclass|input|include|includeonly|usetikzlibrary|usepgfplotslibrary)(?![A-Za-z@])/;
-
-const CMD_DEFS =
-  /\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|DeclareMathOperator|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand|newrobustcmd|renewrobustcmd|DeclarePairedDelimiterX?|newlength|newsavebox)\*?\s*\{?\s*\\([A-Za-z@]+)/g;
-const TEX_DEFS = /\\(?:def|gdef|edef|xdef|let|newif)\s*\\([A-Za-z@]+)/g;
-const ENV_DEFS = /\\(?:newenvironment|renewenvironment|NewDocumentEnvironment|RenewDocumentEnvironment|newtheorem|declaretheorem|newtcolorbox)\*?\s*\{([A-Za-z@*]+)\}/g;
+/** The profile of a file, for parts: by its name unless the caller knows the config. */
+export type ProfileOf = (file: string) => LanguageProfile;
 
 /**
  * Symbols and terms an item replaces one for one: `$n$` → `$m$`, `\alpha` → `\beta`, "estimator"
  * → "statistic". Short words count only in math (so "a" → "the" doesn't); keys of \label,
- * \ref and \cite don't (a rename is decided reference by reference).
+ * \ref and \cite don't (a rename is decided reference by reference). Needs the language's syntax.
  */
-export function replacements(it: Item): Set<string> {
+export function replacements(it: Item, profileOf: ProfileOf = profileByName): Set<string> {
   const out = new Set<string>();
-  if (it.kind !== "modify" || isKeyEdit(it.oldText, it.newText)) return out;
-  const math = /\$|\\\(|\\\[|\\begin\s*\{(?:equation|align|gather|multline)/.test(it.context.before.slice(-60) + it.oldText);
+  const syntax = profileOf(it.file).syntax;
+  if (it.kind !== "modify" || !syntax || syntax.isKeyEdit(it.oldText, it.newText)) return out;
+  const math = syntax.inMath(it.context.before.slice(-60) + it.oldText);
   // In math, 2n is the symbols 2 and n.
   const toks = (t: string) =>
-    tokenize(t)
+    syntax
+      .tokenize(t)
       .filter((x) => x.type !== "ws" && x.type !== "parbreak" && x.type !== "comment")
       .flatMap((x) => (math && x.type === "word" ? (x.text.match(/\p{N}+|\p{L}+|./gu) ?? [x.text]) : [x.text]));
-  const counts = (w: string) => w.startsWith("\\") || /^\p{L}{4,}$/u.test(w) || (math && /^[\p{L}\p{N}]{1,3}$/u.test(w));
+  const counts = (w: string) => syntax.isCommand(w) || /^\p{L}{4,}$/u.test(w) || (math && /^[\p{L}\p{N}]{1,3}$/u.test(w));
   const chunks = diffArrays(toks(it.oldText), toks(it.newText));
   for (let k = 0; k + 1 < chunks.length; k++) {
     const [a, b] = [chunks[k]!, chunks[k + 1]!];
@@ -93,51 +89,21 @@ export function changedSides(it: Item): { old: string; new: string } {
   return { old: linesAround(oldWin, b, b + it.oldText.length), new: linesAround(newWin, b, b + it.newText.length) };
 }
 
-/** What can be defined in one place and used in others: a macro, an environment, a TikZ style. */
-export type DefKind = "cmd" | "env" | "style";
-export const DEF_KINDS: readonly DefKind[] = ["cmd", "env", "style"];
-
-/** TikZ styles: `\tikzset{name/.style=…}`, `name/.style={…}` in picture options, `\tikzstyle{name}=[…]`. */
-const STYLE_DEFS = /(?:[{,[]\s*|^\s*)([A-Za-z][\w -]*?)\s*\/\.(?:style|append style)\b|\\tikzstyle\s*\{([^}]+)\}/gm;
-
-/** Commands, environments and TikZ styles that `t` defines. */
-export function definedIn(t: string): Record<DefKind, Set<string>> {
-  const out: Record<DefKind, Set<string>> = { cmd: new Set(), env: new Set(), style: new Set() };
-  for (const m of t.matchAll(CMD_DEFS)) out.cmd.add(m[1]!);
-  for (const m of t.matchAll(TEX_DEFS)) out.cmd.add(m[1]!.startsWith("if") ? m[1]!.slice(2) : m[1]!);
-  for (const m of t.matchAll(ENV_DEFS)) out.env.add(m[1]!);
-  for (const m of t.matchAll(STYLE_DEFS)) out.style.add((m[1] ?? m[2]!).trim());
-  return out;
-}
-
-/** Does `t` use command `\name`, environment `name`, or TikZ style `name` (in an option list)? */
-export function usesIn(t: string, name: string, kind: DefKind): boolean {
-  if (kind === "env") return new RegExp(`\\\\(?:begin|end)\\s*\\{${esc(name)}\\}`).test(t);
-  if (kind === "style") return new RegExp(`[\\[,]\\s*${esc(name)}\\s*[,\\]]`).test(t);
-  return new RegExp(`\\\\(?:if)?${esc(name)}(?![A-Za-z@])`).test(t);
-}
-
-/** `\est`, `the environment proof`, `the TikZ style vertex`. */
-export const defName = (name: string, kind: DefKind): string => (kind === "cmd" ? `\\${name}` : kind === "env" ? `the environment ${name}` : `the TikZ style ${name}`);
-
-/** Commands, environments and TikZ styles defined on the lines an item changes. */
-const definitions = (it: Item) => definedIn(changedLines(it));
-
-const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/** Does an item change a line that uses it? */
-const uses = (it: Item, name: string, kind: DefKind) => usesIn(changedLines(it), name, kind);
-
-/** How a change shifts the nesting of braces, environments, display math and `$`. */
-export function imbalance(it: { oldText: string; newText: string }): number[] {
-  const counts = (s: string) => {
-    const t = s.replace(/\\\\/g, "").replace(/\\[{}$]/g, "");
-    const n = (re: RegExp) => (t.match(re) ?? []).length;
-    return [n(/\{/g) - n(/\}/g), n(/\\begin\s*\{/g) - n(/\\end\s*\{/g), n(/\\\[/g) - n(/\\\]/g), n(/\\\(/g) - n(/\\\)/g), n(/\$/g) % 2];
-  };
-  const a = counts(it.oldText);
-  const b = counts(it.newText);
+/**
+ * How a change shifts what its language nests (LaTeX: braces, environments, display and inline
+ * maths, `$`): one count per kind, empty for a language without such rules.
+ */
+export function imbalance(it: { file: string; oldText: string; newText: string }, profileOf: ProfileOf = profileByName): number[] {
+  const rules = profileOf(it.file).parts;
+  if (!rules) return [];
+  const a = rules.balance(it.oldText);
+  const b = rules.balance(it.newText);
   return b.map((x, k) => x - a[k]!);
+}
+
+/** Whether summed imbalances leave something open (kinds in `parity` count modulo 2). */
+export function isOpen(sum: number[], parity: readonly number[]): boolean {
+  return sum.some((x, k) => (parity.includes(k) ? x % 2 !== 0 : x !== 0));
 }
 
 /**
@@ -148,8 +114,9 @@ export async function settleParts(
   proposed: PartDraft[],
   members: Item[],
   interferes?: Interference,
-  opts: { sameSymbol?: (a: Item, b: Item) => boolean } = {},
+  opts: { sameSymbol?: (a: Item, b: Item) => boolean; profileOf?: ProfileOf } = {},
 ): Promise<{ parts: GroupPart[] | undefined; notes: string[] }> {
+  const profileOf = opts.profileOf ?? profileByName;
   const byId = new Map(members.map((m) => [m.id, m]));
   const drafts: PartDraft[] = [];
   const placed = new Set<string>();
@@ -198,7 +165,8 @@ export async function settleParts(
   }
 
   // Whole-file changes and package/class/include changes: other parts may depend on them.
-  const global = members.find((m) => m.kind !== "modify" || GLOBAL.test(m.oldText) || GLOBAL.test(m.newText));
+  const isGlobal = (m: Item, t: string) => !!profileOf(m.file).parts?.global(t);
+  const global = members.find((m) => m.kind !== "modify" || isGlobal(m, m.oldText) || isGlobal(m, m.newText));
   if (global) {
     let joined = false;
     for (let k = 0; k < drafts.length; k++) {
@@ -228,7 +196,7 @@ export async function settleParts(
   if (opts.sameSymbol) {
     const byRepl = new Map<string, Item[]>();
     for (const m of members) {
-      for (const r of replacements(m)) {
+      for (const r of replacements(m, profileOf)) {
         for (const first of byRepl.get(r) ?? []) {
           if (opts.sameSymbol(first, m)) join(at(first), at(m), `they both replace ${r.split("\u0000")[0]} with ${r.split("\u0000")[1]}`);
         }
@@ -239,12 +207,14 @@ export async function settleParts(
 
   // A definition and the changes that use it: an undefined macro or environment is an error.
   for (const d of members) {
-    const defs = definitions(d);
-    for (const kind of DEF_KINDS) {
-      for (const name of defs[kind]) {
+    const rules = profileOf(d.file).definitions;
+    if (!rules) continue;
+    const defs = rules.definedIn(changedLines(d));
+    for (const kind of rules.kinds) {
+      for (const name of defs[kind] ?? []) {
         for (const u of members) {
-          if (u !== d && find(at(u)) !== find(at(d)) && uses(u, name, kind)) {
-            join(at(d), at(u), `${d.id} defines ${defName(name, kind)}, which ${u.id} uses`);
+          if (u !== d && find(at(u)) !== find(at(d)) && rules.usesIn(changedLines(u), name, kind)) {
+            join(at(d), at(u), `${d.id} defines ${rules.described(name, kind)}, which ${u.id} uses`);
           }
         }
       }
@@ -254,9 +224,16 @@ export async function settleParts(
   // Braces, environments and math that only close in another part.
   const roots = () => [...new Set(drafts.map((_, k) => find(k)))];
   const unbalanced = roots().filter((r) => {
-    const sum = [0, 0, 0, 0, 0];
-    for (const i of itemsOf(r)) imbalance(byId.get(i)!).forEach((x, k) => (sum[k]! += x));
-    return sum.some((x, k) => (k === 4 ? x % 2 !== 0 : x !== 0));
+    // Summed per language: a brace in a .bib file closes none in a .tex file.
+    const sums = new Map<LanguageProfile, number[]>();
+    for (const i of itemsOf(r)) {
+      const it = byId.get(i)!;
+      const p = profileOf(it.file);
+      const sum = sums.get(p) ?? [];
+      imbalance(it, profileOf).forEach((x, k) => (sum[k] = (sum[k] ?? 0) + x));
+      sums.set(p, sum);
+    }
+    return [...sums].some(([p, sum]) => isOpen(sum, p.parts?.parity ?? []));
   });
   for (const r of unbalanced.slice(1)) join(unbalanced[0]!, r, "braces, environments or math opened in one are closed in the other");
 

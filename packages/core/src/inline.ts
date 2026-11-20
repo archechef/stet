@@ -3,7 +3,7 @@
  * formula), but the editor shows only the tokens that actually differ.
  */
 import { diffArrays } from "diff";
-import { tokenize, type Token } from "./tokenizer.js";
+import { tokenizeWords, type Token } from "./tokenizer.js";
 
 export interface InlineDiff {
   /** Spans of the old text that are removed, [start, end) offsets into the old text. */
@@ -25,9 +25,9 @@ interface Hunk {
  * Token-level difference between `oldText` and `newText`. Whitespace is left out of the matching
  * (re-wrapped lines are no change, and struck-through spaces are invisible). Hunks separated only
  * by whitespace are merged, and a mostly rewritten text is shown as one replacement: word-by-word
- * confetti is harder to read than the whole.
+ * confetti is harder to read than the whole. `tokenize`: the language's (its profile's syntax).
  */
-export function inlineDiff(oldText: string, newText: string): InlineDiff {
+export function inlineDiff(oldText: string, newText: string, tokenize: (text: string) => Token[] = tokenizeWords): InlineDiff {
   const whole: InlineDiff = {
     removed: oldText ? [[0, oldText.length]] : [],
     inserted: newText ? [{ at: oldText.length, text: newText }] : [],

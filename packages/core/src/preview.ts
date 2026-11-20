@@ -1,6 +1,8 @@
 /**
  * PDF previews of a change (spec §14): the region of the compiled paper where a change lands,
- * before and after.
+ * before and after. What compiles the document, and how a change is found on its pages, is the
+ * language's typesetter (`Typesetter`, LaTeX's in `lang/latex-preview.ts`); this is the rest:
+ * isolation, the build cache, pages, and the words on them.
  *
  * Compiling a proposal runs TeX on text an agent wrote, and TeX is a programming language. TeX's
  * own restrictions stop shell escape and writing outside the build folder, but not reading:
@@ -30,6 +32,8 @@ import { diffArrays } from "diff";
 import { inlineDiff } from "./inline.js";
 import { writeInside } from "./safefs.js";
 import { fromLf, lineOf, type Eol } from "./text.js";
+import type { LanguageProfile, SourceBox, Typesetter } from "./lang/profile.js";
+import type { Token } from "./tokenizer.js";
 
 export interface PreviewConfig {
   enabled: boolean;
@@ -71,35 +75,6 @@ export const DEFAULT_PREVIEW: PreviewConfig = {
   timeout: 120,
 };
 
-/** The image `stet preview setup` builds: TeX comes from the user's own TeX Live, mounted read-only. */
-export const PREVIEW_CONTAINERFILE = `# Stet PDF previews: Perl for latexmk, Poppler to read and render PDFs. TeX itself is the user's
-# TeX Live, mounted read-only when a preview is built.
-FROM docker.io/library/debian:bookworm-slim
-RUN apt-get update \\
- && apt-get install -y --no-install-recommends perl poppler-utils \\
- && rm -rf /var/lib/apt/lists/*
-`;
-
-/** The extra fonts, as a layer on the image with its own TeX: only they are downloaded. */
-export const previewExtrasContainerfile = (base: string) => `# Stet PDF previews with their own TeX, plus Debian's extra fonts (dsfont, bbm, bbold, …).
-FROM ${base}
-RUN apt-get update \\
- && apt-get install -y --no-install-recommends texlive-fonts-extra \\
- && rm -rf /var/lib/apt/lists/*
-`;
-
-/** The image with its own TeX Live (Debian's), where the user's TeX can't be mounted: macOS, a distribution's TeX. */
-export const PREVIEW_TEX_CONTAINERFILE = `# Stet PDF previews with their own TeX: Debian's TeX Live with the common packages, latexmk,
-# Biber and Poppler. Used where the user's TeX can't run in a Linux container (macOS).
-FROM docker.io/library/debian:bookworm-slim
-RUN apt-get update \\
- && apt-get install -y --no-install-recommends perl poppler-utils latexmk biber \\
-      texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \\
-      texlive-science texlive-bibtex-extra texlive-pictures texlive-publishers texlive-xetex texlive-luatex \\
-      lmodern cm-super \\
- && rm -rf /var/lib/apt/lists/*
-`;
-
 export type PreviewIsolation = "container" | "process";
 
 export interface PreviewEnv {
@@ -110,23 +85,22 @@ export interface PreviewEnv {
   message: string;
   /** How to fix it, if there is something to do. */
   fix?: string;
-  /** TeX Live's bin folder (absolute, on this machine). */
-  texBin?: string;
-  /** Folder mounted read-only into the container: the TeX Live installation, with `texmf-local`. */
-  texMount?: string;
-  /** The user's own TeX packages (~/texmf), mounted read-only if there are any. */
-  texmfHome?: string;
+  /** The tools' folder (absolute, where they run: on this machine, or in the container): first on the PATH. */
+  bin?: string;
+  /** Folders mounted read-only into the container: [on this machine, in the container] (LaTeX: TeX Live, ~/texmf). */
+  mounts?: [string, string][];
   /** Whether Podman can limit a container's memory here (needs the cgroup memory controller). */
   memoryLimit?: boolean;
-  /** The Podman program, and the image builds run in; where TeX comes from. */
+  /** The Podman program, and the image builds run in; where the tools come from (the user's own, or the image's). */
   podman?: string;
   image?: string;
-  texSource?: "host" | "image";
+  toolSource?: "host" | "image";
   /** The image with its own TeX is the small one: the extra fonts can still be added. */
   extrasAvailable?: boolean;
 }
 
-const run = (cmd: string, args: string[], opts: { input?: string; timeout?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {}) =>
+/** Run a program (not isolated: for Podman itself and the like), with an optional timeout. */
+export const runProgram = (cmd: string, args: string[], opts: { input?: string; timeout?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {}) =>
   new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     let stdout = "";
     let stderr = "";
@@ -161,7 +135,7 @@ const run = (cmd: string, args: string[], opts: { input?: string; timeout?: numb
   });
 
 /** Absolute path of `cmd` on the PATH, or null. */
-async function which(cmd: string): Promise<string | null> {
+export async function which(cmd: string): Promise<string | null> {
   const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     if (!dir) continue;
@@ -174,10 +148,6 @@ async function which(cmd: string): Promise<string | null> {
   return null;
 }
 
-/**
- * What previews can use here. Never installs or downloads anything: when something is missing,
- * it says what and how to get it.
- */
 /** Podman: on the PATH, or where its installers put it (VS Code started from the Dock may lack those on its PATH). */
 async function findPodman(): Promise<string | null> {
   if (process.platform === "win32") return null;
@@ -187,169 +157,82 @@ async function findPodman(): Promise<string | null> {
   return null;
 }
 
-/** The user's own TeX packages: ~/texmf, or MacTeX's ~/Library/texmf. */
-function userTexmf(): string | undefined {
-  const home = process.env.HOME;
-  if (!home) return undefined;
-  return [join(home, "texmf"), join(home, "Library", "texmf")].find((p) => existsSync(p));
-}
-
-/**
- * What previews can use here. Never installs or downloads anything: when something is missing,
- * it says what and how to get it.
- */
+/** What previews can use here, by the document's typesetter. Never installs or downloads anything. */
 export async function detectPreviewEnv(
   cfg: PreviewConfig,
+  typesetter: Typesetter,
   /** `podman`: the Podman program to use, or null for none (tests: independent of what the machine has). */
   opts: { podman?: string | null } = {},
 ): Promise<PreviewEnv> {
   if (!cfg.enabled) return { status: "unavailable", isolation: null, message: "PDF previews are switched off (preview.enabled in .git/stet/config.json)." };
-  const trusted = "Or, for material you trust, set preview.isolation to \"process\" in .git/stet/config.json: TeX can then read every file you can.";
+  return typesetter.detect(cfg, opts);
+}
 
-  // The host's TeX, if any. A standalone TeX Live on Linux (<root>/bin/<arch>, texmf-dist) can be
-  // mounted into the container; MacTeX's programs are macOS ones and can't run there.
-  const latexmk = await which("latexmk");
-  let texBin: string | undefined;
-  let texMount: string | undefined;
-  if (latexmk) {
-    // Where the TeX program really is: latexmk is a link to a Perl script inside texmf-dist.
-    const tex = (await which("pdftex")) ?? (await which("tex")) ?? latexmk;
-    texBin = dirname(await realpath(tex));
-    const texRoot = dirname(dirname(texBin));
-    if (process.platform === "linux" && existsSync(join(texRoot, "texmf-dist"))) texMount = existsSync(join(dirname(texRoot), "texmf-local")) ? dirname(texRoot) : texRoot;
-  }
-  const texmfHome = userTexmf();
+/** Build the image previews need here (the typesetter's). Downloads packages: only on the user's explicit request. */
+export function setupPreviewImage(cfg: PreviewConfig, typesetter: Typesetter, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string }> {
+  return typesetter.setupImage(cfg, opts);
+}
 
-  if (cfg.isolation !== "process") {
-    const podman = opts.podman !== undefined ? opts.podman : await findPodman();
-    if (!podman) {
-      return {
-        status: "unavailable",
-        isolation: "container",
-        message:
-          process.platform === "win32"
-            ? "PDF previews compile agents' text in a container, so TeX can't read your files, and that isn't supported on Windows yet."
-            : "PDF previews compile agents' text in a container, so TeX can't read your files, and Podman isn't installed.",
-        fix: (process.platform === "win32" ? "Use Stet in WSL2 for previews. " : "Install Podman (podman.io), then try again (in VS Code: reload the window). ") + trusted,
-      };
-    }
-    // Podman answers only while its service runs: on macOS, its Linux machine.
-    const info = await run(podman, ["info", "--format", "{{.Host.CgroupControllers}}"], { timeout: 30_000 });
-    if (info.code !== 0) {
-      return {
-        status: "unavailable",
-        isolation: "container",
-        message: `PDF previews run in a Podman container, but Podman doesn't answer${process.platform === "darwin" ? " (its machine isn't running)" : ""}.`,
-        fix: process.platform === "darwin" ? "Start it with `podman machine start` (once: `podman machine init`), then try again (in VS Code: reload the window)." : `Check \`podman info\`: ${oneLineOf(info.stderr)}`,
-      };
-    }
-    // Where TeX comes from: the user's (mounted read-only) or the image's own.
-    const source: "host" | "image" = cfg.tex === "image" || (cfg.tex === "auto" && !texMount) ? "image" : "host";
-    if (source === "host" && !texMount) {
-      return {
-        status: "unavailable",
-        isolation: "container",
-        message: `preview.tex is "host", but ${latexmk ? `${texBin} isn't a standalone TeX Live for Linux` : "no TeX (latexmk) is on the PATH"}, which the container could use.`,
-        fix: 'Set preview.tex to "auto" (the image then brings its own TeX), or install TeX Live from tug.org.',
-      };
-    }
-    // Podman's mount syntax separates with ':' and ','; such paths would be read wrongly.
-    const odd = [source === "host" ? texMount : undefined, texmfHome].find((p) => p && /[:,]/.test(p));
-    if (odd) {
-      return { status: "unavailable", isolation: "container", message: `PDF previews can't mount ${odd} into a container: its path contains ':' or ','.`, fix: "Move it to a path without those characters." };
-    }
-    const image = source === "host" ? cfg.image : cfg.texExtras ? cfg.texExtrasImage : cfg.texImage;
-    const base = {
-      isolation: "container" as const,
-      podman,
-      texSource: source,
-      image,
-      extrasAvailable: source === "image" && !cfg.texExtras,
-      texBin: source === "host" ? texBin! : "/usr/bin",
-      ...(source === "host" ? { texMount: texMount! } : {}),
-      ...(texmfHome ? { texmfHome } : {}),
-    };
-    if ((await run(podman, ["image", "exists", image])).code !== 0) {
-      return {
-        status: "needs-setup",
-        ...base,
-        message: "PDF previews run in a container, whose image isn't built yet.",
-        fix:
-          source === "host"
-            ? "Build it once with `stet preview setup` or the Set up button (downloads Debian, Perl and Poppler, about 150 MB; TeX is yours)."
-            : cfg.texExtras
-              ? "Build it once with `stet preview setup --extras` or the Set up button (Debian with TeX Live and its extra fonts, about 3 GB)."
-              : "Build it once with `stet preview setup` or the Set up button (downloads Debian with TeX Live, Perl and Poppler, about 1 GB).",
-      };
-    }
-    const memoryLimit = /\bmemory\b/.test(info.stdout);
-    return {
-      status: "ready",
-      ...base,
-      memoryLimit,
-      message: `PDF previews run in an isolated container${source === "image" ? ", with the TeX in its image" : ""}.`,
-    };
-  }
-
-  // A normal process: the user's explicit choice, with their own TeX and Poppler.
-  if (!latexmk) {
-    return { status: "unavailable", isolation: "process", message: "PDF previews need a TeX distribution with latexmk, which isn't on the PATH.", fix: "Install TeX Live (tug.org/texlive) or MiKTeX, then try again (in VS Code: reload the window)." };
-  }
-  const pdftoppm = await which("pdftoppm");
-  if (!pdftoppm || !(await which("pdfinfo"))) {
+/**
+ * Podman, for builds in a container: the program and whether it can limit memory, or why it
+ * can't be used. `program`: what the container keeps from the user's files ("TeX").
+ */
+export async function containerRuntime(opts: { podman?: string | null }, program: string): Promise<{ podman: string; memoryLimit: boolean } | PreviewEnv> {
+  const trusted = `Or, for material you trust, set preview.isolation to "process" in .git/stet/config.json: ${program} can then read every file you can.`;
+  const podman = opts.podman !== undefined ? opts.podman : await findPodman();
+  if (!podman) {
     return {
       status: "unavailable",
-      isolation: "process",
-      message: "PDF previews need Poppler's pdftoppm and pdfinfo to show pages, and they aren't on the PATH.",
-      fix: process.platform === "darwin" ? "Install Poppler (brew install poppler)." : "Install poppler-utils.",
+      isolation: "container",
+      message:
+        process.platform === "win32"
+          ? `PDF previews compile agents' text in a container, so ${program} can't read your files, and that isn't supported on Windows yet.`
+          : `PDF previews compile agents' text in a container, so ${program} can't read your files, and Podman isn't installed.`,
+      fix: (process.platform === "win32" ? "Use Stet in WSL2 for previews. " : "Install Podman (podman.io), then try again (in VS Code: reload the window). ") + trusted,
     };
   }
+  // Podman answers only while its service runs: on macOS, its Linux machine.
+  const info = await runProgram(podman, ["info", "--format", "{{.Host.CgroupControllers}}"], { timeout: 30_000 });
+  if (info.code !== 0) {
+    return {
+      status: "unavailable",
+      isolation: "container",
+      message: `PDF previews run in a Podman container, but Podman doesn't answer${process.platform === "darwin" ? " (its machine isn't running)" : ""}.`,
+      fix: process.platform === "darwin" ? "Start it with `podman machine start` (once: `podman machine init`), then try again (in VS Code: reload the window)." : `Check \`podman info\`: ${oneLineOf(info.stderr)}`,
+    };
+  }
+  return { podman, memoryLimit: /\bmemory\b/.test(info.stdout) };
+}
+
+/** Builds as a normal process need Poppler's pdftoppm and pdfinfo on the PATH: why not, or null. */
+export async function popplerMissing(): Promise<PreviewEnv | null> {
+  if ((await which("pdftoppm")) && (await which("pdfinfo"))) return null;
   return {
-    status: "ready",
+    status: "unavailable",
     isolation: "process",
-    texBin: texBin!,
-    message:
-      "PDF previews run as a normal process (preview.isolation is \"process\"): TeX can read every file you can, so a proposal could copy one into its preview. Use this only for material you trust.",
+    message: "PDF previews need Poppler's pdftoppm and pdfinfo to show pages, and they aren't on the PATH.",
+    fix: process.platform === "darwin" ? "Install Poppler (brew install poppler)." : "Install poppler-utils.",
   };
 }
 
 const oneLineOf = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 200);
 
-/**
- * Build the image previews need here: with the user's TeX mounted (Debian, Perl and Poppler), or
- * with its own TeX Live. Downloads packages: only on the user's explicit request.
- */
-export async function setupPreviewImage(cfg: PreviewConfig, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string }> {
-  const env = await detectPreviewEnv(opts.extras ? { ...cfg, texExtras: true } : cfg);
-  if (env.isolation !== "container" || !env.podman || !env.image) return { ok: false, log: `${env.message}${env.fix ? ` ${env.fix}` : ""}` };
-  if (opts.extras && env.texSource !== "image") return { ok: false, log: "Previews use your own TeX here: install missing packages there (e.g. `tlmgr install <package>`)." };
-  const build = async (tag: string, containerfile: string) => {
-    // An empty build context with just the Containerfile (podman can't read it from a Node pipe).
-    const dir = await mkdtemp(join(tmpdir(), "stet-preview-image-"));
-    try {
-      await writeFile(join(dir, "Containerfile"), containerfile);
-      const r = await run(env.podman!, ["build", "--tag", tag, "--file", join(dir, "Containerfile"), dir], { timeout: 60 * 60_000 });
-      return { ok: r.code === 0, log: (r.stdout + r.stderr).trim() };
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  };
-  if (env.texSource !== "image") return build(env.image, PREVIEW_CONTAINERFILE);
-  // The extra fonts are a layer on the image with its own TeX: build that first if it's missing.
-  if (!opts.extras && !cfg.texExtras) return build(cfg.texImage, PREVIEW_TEX_CONTAINERFILE);
-  if ((await run(env.podman, ["image", "exists", cfg.texImage])).code !== 0) {
-    const first = await build(cfg.texImage, PREVIEW_TEX_CONTAINERFILE);
-    if (!first.ok) return first;
+/** Build a container image from a Containerfile, in an empty build context. */
+export async function buildImage(podman: string, tag: string, containerfile: string): Promise<{ ok: boolean; log: string }> {
+  // An empty build context with just the Containerfile (podman can't read it from a Node pipe).
+  const dir = await mkdtemp(join(tmpdir(), "stet-preview-image-"));
+  try {
+    await writeFile(join(dir, "Containerfile"), containerfile);
+    const r = await runProgram(podman, ["build", "--tag", tag, "--file", join(dir, "Containerfile"), dir], { timeout: 60 * 60_000 });
+    return { ok: r.code === 0, log: (r.stdout + r.stderr).trim() };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
-  return build(cfg.texExtrasImage, previewExtrasContainerfile(cfg.texImage));
 }
 
-/** TeX's own restrictions, in every build (kpathsea reads these from the environment). They stop shell escape and writes, not reads. */
-const TEX_ENV = { openin_any: "p", openout_any: "p", shell_escape: "f" };
-
 /** Arguments of `podman run` for one isolated command in `work`. Exported for tests. */
-export function containerArgs(env: PreviewEnv, image: string, work: string, name: string, cmd: string[]): string[] {
-  const vars = { PATH: `${env.texBin}:/usr/bin:/bin`, HOME: "/tmp", TEXMFVAR: "/tmp/texmf-var", ...(env.texmfHome ? { TEXMFHOME: "/texmf-home" } : {}), ...TEX_ENV };
+export function containerArgs(env: PreviewEnv, image: string, work: string, name: string, cmd: string[], extra: Record<string, string> = {}): string[] {
+  const vars = { PATH: `${env.bin}:/usr/bin:/bin`, HOME: "/tmp", ...extra };
   return [
     "run", "--rm", "--name", name,
     // Only ever the image the user built: a missing one is an error, never a download.
@@ -363,8 +246,7 @@ export function containerArgs(env: PreviewEnv, image: string, work: string, name
     "--ulimit", "fsize=536870912:536870912",
     "--ulimit", "nofile=1024:1024",
     ...(env.memoryLimit ? ["--memory=2g", "--memory-swap=2g"] : []),
-    ...(env.texMount ? ["--volume", `${env.texMount}:${env.texMount}:ro`] : []),
-    ...(env.texmfHome ? ["--volume", `${env.texmfHome}:/texmf-home:ro`] : []),
+    ...(env.mounts ?? []).flatMap(([host, at]) => ["--volume", `${host}:${at}:ro`]),
     "--volume", `${work}:/work`,
     "--workdir", "/work",
     ...Object.entries(vars).flatMap(([k, v]) => ["--env", `${k}=${v}`]),
@@ -373,76 +255,30 @@ export function containerArgs(env: PreviewEnv, image: string, work: string, name
 }
 
 /** Run one command of a build, isolated as configured, in `work` (paths inside it are relative). */
-async function runIsolated(env: PreviewEnv, cfg: PreviewConfig, work: string, cmd: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function runIsolated(env: PreviewEnv, cfg: PreviewConfig, typesetter: Typesetter, work: string, cmd: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const timeout = cfg.timeout * 1000;
   if (env.isolation === "container") {
     if (/[:,]/.test(work)) return { code: -1, stdout: "", stderr: `Can't mount ${work} into a container: its path contains ':' or ','.` };
     const name = `stet-preview-${randomBytes(6).toString("hex")}`;
     const podman = env.podman ?? "podman";
-    const r = await run(podman, containerArgs(env, env.image ?? cfg.image, work, name, cmd), { timeout });
-    if (r.code !== 0) await run(podman, ["rm", "--force", "--ignore", name]); // after a timeout
+    const r = await runProgram(podman, containerArgs(env, env.image ?? cfg.image, work, name, cmd, typesetter.buildEnv(env, "/tmp", true)), { timeout });
+    if (r.code !== 0) await runProgram(podman, ["rm", "--force", "--ignore", name]); // after a timeout
     return r;
   }
   // A normal process: the restrictions above, a private HOME, and nothing else from the environment.
   const home = join(work, "stet-home");
   await mkdir(home, { recursive: true });
-  const path = [env.texBin, ...(process.env.PATH ?? "").split(delimiter).filter((p) => p && p !== env.texBin)].join(delimiter);
-  const vars: NodeJS.ProcessEnv = { PATH: path, HOME: home, USERPROFILE: home, TEXMFVAR: join(home, "texmf-var"), ...TEX_ENV };
+  const path = [env.bin, ...(process.env.PATH ?? "").split(delimiter).filter((p) => p && p !== env.bin)].join(delimiter);
+  const vars: NodeJS.ProcessEnv = { PATH: path, HOME: home, USERPROFILE: home, ...typesetter.buildEnv(env, home, false) };
   for (const k of ["SystemRoot", "TEMP", "TMP", "LANG"]) if (process.env[k]) vars[k] = process.env[k];
-  return run(cmd[0]!, cmd.slice(1), { cwd: work, env: vars, timeout });
+  return runProgram(cmd[0]!, cmd.slice(1), { cwd: work, env: vars, timeout });
 }
 
 // ---------------------------------------------------------------------------
-// The document
+// The page region
 
-/** Which TeX engine a document wants. */
-export function detectEngine(rootText: string): "pdflatex" | "xelatex" | "lualatex" {
-  const magic = /^%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(\w+)/im.exec(rootText)?.[1]?.toLowerCase();
-  if (magic === "xelatex" || magic === "lualatex" || magic === "pdflatex") return magic;
-  if (/\\usepackage(?:\[[^\]]*\])?\{[^}]*\b(?:fontspec|unicode-math)\b/.test(rootText)) return "lualatex";
-  return "pdflatex";
-}
-
-const isDocument = (t: string) => /\\documentclass/.test(t) && /\\begin\s*\{document\}/.test(t);
-
-/** The document to compile: `rootFile`, else `main.tex`, else the one top-level document. Null if unclear. */
-export function detectRoot(files: Map<string, string>, rootFile: string | null): string | null {
-  if (rootFile) return files.has(rootFile) ? rootFile : null;
-  const main = files.get("main.tex");
-  if (main !== undefined && isDocument(main)) return "main.tex";
-  const top = [...files].filter(([p, t]) => !p.includes("/") && p.endsWith(".tex") && isDocument(t)).map(([p]) => p);
-  return top.length === 1 ? top[0]! : null;
-}
-
-// ---------------------------------------------------------------------------
-// SyncTeX and the page region
-
-export interface SyncBox {
-  page: number;
-  /** In PDF points from the top-left corner: the box spans h..h+W and v-H..v (v is the baseline). */
-  h: number;
-  v: number;
-  W: number;
-  H: number;
-}
-
-/** Parse `synctex view` output into boxes. */
-export function parseSynctex(out: string): SyncBox[] {
-  const boxes: SyncBox[] = [];
-  let cur: Partial<SyncBox> = {};
-  for (const line of out.split(/\r?\n/)) {
-    const m = /^(Page|h|v|W|H):(-?[\d.]+)$/.exec(line.trim());
-    if (!m) continue;
-    const key = m[1] === "Page" ? "page" : (m[1] as "h" | "v" | "W" | "H");
-    if (key === "page" && cur.page !== undefined) cur = {};
-    cur[key] = Number(m[2]);
-    if (cur.page !== undefined && cur.h !== undefined && cur.v !== undefined && cur.W !== undefined && cur.H !== undefined) {
-      boxes.push(cur as SyncBox);
-      cur = {};
-    }
-  }
-  return boxes;
-}
+/** Where text is on a page (the typesetter's `locate`, or words found on it). */
+export type SyncBox = SourceBox;
 
 /**
  * The region to show: the full page width (so lines read as on paper) and the lines of the
@@ -481,7 +317,9 @@ export type PreviewResult =
       after: PreviewImage;
       /** Which other changes the preview includes, and why. */
       note?: string;
-      /** LaTeX reported errors with the change that the document didn't have without it; the PDF came out anyway. */
+      /** The typesetter, for messages ("LaTeX log"). */
+      typesetter?: string;
+      /** The typesetter reported errors with the change that the document didn't have without it; the PDF came out anyway. */
       warning?: { message: string; log: string; count: number; missing?: Missing };
       /** Whole pages with the changed words marked, for a page viewer; other pages via `PreviewBuilder.page`. */
       pages?: PageView;
@@ -489,11 +327,11 @@ export type PreviewResult =
   /** The change has no place on the page (preamble, macros, bibliography data, a file not in the document). */
   | { status: "no-spot"; message: string }
   /** No PDF: with the change (`change`), or already without it (`base`). */
-  | { status: "failed"; message: string; log: string; cause?: "base" | "change"; missing?: Missing }
+  | { status: "failed"; message: string; log: string; cause?: "base" | "change"; missing?: Missing; typesetter?: string }
   | { status: "unavailable"; message: string; fix?: string };
 
 /**
- * Files LaTeX couldn't find (`dsfont.sty`), and whether installing the preview image's extra fonts
+ * Files the build couldn't find (LaTeX: `dsfont.sty`), and whether installing the preview image's extra fonts
  * may bring them (only for the small image with its own TeX).
  */
 export interface Missing {
@@ -556,13 +394,24 @@ const KEEP_BASES = 3;
 /** Builds previews for one project, with a cache under `root` (`<store>/previews`). */
 export class PreviewBuilder {
   private readonly building = new Map<string, Promise<unknown>>();
+  private readonly ts: Typesetter;
+  private readonly tokenize: ((text: string) => Token[]) | undefined;
 
+  /** `profile`: the document's language, which has the typesetter. */
   constructor(
     private readonly repo: Repo,
     private readonly root: string,
     private readonly cfg: PreviewConfig,
     private readonly env: PreviewEnv,
-  ) {}
+    profile: LanguageProfile,
+  ) {
+    if (!profile.typesetter) throw new Error(`${profile.name} has no PDF previews.`);
+    this.ts = profile.typesetter;
+    this.tokenize = profile.syntax?.tokenize;
+  }
+
+  /** Run one program of a build, isolated. */
+  private run = (work: string, cmd: string[]) => runIsolated(this.env, this.cfg, this.ts, work, cmd);
 
   async preview(req: PreviewRequest): Promise<PreviewResult> {
     if (this.env.status !== "ready") return { status: "unavailable", message: this.env.message, ...(this.env.fix ? { fix: this.env.fix } : {}) };
@@ -607,13 +456,12 @@ export class PreviewBuilder {
     const tmp = `${dir}.tmp-${randomBytes(4).toString("hex")}`;
     try {
       await this.exportTree(base, join(tmp, "src"));
-      const files = await this.texFiles(join(tmp, "src"));
-      const root = detectRoot(files, this.cfg.rootFile);
+      const files = await this.sourceFiles(join(tmp, "src"));
+      const root = this.ts.detectRoot(files, this.cfg);
       let pdf: string | null = null;
       let log = "";
       if (root) {
-        const engine = this.cfg.engine === "auto" ? detectEngine(files.get(root) ?? "") : this.cfg.engine;
-        const r = await this.compile(join(tmp, "src"), root, engine);
+        const r = await this.ts.compile(this.run, join(tmp, "src"), root, this.cfg);
         pdf = r.pdf;
         log = r.log;
       }
@@ -634,14 +482,12 @@ export class PreviewBuilder {
     itemDir: string,
   ): Promise<PreviewResult> {
     if (!base.root) {
-      return { status: "unavailable", message: "Stet couldn't tell which file is the document to compile.", fix: "Set preview.rootFile in .git/stet/config.json (e.g. \"main.tex\")." };
+      return { status: "unavailable", message: "Stet couldn't tell which file is the document to compile.", fix: `Set preview.rootFile in .git/stet/config.json (e.g. "${this.ts.rootHint}").` };
     }
     if (!base.pdf) return this.failure("base", "Your document doesn't compile without this change either.", base.log);
     const noSpot: PreviewResult = { status: "no-spot", message: "This change has no place of its own on the page (for example the preamble, a macro or bibliography data)." };
     const target = req.changes[req.target]!;
-    // The main file's preamble: SyncTeX would point at the first text instead.
-    const begin = /\\begin\s*\{document\}/.exec(target.baseText)?.index ?? -1;
-    if (target.file === base.root && begin >= 0 && target.range.start < begin) return noSpot;
+    if (this.ts.noSpot(target.baseText, target.range.start, target.file === base.root)) return noSpot;
 
     // The changes in the base's copy: reusing its build makes the second run quick.
     const work = join(itemDir, "build");
@@ -650,20 +496,18 @@ export class PreviewBuilder {
     // Copy-on-write where the filesystem can (btrfs, XFS, APFS): figures aren't duplicated.
     await cp(join(base.dir, "src"), work, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
     // The base's PDF must not pass for this build's if this one produces none.
-    const stem = posix.basename(base.root).replace(/\.tex$/i, "");
-    for (const ext of ["pdf", "synctex.gz"]) await rm(join(work, "stet-build", `${stem}.${ext}`), { force: true });
+    for (const out of this.ts.outputs(base.root)) await rm(join(work, out), { force: true });
     const applied = applyChanges(req.changes, req.target);
     if (!applied) return { status: "failed", cause: "change", message: "The changes to preview overlap; Stet can't apply them together.", log: "" };
     for (const [file, text] of applied.files) await writeInside(work, file, fromLf(text, req.changes.find((c) => c.file === file)!.eol));
-    const engine = this.cfg.engine === "auto" ? detectEngine((await readFile(join(work, base.root), "utf8").catch(() => "")) || "") : this.cfg.engine;
-    const built = await this.compile(work, base.root, engine);
+    const built = await this.ts.compile(this.run, work, base.root, this.cfg);
     if (!built.pdf) return this.failure("change", "The document doesn't compile with this change.", built.log);
 
     const after = applied.files.get(target.file)!;
     const lines = (text: string, from: number, to: number) => [lineOf(text, from), lineOf(text, Math.max(from, to - 1))];
     // Every change shown in this file, in each version's own text: the one asked for first.
     const same = req.changes.map((c, k) => ({ c, k })).filter((x) => x.c.file === target.file).sort((a, b) => (a.k === req.target ? -1 : b.k === req.target ? 1 : 0));
-    const whole = same.map(({ c }) => shownWhole(c.baseText.slice(c.range.start, c.range.end), c.newText));
+    const whole = same.map(({ c }) => shownWhole(c.baseText.slice(c.range.start, c.range.end), c.newText, this.tokenize));
     const spansAfter = same.map(({ c, k }, n) => around(after, applied.starts[k]!, applied.starts[k]! + c.newText.length, whole[n]));
     const spansBefore = same.map(({ c }, n) => around(c.baseText, c.range.start, c.range.end, whole[n]));
     const afterAt = await this.region(work, built.pdf, target.file, lines(after, applied.start, applied.start + target.newText.length), join(itemDir, "after.png"), spansAfter);
@@ -675,18 +519,19 @@ export class PreviewBuilder {
     await rm(work, { recursive: true, force: true }); // keep the images and this version's PDF only
     await utimes(baseDir, new Date(), new Date()).catch(() => undefined);
     // Errors only this version has: the PDF is there, but the reviewer should know.
-    const known = new Set(errorsOf(base.log));
-    const fresh = errorsOf(built.log).filter((e) => !known.has(e));
+    const known = new Set(this.ts.errorsOf(base.log));
+    const fresh = this.ts.errorsOf(built.log).filter((e) => !known.has(e));
     return {
       status: "ready",
+      typesetter: this.ts.name,
       before: beforeImg,
       after: afterImg,
       ...(pages ? { pages } : {}),
       ...(fresh.length
         ? {
             warning: {
-              message: `LaTeX reported ${fresh.length === 1 ? "an error" : `${fresh.length} errors`} with this change that the document doesn't have without it.`,
-              log: excerpt(built.log),
+              message: `${this.ts.name} reported ${fresh.length === 1 ? "an error" : `${fresh.length} errors`} with this change that the document doesn't have without it.`,
+              log: this.ts.excerpt(built.log),
               count: fresh.length,
               ...this.missingIn(built.log),
             },
@@ -755,14 +600,14 @@ export class PreviewBuilder {
   }
 
   private async pdfInfo(work: string, pdfRel: string, page: number): Promise<{ count: number; width: number; height: number } | null> {
-    const r = await runIsolated(this.env, this.cfg, work, ["pdfinfo", "-f", String(page), "-l", String(page), pdfRel]);
+    const r = await this.run(work, ["pdfinfo", "-f", String(page), "-l", String(page), pdfRel]);
     const count = Number(/^Pages:\s+(\d+)/m.exec(r.stdout)?.[1] ?? 0);
     const size = /Page\s+\d+\s+size:\s+([\d.]+)\s+x\s+([\d.]+)/.exec(r.stdout);
     return count && size ? { count, width: Number(size[1]), height: Number(size[2]) } : null;
   }
 
   private async pageWords(work: string, pdfRel: string, first: number, last: number): Promise<PdfWord[]> {
-    const r = await runIsolated(this.env, this.cfg, work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
+    const r = await this.run(work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
     return r.code === 0 ? parseWords(r.stdout, first) : [];
   }
 
@@ -771,7 +616,7 @@ export class PreviewBuilder {
     if (existsSync(out)) return out;
     await mkdir(dirname(out), { recursive: true });
     const name = `.page-${randomBytes(4).toString("hex")}`;
-    const r = await runIsolated(this.env, this.cfg, work, ["pdftoppm", "-f", String(n), "-l", String(n), "-r", String(PAGE_RESOLUTION), "-png", "-singlefile", pdfRel, name]);
+    const r = await this.run(work, ["pdftoppm", "-f", String(n), "-l", String(n), "-r", String(PAGE_RESOLUTION), "-png", "-singlefile", pdfRel, name]);
     if (r.code !== 0) throw new Error(`pdftoppm failed: ${r.stderr.slice(0, 200)}`);
     await rename(join(work, `${name}.png`), out);
     return out;
@@ -780,48 +625,35 @@ export class PreviewBuilder {
   /** A failed build, with what's missing if a file couldn't be found (a package not in the preview's TeX). */
   private failure(cause: "base" | "change", message: string, log: string): PreviewResult {
     const m = this.missingIn(log);
-    const say = m.missing
-      ? ` ${m.missing.files.join(", ")} ${m.missing.files.length === 1 ? "isn't" : "aren't"} in ${
-          this.env.texSource === "image" ? `the preview's TeX${m.missing.extras ? " (its extra fonts may have it)" : ""}` : "your TeX installation (tlmgr install …)"
-        }.`
-      : "";
-    return { status: "failed", cause, message: message + say, log: excerpt(log), ...m };
+    const say = m.missing ? ` ${m.missing.files.join(", ")} ${m.missing.files.length === 1 ? "isn't" : "aren't"} in ${this.ts.installHint(this.env, m.missing.extras)}.` : "";
+    return { status: "failed", cause, message: message + say, log: this.ts.excerpt(log), typesetter: this.ts.name, ...m };
   }
 
   private missingIn(log: string): { missing?: Missing } {
-    const files = missingFiles(log);
+    const files = this.ts.missingFiles(log);
     return files.length ? { missing: { files, extras: !!this.env.extrasAvailable } } : {};
   }
 
-  /** Locate source lines in a PDF with SyncTeX and render that region to `out`. */
+  /** Locate source lines in a PDF (the typesetter's `locate`) and render that region to `out`. */
   /** `found`: where the changes (`spans`) are on the page, for the page view's marks. */
   private async region(work: string, pdf: string, file: string, lines: number[], out: string, spans: Span3[] = []): Promise<{ img: PreviewImage; found: Located[] } | null> {
     const pdfRel = relTo(work, pdf);
-    const boxes: SyncBox[] = [];
-    for (const line of [...new Set(lines)]) {
-      const r = await runIsolated(this.env, this.cfg, work, ["synctex", "view", "-i", `${line}:0:${file}`, "-o", pdfRel]);
-      if (r.code === 0) boxes.push(...parseSynctex(r.stdout));
-    }
-    if (!boxes.length) return null;
+    const boxes = await this.ts.locate(this.run, work, pdfRel, file, lines);
+    if (!boxes?.length) return null;
     const page = boxes[0]!.page;
-    // SyncTeX falls back to the nearest text for lines that typeset nothing (definitions in an
-    // included file). Ask back which file is at that spot: another one means there's no spot.
-    const b = boxes[0]!;
-    const back = await runIsolated(this.env, this.cfg, work, ["synctex", "edit", "-o", `${page}:${(b.h + b.W / 2).toFixed(1)}:${(b.v - b.H / 2).toFixed(1)}:${pdfRel}`]);
-    const input = /^Input:(.*)$/m.exec(back.stdout)?.[1]?.trim();
-    if (input && !sameSource(input, file)) return null;
 
-    // The words of the changes, on SyncTeX's pages and the one after (a paragraph may go on).
+    // The words of the changes, on the pages found and the one after (a paragraph may go on).
     let shown = boxes;
     let at = page;
     let located: Located[] = [];
     if (spans.length) {
       const pages = boxes.map((b) => b.page);
       const first = Math.min(...pages), last = Math.max(...pages) + 1;
-      const text = await runIsolated(this.env, this.cfg, work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
+      const text = await this.run(work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
       const words = text.code === 0 ? parseWords(text.stdout, first) : [];
       const found = spans.map((s) => {
-        const f = findWordsIn(words, plainWords(s.before).slice(-6), plainWords(s.text), plainWords(s.after).slice(0, 6), page);
+        const plain = (t: string) => this.ts.plainWords(t);
+        const f = findWordsIn(words, plain(s.before).slice(-6), plain(s.text), plain(s.after).slice(0, 6), page);
         return f && { ...f, whole: s.whole };
       });
       located = found.filter((f): f is Located & { whole: boolean } => !!f);
@@ -831,34 +663,20 @@ export class PreviewBuilder {
         shown = located.filter((f) => f.words.some((w) => w.page === at)).flatMap((f) => wordBoxes(f.words.filter((w) => w.page === at)));
       }
     }
-    const info = await runIsolated(this.env, this.cfg, work, ["pdfinfo", "-f", String(at), "-l", String(at), pdfRel]);
+    const info = await this.run(work, ["pdfinfo", "-f", String(at), "-l", String(at), pdfRel]);
     const size = /Page\s+\d+\s+size:\s+([\d.]+)\s+x\s+([\d.]+)/.exec(info.stdout) ?? /Page size:\s+([\d.]+)\s+x\s+([\d.]+)/.exec(info.stdout);
     if (!size) return null;
     const crop = cropRegion(shown, { width: Number(size[1]), height: Number(size[2]) });
     if (!crop) return null;
     const px = (pt: number) => String(Math.round((pt * RESOLUTION) / 72));
     const name = `.region-${randomBytes(4).toString("hex")}`;
-    const r = await runIsolated(this.env, this.cfg, work, [
+    const r = await this.run(work, [
       "pdftoppm", "-f", String(crop.page), "-l", String(crop.page), "-r", String(RESOLUTION),
       "-x", px(crop.x), "-y", px(crop.y), "-W", px(crop.w), "-H", px(crop.h), "-png", "-singlefile", pdfRel, name,
     ]);
     if (r.code !== 0) return null;
     await rename(join(work, `${name}.png`), out);
     return { img: { file: out, page: crop.page }, found: located };
-  }
-
-  /** Compile `root` in `work` with latexmk; the PDF path, or null with the log. */
-  private async compile(work: string, root: string, engine: "pdflatex" | "xelatex" | "lualatex"): Promise<{ pdf: string | null; log: string }> {
-    const flag = engine === "xelatex" ? "-xelatex" : engine === "lualatex" ? "-lualatex" : "-pdf";
-    const r = await runIsolated(this.env, this.cfg, work, [
-      // -f, and no -halt-on-error: a paper with a small error somewhere still gets its PDF (as
-      // when the author compiles it), and so its previews. Errors are reported next to them.
-      "latexmk", "-norc", flag, "-f", "-interaction=nonstopmode", "-file-line-error", "-synctex=1", "-outdir=stet-build", root,
-    ]);
-    const stem = posix.basename(root).replace(/\.tex$/i, "");
-    const pdf = join(work, "stet-build", `${stem}.pdf`);
-    const log = await readFile(join(work, "stet-build", `${stem}.log`), "utf8").catch(() => r.stdout + r.stderr);
-    return existsSync(pdf) ? { pdf, log } : { pdf: null, log: log || r.stdout + r.stderr };
   }
 
   /** Check out `rev` into `dir`, with symbolic links as plain files (none may lead out of the build). */
@@ -873,13 +691,13 @@ export class PreviewBuilder {
     await rm(index, { force: true });
   }
 
-  /** The .tex files below `dir` (relative paths, forward slashes) and their text. */
-  private async texFiles(dir: string, rel = "", out = new Map<string, string>()): Promise<Map<string, string>> {
+  /** The typesetter's source files below `dir` (relative paths, forward slashes) and their text. */
+  private async sourceFiles(dir: string, rel = "", out = new Map<string, string>()): Promise<Map<string, string>> {
     for (const e of await readdir(join(dir, rel), { withFileTypes: true })) {
       const p = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
-        if (!e.name.startsWith(".")) await this.texFiles(dir, p, out);
-      } else if (e.isFile() && /\.tex$/i.test(e.name) && (await stat(join(dir, p))).size < 4_000_000) {
+        if (!e.name.startsWith(".")) await this.sourceFiles(dir, p, out);
+      } else if (e.isFile() && this.ts.source.test(e.name) && (await stat(join(dir, p))).size < 4_000_000) {
         out.set(p, await readFile(join(dir, p), "utf8"));
       }
     }
@@ -921,34 +739,10 @@ export function applyChanges(changes: PreviewChange[], target: number): { files:
   return start < 0 ? null : { files, start, starts };
 }
 
-/**
- * The errors in a LaTeX log, without line numbers (which a change shifts): each message with the
- * text TeX was at (its `l.<n> …` line), so "Undefined control sequence" at two places differs.
- */
-export function errorsOf(log: string): string[] {
-  const out: string[] = [];
-  const lines = log.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^!\s*(.*)$/.exec(lines[i]!) ?? /^\S.*?:\d+:\s*(.*)$/.exec(lines[i]!);
-    if (!m) continue;
-    let at = "";
-    for (let j = i + 1; j < Math.min(lines.length, i + 12); j++) {
-      if (/^!|^\S.*?:\d+:/.test(lines[j]!)) break; // the next error: this one has no context
-      const l = /^l\.\d+\s?(.*)$/.exec(lines[j]!);
-      if (l) {
-        at = l[1]!.trim().slice(-60);
-        break;
-      }
-    }
-    out.push(`${m[1]!.replace(/\d+/g, "#").trim()}${at ? ` @ ${at}` : ""}`);
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------------------
-// Finding a change's words on the page. SyncTeX maps source *lines* to the page, and a paragraph
-// is often one source line: it returns the whole paragraph, starting on the page where the
-// paragraph starts. The words themselves say where the change is.
+// Finding a change's words on the page. A typesetter maps source *lines* to the page (SyncTeX),
+// and a paragraph is often one source line: it returns the whole paragraph, starting on the page
+// where the paragraph starts. The words themselves say where the change is.
 
 export interface PdfWord {
   text: string;
@@ -1017,18 +811,9 @@ export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
 const decodeXml = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
 /** A word as it compares: letters and digits only, lower case, ligatures (ﬁ) taken apart. */
-const norm = (w: string) => w.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-
-/** The words LaTeX source typesets, roughly: no comments, commands, braces or maths. */
-export function plainWords(latex: string): string[] {
-  const t = latex
-    .replace(/(^|[^\\])%.*$/gm, "$1")
-    .replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/g, " ")
-    .replace(/\\(?:label|ref|eqref|cref|Cref|cite\w*|begin|end|includegraphics|input|include)\*?(?:\[[^\]]*\])?\{[^}]*\}/g, " ")
-    .replace(/\\[A-Za-z@]+\*?/g, " ")
-    .replace(/[{}~]/g, " ");
-  return t.split(/\s+/).map(norm).filter((w) => w.length >= 2);
-}
+/** A word as it is compared on the page: case, accents' forms and punctuation aside. */
+export const normWord = (w: string) => w.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+const norm = normWord;
 
 /** The longest common subsequence of `a` and `b`, as pairs of indices. */
 function lcs(a: string[], b: string[]): [number, number][] {
@@ -1222,33 +1007,10 @@ export function markRuns(words: PdfWord[]): Box[] {
   return out.map(({ x0, y0, x1, y1 }) => ({ x0, y0, x1, y1 }));
 }
 
-/** The SyncTeX-style boxes of words (for `cropRegion`), on the page of the first. */
+/** The boxes of words (for `cropRegion`), on the page of the first. */
 export function wordBoxes(found: PdfWord[]): SyncBox[] {
   const page = found[0]!.page;
   return found.filter((w) => w.page === page).map((w) => ({ page, h: w.x0, v: w.y1, W: w.x1 - w.x0, H: w.y1 - w.y0 }));
-}
-
-/** Files LaTeX looked for and didn't find (`File \`dsfont.sty' not found`, `I can't find file`). */
-export function missingFiles(log: string): string[] {
-  const out = new Set<string>();
-  for (const m of log.matchAll(/File [`'‘]([^'’\s]+)['’] not found/g)) out.add(m[1]!);
-  for (const m of log.matchAll(/I can't find file [`'‘]([^'’\s]+)['’]/g)) out.add(m[1]!);
-  return [...out];
-}
-
-/** The part of a LaTeX log that says what went wrong. */
-export function excerpt(log: string, max = 40): string {
-  const lines = log.split(/\r?\n/);
-  const i = lines.findIndex((l) => /^!|^\S.*:\d+: /.test(l));
-  return (i >= 0 ? lines.slice(i, i + max) : lines.slice(-max)).join("\n").trim();
-}
-
-/** Whether SyncTeX's `Input:` name is the repository file `file` (it may be `./file`, or absolute in the build folder). */
-export function sameSource(input: string, file: string): boolean {
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/\/(\.\/)+/g, "/");
-  const a = norm(input);
-  const f = norm(file);
-  return a === f || a.endsWith("/" + f) || a === f.replace(/\.tex$/i, "") || a.endsWith("/" + f.replace(/\.tex$/i, ""));
 }
 
 /** A change in one version's text: its text, and some text on either side. */
@@ -1262,8 +1024,8 @@ interface Span3 {
 const around = (text: string, start: number, end: number, whole = false): Span3 => ({ before: text.slice(Math.max(0, start - 300), start), text: text.slice(start, end), after: text.slice(end, end + 300), whole });
 
 /** Does the editor show this change whole (mostly rewritten), rather than the words that differ? */
-const shownWhole = (oldText: string, newText: string): boolean => {
-  const d = inlineDiff(oldText, newText);
+const shownWhole = (oldText: string, newText: string, tokenize?: (text: string) => Token[]): boolean => {
+  const d = inlineDiff(oldText, newText, tokenize);
   return d.removed.length <= 1 && d.inserted.length <= 1 && (d.removed[0]?.[1] ?? 0) - (d.removed[0]?.[0] ?? 0) === oldText.length && (d.inserted[0]?.text ?? "") === newText;
 };
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
-import { applyChanges, changeMarks, containerArgs, findWords, findWordsIn, markRuns, parseWords, plainWords, wordDiff, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
+import { applyChanges, changeMarks, containerArgs, findWords, findWordsIn, markRuns, parseWords, wordDiff, cropRegion, DEFAULT_PREVIEW, detectPreviewEnv } from "../src/preview.js";
+import { detectEngine, detectRoot, errorsOf, excerpt, LATEX_TYPESETTER, missingFiles, parseSynctex, plainWords, previewExtrasContainerfile } from "../src/lang/latex-preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -77,14 +78,16 @@ SyncTeX result end
 
 describe("preview: isolation", () => {
   it("runs builds in a container with no network, no privileges and a read-only TeX", () => {
-    const env = { status: "ready" as const, isolation: "container" as const, message: "", texBin: "/tl/2026/bin/x86_64-linux", texMount: "/tl" };
-    const a = containerArgs(env, "localhost/stet-preview:1", "/cache/abc/base/src", "stet-preview-1", ["latexmk", "main.tex"]);
+    const env = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/2026/bin/x86_64-linux", mounts: [["/tl", "/tl"]] as [string, string][] };
+    const tex = (e: typeof env | { status: "ready"; isolation: "container"; message: string; bin: string }) => LATEX_TYPESETTER.buildEnv(e, "/tmp", true);
+    const a = containerArgs(env, "localhost/stet-preview:1", "/cache/abc/base/src", "stet-preview-1", ["latexmk", "main.tex"], tex(env));
     for (const flag of ["--rm", "--network=none", "--read-only", "--userns=keep-id", "--cap-drop=ALL", "--security-opt=no-new-privileges"]) expect(a).toContain(flag);
     // Exactly two mounts: TeX read-only, the build folder.
     const vols = a.flatMap((x, i) => (x === "--volume" ? [a[i + 1]] : []));
     expect(vols).toEqual(["/tl:/tl:ro", "/cache/abc/base/src:/work"]);
     // With the image's own TeX (macOS): only the build folder is mounted.
-    const own = containerArgs({ ...env, texMount: undefined, texBin: "/usr/bin" }, "localhost/stet-preview-tex:1", "/w", "n", ["latexmk"]);
+    const ownEnv = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/usr/bin" };
+    const own = containerArgs(ownEnv, "localhost/stet-preview-tex:1", "/w", "n", ["latexmk"], tex(ownEnv));
     expect(own.flatMap((x, i) => (x === "--volume" ? [own[i + 1]] : []))).toEqual(["/w:/work"]);
     // TeX may read and write only the build folder, and no shell escape.
     for (const v of ["openin_any=p", "openout_any=p", "shell_escape=f", "HOME=/tmp"]) expect(a).toContain(v);
@@ -97,19 +100,19 @@ describe("preview: isolation", () => {
     try {
       // A container needs Podman first: the image can bring its own TeX. (No Podman here even if
       // the machine has one: CI runners often do.)
-      const env = await detectPreviewEnv(DEFAULT_PREVIEW, { podman: null });
+      const env = await detectPreviewEnv(DEFAULT_PREVIEW, LATEX_TYPESETTER, { podman: null });
       expect(env.status).toBe("unavailable");
       // Each platform says what it needs: Podman, or (Windows, not supported yet) WSL2.
       expect(env.message).toMatch(process.platform === "win32" ? /Windows/ : /Podman/);
       expect(env.fix).toMatch(process.platform === "win32" ? /WSL2/ : /Install Podman/);
       // Without a container (the user's choice), their own TeX is needed.
-      const proc = await detectPreviewEnv({ ...DEFAULT_PREVIEW, isolation: "process" });
+      const proc = await detectPreviewEnv({ ...DEFAULT_PREVIEW, isolation: "process" }, LATEX_TYPESETTER);
       expect(proc.message).toMatch(/latexmk/);
       expect(proc.fix).toMatch(/TeX Live/);
     } finally {
       process.env.PATH = path;
     }
-    expect((await detectPreviewEnv({ ...DEFAULT_PREVIEW, enabled: false })).message).toMatch(/switched off/);
+    expect((await detectPreviewEnv({ ...DEFAULT_PREVIEW, enabled: false }, LATEX_TYPESETTER)).message).toMatch(/switched off/);
   });
 
   it("accepts only safe settings", () => {

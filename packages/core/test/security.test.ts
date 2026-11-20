@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { doctor } from "../src/doctor.js";
 import { InboxWriter, INBOX_FILE } from "../src/inbox.js";
 import { containerArgs, DEFAULT_PREVIEW, insideDir, PreviewBuilder } from "../src/preview.js";
+import { LATEX } from "../src/lang/index.js";
 import { readInside } from "../src/safefs.js";
 import { isSafeRepoPath, oneLine, printable } from "../src/text.js";
 import { writeWorkspaceFiles } from "../src/workspace.js";
@@ -195,7 +196,7 @@ describe("review before 0.10 (2026-11-19)", () => {
   });
 
   it("runs previews only in the user's image, with limits, and never downloads one", () => {
-    const env = { status: "ready" as const, isolation: "container" as const, message: "", texBin: "/tl/bin", texMount: "/tl", memoryLimit: true };
+    const env = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][], memoryLimit: true };
     const args = containerArgs(env, "localhost/stet-preview:1", "/w", "n", ["latexmk"]);
     expect(args).toContain("--pull=never");
     expect(args.join(" ")).toMatch(/--ulimit fsize=\d+:\d+/);
@@ -209,8 +210,8 @@ describe("review before 0.10 (2026-11-19)", () => {
     expect(insideDir("/home/me/.ssh/id_ed25519", "/c/abc/items/1.1-x")).toBe(false);
     expect(insideDir("/c/abc/items/1.1-x/../../x.png", "/c/abc/items/1.1-x")).toBe(false);
     const { stet } = await setup({ "main.tex": PAPER });
-    const ready = { status: "ready" as const, isolation: "container" as const, message: "", texBin: "/tl/bin", texMount: "/tl" };
-    const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), DEFAULT_PREVIEW, ready);
+    const ready = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][] };
+    const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), DEFAULT_PREVIEW, ready, LATEX);
     const req = { base: "../../../../tmp", key: "1.1-abc", target: 0, changes: [{ file: "main.tex", baseText: PAPER, eol: "lf" as const, range: { start: 0, end: 1 }, newText: "x" }] };
     expect((await b.preview(req)).status).toBe("unavailable");
     expect((await b.preview({ ...req, base: "a".repeat(40), key: "../x" })).status).toBe("unavailable");

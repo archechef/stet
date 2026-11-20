@@ -3,7 +3,8 @@
  * All texts are LF-normalized; offsets are UTF-16 indexes into them.
  */
 import { diffArrays, diffLines } from "diff";
-import { isBlank, tokenize, type Token } from "./tokenizer.js";
+import { isBlank, type Token } from "./tokenizer.js";
+import type { LanguageProfile, SyntaxRules } from "./lang/profile.js";
 import type { SplitConfig } from "./config.js";
 import { paragraphSimilarity, sharedWordsMatrix, wordSimilarity } from "./text.js";
 
@@ -26,16 +27,17 @@ export interface Edit {
 /** Paragraphs this alike (word similarity) are one paragraph edited; less alike, unrelated. */
 export const PAIR_MIN = 0.5;
 
-export type FileClass = "tex" | "bib" | "text";
-
-export function splitText(cls: FileClass, oldText: string, newText: string, cfg: SplitConfig): Edit[] {
+/**
+ * A file's changes as reviewable edits: by its language's syntax (sentences, paragraphs), else by
+ * its own units (BibTeX entries), else by changed lines.
+ */
+export function splitText(profile: LanguageProfile, oldText: string, newText: string, cfg: SplitConfig): Edit[] {
   if (oldText === newText) return [];
-  if (cls === "tex") return splitLatex(oldText, newText, cfg);
-  if (cls === "bib") return splitBib(oldText, newText) ?? splitLineHunks(oldText, newText);
-  return splitLineHunks(oldText, newText);
+  if (profile.syntax) return splitSyntax(profile.syntax, oldText, newText, cfg);
+  return profile.splitUnits?.(oldText, newText) ?? splitLineHunks(oldText, newText);
 }
 
-function makeEdit(oldText: string, newText: string, start: number, end: number, newStart: number, newEnd: number): Edit {
+export function makeEdit(oldText: string, newText: string, start: number, end: number, newStart: number, newEnd: number): Edit {
   return { start, end, newStart, newEnd, oldText: oldText.slice(start, end), newText: newText.slice(newStart, newEnd) };
 }
 
@@ -91,111 +93,11 @@ export function splitLineHunks(oldText: string, newText: string): Edit[] {
 }
 
 // ---------------------------------------------------------------------------
-// BibTeX: one edit per changed entry
-
-interface BibEntry {
-  key: string;
-  start: number;
-  end: number;
-  text: string;
-}
-
-function parseBib(text: string): { entries: BibEntry[]; skeleton: string } | null {
-  const entries: BibEntry[] = [];
-  const re = /^[ \t]*@(\w+)\s*\{\s*([^,\s]*)\s*,/gm;
-  const starts: { start: number; key: string }[] = [];
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    if (/^(string|preamble|comment)$/i.test(m[1]!)) continue;
-    starts.push({ start: m.index, key: m[2]! });
-  }
-  let skeleton = "";
-  let prevEnd = 0;
-  for (let i = 0; i < starts.length; i++) {
-    const { start, key } = starts[i]!;
-    // Entry ends at its matching closing brace.
-    let depth = 0;
-    let end = -1;
-    for (let j = text.indexOf("{", start); j < text.length; j++) {
-      if (text[j] === "{") depth++;
-      else if (text[j] === "}" && --depth === 0) {
-        end = j + 1;
-        break;
-      }
-    }
-    if (end === -1 || (i + 1 < starts.length && end > starts[i + 1]!.start)) return null;
-    skeleton += text.slice(prevEnd, start) + "\u0000";
-    prevEnd = end;
-    entries.push({ key, start, end, text: text.slice(start, end) });
-  }
-  skeleton += text.slice(prevEnd);
-  const keys = new Set(entries.map((e) => e.key));
-  if (keys.size !== entries.length) return null; // duplicate keys: fall back
-  return { entries, skeleton };
-}
-
-export function splitBib(oldText: string, newText: string): Edit[] | null {
-  const o = parseBib(oldText);
-  const n = parseBib(newText);
-  if (!o || !n) return null;
-  const oldByKey = new Map(o.entries.map((e) => [e.key, e]));
-  const newByKey = new Map(n.entries.map((e) => [e.key, e]));
-  // Anything outside entries (or reordering) changed: line hunks are clearer.
-  const commonOld = o.entries.filter((e) => newByKey.has(e.key)).map((e) => e.key);
-  const commonNew = n.entries.filter((e) => oldByKey.has(e.key)).map((e) => e.key);
-  if (commonOld.join("\n") !== commonNew.join("\n")) return null;
-  const bare = (s: string) => s.replace(/\u0000|\s+/g, "");
-  if (bare(o.skeleton) !== bare(n.skeleton)) return null;
-  const edits: Edit[] = [];
-  for (const e of o.entries) {
-    const ne = newByKey.get(e.key);
-    if (!ne) {
-      // Deleted entry: also remove the whitespace after it.
-      const end = e.end + (/^\s*/.exec(oldText.slice(e.end))?.[0].length ?? 0);
-      edits.push({ start: e.start, end, newStart: 0, newEnd: 0, oldText: oldText.slice(e.start, end), newText: "" });
-    } else if (ne.text !== e.text) {
-      edits.push(makeEdit(oldText, newText, e.start, e.end, ne.start, ne.end));
-    }
-  }
-  // Added entries: insert after the preceding surviving entry, else before the
-  // first old entry, else at the end of the file.
-  for (let i = 0; i < n.entries.length; i++) {
-    const ne = n.entries[i]!;
-    if (oldByKey.has(ne.key)) continue;
-    const prev = n.entries.slice(0, i).reverse().find((e) => oldByKey.has(e.key));
-    let at: number;
-    let insert: string;
-    if (prev) {
-      at = oldByKey.get(prev.key)!.end;
-      insert = "\n\n" + ne.text;
-    } else if (o.entries.length) {
-      at = o.entries[0]!.start;
-      insert = ne.text + "\n\n";
-    } else {
-      at = oldText.length;
-      insert = (oldText && !oldText.endsWith("\n") ? "\n" : "") + (oldText ? "\n" : "") + ne.text + "\n";
-    }
-    edits.push({ start: at, end: at, newStart: ne.start, newEnd: ne.end, oldText: "", newText: insert });
-  }
-  return edits.sort((a, b) => a.start - b.start || a.newStart - b.newStart);
-}
-
-// ---------------------------------------------------------------------------
-// LaTeX-aware splitting
+// Splitting by syntax (spec §6.2)
 
 interface U {
   o: number; // old token index or -1
   n: number; // new token index or -1
-}
-
-const BOUNDARY_CMDS = new Set([
-  "\\begin", "\\end", "\\item", "\\par", "\\part", "\\chapter", "\\section", "\\subsection",
-  "\\subsubsection", "\\paragraph", "\\subparagraph",
-]);
-
-const MATH_ENVS = /^(equation|align|alignat|gather|multline|flalign|eqnarray|math|displaymath|dmath)\*?$/;
-
-function isBoundaryCmd(t: Token): boolean {
-  return t.type === "cmd" && BOUNDARY_CMDS.has(t.text.replace(/\*$/, ""));
 }
 
 /** Matching brace index for every brace token (unmatched braces are absent). */
@@ -213,73 +115,6 @@ function braceMatches(toks: Token[]): Map<number, number> {
   return m;
 }
 
-/** Token index spans [a, b] (inclusive) of math content, including delimiters. */
-function mathSpans(toks: Token[]): [number, number][] {
-  const spans: [number, number][] = [];
-  let open: { i: number; text: string } | null = null;
-  const closer: Record<string, string> = { $: "$", $$: "$$", "\\(": "\\)", "\\[": "\\]" };
-  const envStack: { i: number; name: string }[] = [];
-  const envName = (i: number): string | null => {
-    let k = i + 1;
-    while (k < toks.length && toks[k]!.type === "ws") k++;
-    if (toks[k]?.type !== "lbrace") return null;
-    let name = "";
-    for (k++; k < toks.length && toks[k]!.type !== "rbrace"; k++) name += toks[k]!.text;
-    return k < toks.length ? name : null;
-  };
-  const envEnd = (i: number): number => {
-    let k = i + 1;
-    while (k < toks.length && toks[k]!.type !== "rbrace") k++;
-    return Math.min(k, toks.length - 1);
-  };
-  for (let i = 0; i < toks.length; i++) {
-    const t = toks[i]!;
-    if (open) {
-      if (t.type === "math" && t.text === closer[open.text]) {
-        spans.push([open.i, i]);
-        open = null;
-      } else if (t.type === "parbreak") open = null; // unbalanced: give up on this span
-      continue;
-    }
-    if (t.type === "math" && closer[t.text]) open = { i, text: t.text };
-    else if (t.type === "cmd" && (t.text === "\\begin" || t.text === "\\end")) {
-      const name = envName(i);
-      if (!name || !MATH_ENVS.test(name)) continue;
-      if (t.text === "\\begin") envStack.push({ i, name });
-      else {
-        const k = envStack.findLastIndex((e) => e.name === name);
-        if (k !== -1) {
-          spans.push([envStack[k]!.i, envEnd(i)]);
-          envStack.length = k;
-        }
-      }
-    }
-  }
-  return spans;
-}
-
-/** Commands whose argument is an identifier that is only meaningful as a whole. */
-const KEY_ARG_CMDS = /^\\(label|[cCvV]?ref|eqref|pageref|autoref|nameref|cite\w*|\w*cite|nocite|input|include|includegraphics|usepackage|documentclass|bibliography|bibliographystyle|begin|end)\*?$/;
-
-/** Token spans [cmd, closing brace] of key arguments such as \label{sec:intro} or \cite[p.~3]{knuth}. */
-function keyArgSpans(toks: Token[], braces: Map<number, number>): [number, number][] {
-  const spans: [number, number][] = [];
-  for (let i = 0; i < toks.length; i++) {
-    if (toks[i]!.type !== "cmd" || !KEY_ARG_CMDS.test(toks[i]!.text)) continue;
-    let k = i + 1;
-    while (toks[k]?.type === "ws") k++;
-    while (toks[k]?.text === "[") {
-      while (k < toks.length && toks[k]!.text !== "]" && toks[k]!.type !== "parbreak") k++;
-      k++;
-      while (toks[k]?.type === "ws") k++;
-    }
-    if (toks[k]?.type !== "lbrace") continue;
-    const close = braces.get(k);
-    if (close !== undefined && close > k) spans.push([i, close]);
-  }
-  return spans;
-}
-
 interface Side {
   toks: Token[];
   pos: number[]; // token index -> U index
@@ -290,14 +125,14 @@ interface Side {
   keys: [number, number][];
 }
 
-function side(toks: Token[], u: U[], key: "o" | "n"): Side {
+function side(toks: Token[], u: U[], key: "o" | "n", rules: SyntaxRules): Side {
   const pos = new Array<number>(toks.length);
   u.forEach((e, i) => {
     if (e[key] >= 0) pos[e[key]] = i;
   });
   const braces = braceMatches(toks);
-  const keys = keyArgSpans(toks, braces);
-  return { toks, pos, braces, math: [...mathSpans(toks), ...keys], keys };
+  const keys = rules.keySpans(toks, braces);
+  return { toks, pos, braces, math: [...rules.mathSpans(toks), ...keys], keys };
 }
 
 /** Extend [s, e) in U so that braces and math spans on this side are whole. */
@@ -329,7 +164,7 @@ function growSide(r: [number, number], u: U[], sd: Side, key: "o" | "n"): boolea
   return changed;
 }
 
-function splitLatex(oldText: string, newText: string, cfg: SplitConfig): Edit[] {
+function splitSyntax(rules: SyntaxRules, oldText: string, newText: string, cfg: SplitConfig): Edit[] {
   const oldLines = splitLinesKeep(oldText);
   const newLines = splitLinesKeep(newText);
   const oldOffs = lineOffsets(oldLines);
@@ -368,9 +203,9 @@ function splitLatex(oldText: string, newText: string, cfg: SplitConfig): Edit[] 
     const ns = newOffs[r.newStart]!;
     const oldSeg = oldText.slice(os, oldOffs[r.oldEnd]);
     const newSeg = newText.slice(ns, newOffs[r.newEnd]);
-    for (const e of joinAdjacent(splitSegment(oldSeg, newSeg, cfg))) {
-      for (const piece of perBlock(oldText, newText, { ...e, start: e.start + os, end: e.end + os, newStart: e.newStart + ns, newEnd: e.newEnd + ns })) {
-        edits.push(unrelated(oldText, newText, piece));
+    for (const e of joinAdjacent(splitSegment(oldSeg, newSeg, cfg, rules))) {
+      for (const piece of perBlock(oldText, newText, { ...e, start: e.start + os, end: e.end + os, newStart: e.newStart + ns, newEnd: e.newEnd + ns }, rules)) {
+        edits.push(unrelated(oldText, newText, piece, rules));
       }
     }
   }
@@ -413,8 +248,6 @@ const PARBREAK = /\n[ \t]*\n/;
 const SHIFTED_ALIKE = 0.8;
 
 const words = (s: string) => s.split(/\s+/).filter(Boolean);
-/** A line that starts a LaTeX structure: a paragraph may begin right after it, or end right before it. */
-const STRUCTURE_LINE = /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end|item|label|caption|maketitle|noindent|medskip|bigskip|smallskip|par)\b/;
 
 /**
  * A deletion right next to an insertion is one replacement: a paragraph rewritten into one
@@ -443,28 +276,24 @@ function joinAdjacent(edits: Edit[]): Edit[] {
   return out;
 }
 
-/** Sectioning commands and environment bounds: a structure line that is a piece of its own. */
-const SECTION_LINE = /^[ \t]*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end)\b/;
-
 /**
  * Where a run of inserted (deleted) text may be cut into pieces of its own: at paragraph breaks,
  * and around sectioning lines and environments, outside any environment, braces or display math
  * the run opens. Cuts are offsets in `t` where a piece starts.
  */
-function blockCuts(t: string, leading: boolean): number[] {
+function blockCuts(t: string, leading: boolean, rules: SyntaxRules): number[] {
   const cuts: number[] = [];
-  let env = 0;
-  let brace = 0;
-  let display = 0;
+  // Nesting the run opens (environments, braces, display maths): no cuts inside.
+  let depth: number[] = [];
   const lines = t.split(/(?<=\n)/);
   let pos = 0;
   let prevLine = "";
   for (const line of lines) {
-    const top = env === 0 && brace === 0 && display === 0;
+    const top = depth.every((d) => d === 0);
     if (top && pos > 0) {
       const before = t.slice(0, pos);
       const blankBefore = /\n[ \t]*\n$/.test(before);
-      const structural = (SECTION_LINE.test(line) || SECTION_LINE.test(prevLine)) && line.trim() !== "" && prevLine.trim() !== "";
+      const structural = (rules.sectionLine.test(line) || rules.sectionLine.test(prevLine)) && line.trim() !== "" && prevLine.trim() !== "";
       if (blankBefore && line.trim()) {
         // The separator goes with the piece after it when the run starts with one, else before.
         if (leading) {
@@ -473,10 +302,8 @@ function blockCuts(t: string, leading: boolean): number[] {
         } else cuts.push(pos);
       } else if (structural) cuts.push(leading ? pos - 1 : pos);
     }
-    const code = line.replace(/\\[{}$%]/g, "").replace(/%.*$/, "");
-    env += (code.match(/\\begin\s*\{/g) ?? []).length - (code.match(/\\end\s*\{/g) ?? []).length;
-    brace += (code.match(/\{/g) ?? []).length - (code.match(/\}/g) ?? []).length;
-    display += (code.match(/\\\[/g) ?? []).length - (code.match(/\\\]/g) ?? []).length;
+    const d = rules.lineNesting(line);
+    depth = d.map((x, k) => x + (depth[k] ?? 0));
     if (line.trim()) prevLine = line;
     pos += line.length;
   }
@@ -488,13 +315,13 @@ function blockCuts(t: string, leading: boolean): number[] {
  * or environment, so each can be decided alone (and moved paragraphs among them are found). An
  * environment the run opens stays whole.
  */
-function perBlock(oldText: string, newText: string, e: Edit): Edit[] {
+function perBlock(oldText: string, newText: string, e: Edit, rules: SyntaxRules): Edit[] {
   const ins = !e.oldText.trim() && !!e.newText.trim();
   const del = !e.newText.trim() && !!e.oldText.trim();
   if (!ins && !del) return [e];
   const t = ins ? e.newText : e.oldText;
   const leading = /^\s*\n/.test(t) && !/\n\s*$/.test(t);
-  const cuts = blockCuts(t, leading);
+  const cuts = blockCuts(t, leading, rules);
   if (!cuts.length) return [e];
   const out: Edit[] = [];
   // A piece of whitespace only (a paragraph break at the start or end) joins its neighbour.
@@ -517,13 +344,13 @@ function perBlock(oldText: string, newText: string, e: Edit): Edit[] {
 }
 
 /** The paragraph(s) around [s, e) of `text`: from after a blank or structure line to before the next. */
-function blockAround(text: string, s: number, e: number): [number, number] {
+function blockAround(text: string, s: number, e: number, rules: SyntaxRules): [number, number] {
   let a = text.lastIndexOf("\n", s - 1) + 1;
   for (;;) {
     if (a === 0) break;
     const prevStart = text.lastIndexOf("\n", a - 2) + 1;
     const prev = text.slice(prevStart, a - 1);
-    if (!prev.trim() || STRUCTURE_LINE.test(prev)) break;
+    if (!prev.trim() || rules.structureLine.test(prev)) break;
     a = prevStart;
   }
   let b = text.indexOf("\n", Math.max(e, s + 1) - 1);
@@ -532,7 +359,7 @@ function blockAround(text: string, s: number, e: number): [number, number] {
     if (b >= text.length) break;
     const nextEnd = text.indexOf("\n", b + 1);
     const next = text.slice(b + 1, nextEnd < 0 ? text.length : nextEnd);
-    if (!next.trim() || STRUCTURE_LINE.test(next)) break;
+    if (!next.trim() || rules.structureLine.test(next)) break;
     b = nextEnd < 0 ? text.length : nextEnd;
   }
   while (a < b && /[ \t]/.test(text[a]!)) a++;
@@ -543,11 +370,11 @@ function blockAround(text: string, s: number, e: number): [number, number] {
  * A change that replaces whole paragraphs with unrelated ones: widened to the whole paragraphs
  * (a shared full stop at the end means nothing then), and given its halves (see `Edit.halves`).
  */
-function unrelated(oldText: string, newText: string, e: Edit): Edit {
+function unrelated(oldText: string, newText: string, e: Edit, rules: SyntaxRules): Edit {
   if (!e.oldText.trim() || !e.newText.trim()) return e;
   if (wordSimilarity(words(e.oldText), words(e.newText), PAIR_MIN) >= PAIR_MIN) return e;
-  const [os, oe] = blockAround(oldText, e.start, e.end);
-  const [ns, ne] = blockAround(newText, e.newStart, e.newEnd);
+  const [os, oe] = blockAround(oldText, e.start, e.end, rules);
+  const [ns, ne] = blockAround(newText, e.newStart, e.newEnd, rules);
   // Most of the paragraphs, on both sides: a few shared characters at the edges at most.
   const most = (a: number, b: number, s: number, t: number) => s >= a && t <= b && (t - s) / Math.max(1, b - a) >= 0.8;
   if (!most(os, oe, e.start, e.end) || !most(ns, ne, e.newStart, e.newEnd)) return e;
@@ -559,13 +386,13 @@ function unrelated(oldText: string, newText: string, e: Edit): Edit {
   if (oa && na) {
     const del = makeEdit(oldText, newText, os, oe + oa, ne + na, ne + na);
     const ins = makeEdit(oldText, newText, os, os, ns, ne + na);
-    return { ...whole, halves: [...perBlock(oldText, newText, del), ...perBlock(oldText, newText, ins)] };
+    return { ...whole, halves: [...perBlock(oldText, newText, del, rules), ...perBlock(oldText, newText, ins, rules)] };
   }
   const [ob, nb] = [before(oldText, os), before(newText, ns)];
   if (ob && nb) {
     const del = makeEdit(oldText, newText, os - ob, oe, ns - nb, ns - nb);
     const ins = makeEdit(oldText, newText, os - ob, os - ob, ns - nb, ne);
-    return { ...whole, halves: [...perBlock(oldText, newText, del), ...perBlock(oldText, newText, ins)] };
+    return { ...whole, halves: [...perBlock(oldText, newText, del, rules), ...perBlock(oldText, newText, ins, rules)] };
   }
   return whole;
 }
@@ -617,7 +444,7 @@ function diffRange(ot: Token[], nt: Token[], oa: number, ob: number, na: number,
  * paragraph after it starts there, and pairing it with the heading glued a heading to an inserted
  * paragraph (heading + new paragraph inserted, old heading deleted).
  */
-function tokenBlocks(toks: Token[]): [number, number][] {
+function tokenBlocks(toks: Token[], rules: SyntaxRules): [number, number][] {
   const out: [number, number][] = [];
   let s = -1;
   const close = (i: number) => {
@@ -642,7 +469,7 @@ function tokenBlocks(toks: Token[]): [number, number][] {
       structure = false;
       continue;
     }
-    if (isBoundaryCmd(t) && lineStart(i)) {
+    if (rules.isBoundary(t) && lineStart(i)) {
       close(i);
       s = i;
       structure = true;
@@ -799,10 +626,10 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
  * paired by similarity first and diffed pair by pair; what lies between pairs (new or removed
  * paragraphs) is diffed on its own. `hard` gets the alignment indexes where a pair starts or ends.
  */
-function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>): U[] {
+function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>, rules: SyntaxRules): U[] {
   const u: U[] = [];
-  const ob = tokenBlocks(ot);
-  const nb = tokenBlocks(nt);
+  const ob = tokenBlocks(ot, rules);
+  const nb = tokenBlocks(nt, rules);
   const pairs = ob.length > 1 || nb.length > 1 ? pairBlocks(ot, nt, ob, nb) : [];
   // The paragraphs left unpaired on each side, for `gap`: one with a counterpart among the other
   // side's changed order (pairs keep the order).
@@ -814,7 +641,7 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>): U
   };
   if (!pairs.length) {
     // Nothing paired: nothing here changed order either (pairing found nothing alike).
-    gap(ot, nt, 0, ot.length, 0, nt.length, same, u, ob.length > 0 && nb.length > 0, hard, { o: [], n: [] });
+    gap(ot, nt, 0, ot.length, 0, nt.length, same, u, ob.length > 0 && nb.length > 0, hard, { o: [], n: [] }, rules);
     return u;
   }
   let o = 0;
@@ -822,13 +649,13 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>): U
   for (const p of pairs) {
     const [os, oe] = [ob[p.o[0]]![0], ob[p.o[1]]![1]];
     const [ns, ne] = [nb[p.n[0]]![0], nb[p.n[1]]![1]];
-    gap(ot, nt, o, os, n, ns, same, u, true, hard, unpaired);
+    gap(ot, nt, o, os, n, ns, same, u, true, hard, unpaired, rules);
     hard.add(u.length);
     diffRange(ot, nt, os, oe, ns, ne, same, u);
     hard.add(u.length);
     [o, n] = [oe, ne];
   }
-  gap(ot, nt, o, ot.length, n, nt.length, same, u, true, hard, unpaired);
+  gap(ot, nt, o, ot.length, n, nt.length, same, u, true, hard, unpaired, rules);
   return u;
 }
 
@@ -841,6 +668,7 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>): U
 function gap(
   ot: Token[], nt: Token[], oa: number, ob: number, na: number, nb: number, same: Same, u: U[], blocks: boolean, hard: Set<number>,
   unpaired: { o: string[][]; n: string[][] },
+  rules: SyntaxRules,
 ): void {
   const words = (toks: Token[], a: number, b: number) => toks.slice(a, b).filter((t) => !isBlank(t)).map((t) => t.text);
   const [ow, nw] = [words(ot, oa, ob), words(nt, na, nb)];
@@ -851,7 +679,7 @@ function gap(
   // Paragraphs here with a counterpart among the other side's unpaired ones changed order:
   // removed and inserted, paragraph by paragraph, so that they are found as moves. Diffed as one
   // text, a reordered section came out as a few huge changes.
-  const bw = (toks: Token[], a: number, b: number) => tokenBlocks(toks.slice(a, b)).map(([s, e]) => words(toks, a + s, a + e));
+  const bw = (toks: Token[], a: number, b: number) => tokenBlocks(toks.slice(a, b), rules).map(([s, e]) => words(toks, a + s, a + e));
   const [obw, nbw] = [bw(ot, oa, ob), bw(nt, na, nb)];
   const alike = (x: string[], ys: string[][]) => ys.some((y) => paragraphSimilarity(x, y, PAIR_MIN) >= PAIR_MIN);
   const reordered = obw.some((x) => alike(x, unpaired.n)) || nbw.some((y) => alike(y, unpaired.o));
@@ -947,40 +775,17 @@ function slide(u: U[], ot: Token[], nt: Token[], same: Same): void {
   }
 }
 
-/** Environments whose spaces are content: reflowing them changes the output. */
-const VERBATIM = "verbatim\\*?|Verbatim\\*?|BVerbatim|LVerbatim|lstlisting|minted|alltt|comment|filecontents\\*?|verbatimtab|spverbatim|tcblisting|pycode|sageblock";
-const VERBATIM_BEGIN = new RegExp(`\\\\begin\\s*\\{(?:${VERBATIM})\\}`, "g");
-const VERBATIM_END = new RegExp(`\\\\end\\s*\\{(?:${VERBATIM})\\}`, "g");
-
-/** Whether each token is inside a verbatim-like environment (a segment may start or end inside one). */
-function inVerbatim(text: string): (t: Token) => boolean {
-  const spans: [number, number][] = [];
-  const begins = [...text.matchAll(VERBATIM_BEGIN)].map((m) => m.index! + m[0].length);
-  const ends = [...text.matchAll(VERBATIM_END)].map((m) => m.index!);
-  if (!begins.length && !ends.length) return () => false;
-  let from: number | null = ends.length && (!begins.length || ends[0]! < begins[0]!) ? 0 : null;
-  for (const [at, kind] of [...begins.map((b) => [b, 1] as const), ...ends.map((e) => [e, 0] as const)].sort((a, b) => a[0] - b[0])) {
-    if (kind === 1 && from === null) from = at;
-    else if (kind === 0 && from !== null) {
-      spans.push([from, at]);
-      from = null;
-    }
-  }
-  if (from !== null) spans.push([from, text.length]);
-  return (t) => spans.some(([a, b]) => t.start >= a && t.start < b);
-}
-
-export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): Edit[] {
-  const ot = tokenize(oldSeg);
-  const nt = tokenize(newSeg);
+export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, rules: SyntaxRules): Edit[] {
+  const ot = rules.tokenize(oldSeg);
+  const nt = rules.tokenize(newSeg);
   // Reflowing is ignored, except where spaces are content: the agent's edit of a listing's
   // spaces was dropped, and the next sync reverted it (test report 2026-11-20, D7).
-  const [oVerb, nVerb] = [inVerbatim(oldSeg), inVerbatim(newSeg)];
+  const [oVerb, nVerb] = [rules.verbatim(oldSeg), rules.verbatim(newSeg)];
   const same = (a: Token, b: Token) =>
     a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws" && !oVerb(a) && !nVerb(b));
   // Where a new unit of the alignment starts (see `alignTokens`): changes don't cross these.
   const hard = new Set<number>();
-  const u = alignTokens(ot, nt, same, hard);
+  const u = alignTokens(ot, nt, same, hard, rules);
   slide(u, ot, nt, same);
   const isChange = (e: U) => e.o < 0 || e.n < 0;
 
@@ -1015,14 +820,14 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     for (let i = Math.max(0, a - 1); i < b; i++) {
       const t = oldTok(i);
       if (!t) continue;
-      if (i >= a && (t.type === "parbreak" || isBoundaryCmd(t))) return true;
+      if (i >= a && (t.type === "parbreak" || rules.isBoundary(t))) return true;
       if (isSentenceEnd(i)) return true;
     }
     return false;
   };
 
-  const os = side(ot, u, "o");
-  const ns = side(nt, u, "n");
+  const os = side(ot, u, "o", rules);
+  const ns = side(nt, u, "n", rules);
   // Edits inside a key argument (\label{...}, \ref{...}, \cite{...}) stay separate items,
   // so renames can be accepted or linked on their own.
   const keyU = [...os.keys.map(([a, b]) => [os.pos[a]!, os.pos[b]! + 1]), ...ns.keys.map(([a, b]) => [ns.pos[a]!, ns.pos[b]! + 1])];
@@ -1031,7 +836,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
   const structuralIn = (a: number, b: number) => {
     for (let i = a; i < b; i++) {
       const t = oldTok(i);
-      if (t && (t.type === "parbreak" || isBoundaryCmd(t))) return true;
+      if (t && (t.type === "parbreak" || rules.isBoundary(t))) return true;
     }
     return false;
   };
@@ -1118,10 +923,9 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
   u.forEach((e, i) => {
     if (i > 0 && para[i] !== para[i - 1]) sc++;
     sent[i] = sc;
-    // Line breaks and cells of tables, formulas and pseudocode end a "sentence" too.
+    // So do the language's other units: table cells, forced line breaks, statements of code.
     const t = e.o >= 0 ? ot[e.o]! : nt[e.n]!;
-    // So do the statements of TikZ and other code (`;`).
-    if (isSentenceEnd(i) || t.text === "\\\\" || t.text === "&" || t.text === ";" || isBoundaryCmd(t)) sc++;
+    if (isSentenceEnd(i) || rules.endsUnit(t) || rules.isBoundary(t)) sc++;
   });
   const sTotals = new Map<number, number>();
   const sChanged = new Map<number, number>();
@@ -1167,13 +971,4 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     if (edit.oldText !== edit.newText) edits.push(edit);
   }
   return edits;
-}
-
-/** Is this edit a whole key argument such as `\label{a}` → `\label{b}`? */
-export function isKeyEdit(oldText: string, newText: string): boolean {
-  const whole = (t: string) => {
-    const m = /^\s*(\\[A-Za-z@]+\*?)(?:\[[^\]]*\])*\{[^{}]*\}\s*$/.exec(t);
-    return !!m && KEY_ARG_CMDS.test(m[1]!);
-  };
-  return (whole(oldText) || !oldText.trim()) && (whole(newText) || !newText.trim()) && (whole(oldText) || whole(newText));
 }

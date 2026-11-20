@@ -50,8 +50,9 @@ import {
 } from "./model.js";
 import { detectMoves, detectRewritten, separateMoved } from "./moves.js";
 import { describeNote, type DeliveredNote } from "./notes.js";
-import { combineParts, imbalance, settleParts, type PartDraft } from "./parts.js";
-import { isKeyEdit, splitText, type Edit, type FileClass } from "./split.js";
+import { combineParts, imbalance, settleParts, type PartDraft, type ProfileOf } from "./parts.js";
+import { splitText, type Edit } from "./split.js";
+import { documentProfile, profileFor, type LanguageProfile } from "./lang/index.js";
 import { Store, writeJsonAtomic } from "./store.js";
 import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
 import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewChange, type PreviewEnv, type PreviewRequest, type PreviewResult } from "./preview.js";
@@ -73,14 +74,15 @@ export const BASE_REF = "refs/stet/base";
  * The fewest changes of `pool` (same file, nearest first) that close what `item` opens, or open
  * what it closes (braces, environments, math). Empty if it is balanced or none complete it.
  */
-function completing(item: Item, pool: Item[]): Item[] {
-  let acc = imbalance(item);
-  const norm = (v: number[]) => v.reduce((n, x, k) => n + (k === 4 ? x % 2 : Math.abs(x)), 0);
+function completing(item: Item, pool: Item[], profileOf: ProfileOf): Item[] {
+  const parity = profileOf(item.file).parts?.parity ?? [];
+  let acc = imbalance(item, profileOf);
+  const norm = (v: number[]) => v.reduce((n, x, k) => n + (parity.includes(k) ? x % 2 : Math.abs(x)), 0);
   if (!norm(acc)) return [];
   const out: Item[] = [];
   const near = pool.filter((p) => p.file === item.file).sort((a, b) => Math.abs(a.range.start - item.range.start) - Math.abs(b.range.start - item.range.start));
   for (const p of near) {
-    const next = acc.map((x, k) => x + imbalance(p)[k]!);
+    const next = acc.map((x, k) => x + imbalance(p, profileOf)[k]!);
     if (norm(next) >= norm(acc)) continue;
     out.push(p);
     acc = next;
@@ -311,10 +313,14 @@ export class Stet {
     return /^ref: refs\/heads\/(.+?)\s*$/.exec(head)?.[1] ?? null;
   }
 
-  private fileClass(cfg: StetConfig, path: string): FileClass {
-    if (matchesAny(path, cfg.files.tex)) return "tex";
-    if (matchesAny(path, cfg.files.bib)) return "bib";
-    return "text";
+  /** The language profile of a file (by the config's file patterns). */
+  private profile(cfg: StetConfig, path: string): LanguageProfile {
+    return profileFor(path, cfg.files);
+  }
+
+  /** Is this change a whole key argument of its language (`\label{a}` → `\label{b}`)? */
+  private isKeyEdit(cfg: StetConfig, c: { file: string; oldText: string; newText: string }): boolean {
+    return !!this.profile(cfg, c.file).syntax?.isKeyEdit(c.oldText, c.newText);
   }
 
   /** Cached reads of blobs at commits (by commit id: what they hold never changes). */
@@ -795,7 +801,7 @@ export class Stet {
       }
       const untracked = (await this.repo.run(["ls-files", "-z", "--others", "--exclude-standard"], { env }))
         .split("\0")
-        .filter((p) => p && isSafeRepoPath(p) && this.fileClass(cfg, p) !== "text");
+        .filter((p) => p && isSafeRepoPath(p) && this.profile(cfg, p).document);
       for (let i = 0; i < untracked.length; i += 100) await this.repo.run(["add", "--", ...untracked.slice(i, i + 100)], { env });
       return await this.repo.run(["write-tree"], { env });
     } finally {
@@ -1124,7 +1130,7 @@ export class Stet {
       else if (ch.status === "D") out.push(whole("delete-file"));
       else if (ch.status === "R") out.push(whole("rename-file"));
       else {
-        for (const e of splitText(this.fileClass(cfg, ch.path), oldText, newText, cfg.split)) {
+        for (const e of splitText(this.profile(cfg, ch.path), oldText, newText, cfg.split)) {
           out.push({ ...e, file: ch.path, kind: "modify" });
         }
       }
@@ -1254,7 +1260,7 @@ export class Stet {
         continue;
       }
       const matchedC = (await hintMatches(h.where, fresh)).filter((c) => c.kind === "modify");
-      const keyEdits = matchedC.filter((c) => isKeyEdit(c.oldText, c.newText));
+      const keyEdits = matchedC.filter((c) => this.isKeyEdit(cfg, c));
       const members = matchedC.filter((c) => !keyEdits.includes(c));
       if (keyEdits.length)
         result.warnings.push(`Atomic group '${h.title}': kept ${keyEdits.map((k) => JSON.stringify(k.newText.trim())).join(", ")} separate (renames are items of their own; link them instead).`);
@@ -1304,7 +1310,7 @@ export class Stet {
         else runs.push([c]);
       }
       for (const run of runs) {
-        if (run.length < 2 || !run.some(repeats) || run.some((c) => isKeyEdit(c.oldText, c.newText) || (c as any).note)) continue;
+        if (run.length < 2 || !run.some(repeats) || run.some((c) => this.isKeyEdit(cfg, c) || (c as any).note)) continue;
         const first = run[0]!;
         const last = run[run.length - 1]!;
         const merged: Candidate = {
@@ -1430,14 +1436,14 @@ export class Stet {
     const earlier = (await this.store.items()).filter((i) => i.agent === agent.id && isLive(i.status) && !newIds.has(i.id) && !result.superseded.includes(i.id));
     // Moved passages (§6.4.7), decided as one change. Over all pending items: re-splitting at a
     // later submit can leave the two sides of a move in different rounds.
-    for (const m of detectMoves([...earlier, ...live], cfg.grouping.moves, cfg.split.abbreviations)) {
+    for (const m of detectMoves([...earlier, ...live], cfg.grouping.moves, cfg.split.abbreviations, (it) => this.profile(cfg, it.file).syntax)) {
       const move = { from: m.from.map((i) => i.id), to: m.to.map((i) => i.id), changed: m.changed };
       for (const it of [...m.from, ...m.to]) it.move = { from: [...move.from], to: [...move.to], changed: move.changed };
       result.moves.push(move);
       drafts.push({ kind: "linked", title: m.title, rationale: null, source: "auto", items: [...move.from, ...move.to] });
     }
     // Moved and rewritten beyond a move: accepting one half alone would lose or duplicate it.
-    for (const m of detectRewritten([...earlier, ...live], cfg.grouping.moves, cfg.split.abbreviations)) {
+    for (const m of detectRewritten([...earlier, ...live], cfg.grouping.moves, cfg.split.abbreviations, (it) => this.profile(cfg, it.file).syntax)) {
       if (!newIds.has(m.from.id) && !newIds.has(m.to.id)) continue;
       drafts.push({ kind: "linked", title: m.title, rationale: null, source: "auto", items: [m.from.id, m.to.id] });
     }
@@ -1480,7 +1486,7 @@ export class Stet {
       const rationale = h.reason ? `Linked because: ${h.reason}${h.rationale ? `\n\n${h.rationale}` : ""}` : (h.rationale ?? null);
       drafts.push({ kind: h.kind, title: h.title, rationale, source: "agent", items: members, ...(parts ? { parts } : {}) });
     }
-    drafts.push(...autoGroups([...earlier, ...live], cfg.grouping).filter((d) => d.items.some((i) => newIds.has(i))));
+    drafts.push(...autoGroups([...earlier, ...live], cfg.grouping, (f) => this.profile(cfg, f)).filter((d) => d.items.some((i) => newIds.has(i))));
     const finalDrafts = normalizeGroups(drafts);
     const gids = await this.store.allocate("group", finalDrafts.length);
     const byId = new Map<string, Item>([...created, ...matched.values(), ...earlier].map((i) => [i.id, i]));
@@ -1649,7 +1655,8 @@ export class Stet {
     const singles = members.map((m) => ({ title: m.id, items: [m.id] }));
     const unitOf = new Map((units ?? []).flatMap((u, k) => u.map((i) => [i, k] as const)));
     const sameSymbol = (a: Item, b: Item) => !units || unitOf.get(a.id) === unitOf.get(b.id);
-    const { parts } = await settleParts(singles, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { sameSymbol });
+    const cfg = await this.config();
+    const { parts } = await settleParts(singles, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { sameSymbol, profileOf: (f) => this.profile(cfg, f) });
     return parts ? parts.map((p) => p.items) : [members.map((m) => m.id)];
   }
 
@@ -1660,7 +1667,8 @@ export class Stet {
     }
     const members = (await Promise.all(g.items.map(get))).filter((x): x is Item => !!x && x.status !== "superseded");
     const base = members.find((m) => isLive(m.status))?.baseCommit;
-    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined);
+    const cfg = await this.config();
+    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { profileOf: (f) => this.profile(cfg, f) });
     if (parts) g.parts = parts;
     else delete g.parts;
     // Joins of parts Stet proposed itself are no news to the agent.
@@ -2274,15 +2282,17 @@ export class Stet {
   async previewStatus(recheck = false): Promise<PreviewEnv> {
     if (!this.previews || recheck) {
       const cfg = (await this.config()).preview;
-      const env = await detectPreviewEnv(cfg);
-      this.previews = { env, builder: new PreviewBuilder(this.repo, join(this.store.root, "previews"), cfg, env) };
+      const doc = documentProfile();
+      const env = doc.typesetter ? await detectPreviewEnv(cfg, doc.typesetter) : { status: "unavailable" as const, isolation: null, message: "No language here has PDF previews." };
+      this.previews = { env, builder: new PreviewBuilder(this.repo, join(this.store.root, "previews"), cfg, env, doc) };
     }
     return this.previews.env;
   }
 
   /** Build the container image previews run in. It downloads packages: call it only on the user's request. */
   async setupPreview(opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string; status: PreviewEnv }> {
-    const r = await setupPreviewImage((await this.config()).preview, opts);
+    const doc = documentProfile();
+    const r = doc.typesetter ? await setupPreviewImage((await this.config()).preview, doc.typesetter, opts) : { ok: false, log: "No language here has PDF previews." };
     if (r.ok && opts.extras) {
       // From now on the image with the extra fonts.
       await this.store.withLock(async () => {
@@ -2305,8 +2315,10 @@ export class Stet {
     if (!item) throw new StetError(`Unknown item '${id}'.`);
     await this.previewStatus();
     const cfg = await this.config();
-    const isTex = (i: Item) => i.kind === "modify" && this.fileClass(cfg, i.file) === "tex" && /\.tex$/i.test(i.file);
-    if (!isTex(item)) return { status: "no-spot", message: "Only changes to the text of .tex files have a PDF preview." };
+    // Changes to the text of the document's own source files (the typesetter's: .tex files).
+    const doc = documentProfile();
+    const isTex = (i: Item) => i.kind === "modify" && this.profile(cfg, i.file) === doc && !!doc.typesetter?.source.test(i.file);
+    if (!isTex(item)) return { status: "no-spot", message: `Only changes to the text of ${doc.typesetter?.sourceName ?? "the document's source files"} have a PDF preview.` };
     const change = async (i: Item): Promise<PreviewChange | null> => {
       const t = await this.textAt(i.baseCommit, i.file);
       return t && { file: i.file, baseText: t.text, eol: t.eol, range: i.range, newText: i.newText };
@@ -2328,7 +2340,7 @@ export class Stet {
     // it; plus the changes of its round that complete it (an environment opened in one change and
     // closed in another, bug report 2026-11-19); its whole round. Else the best of them.
     const round = together((await this.store.items()).filter((i) => i.changeset === item.changeset && isLive(i.status)));
-    const pair = completing(item, round.filter((i) => !unit.includes(i)));
+    const pair = completing(item, round.filter((i) => !unit.includes(i)), (f) => this.profile(cfg, f));
     const tries: { others: Item[]; tag: string; note: (x: Item[]) => string }[] = [
       { others: unit, tag: "", note: (x) => `Shown together with ${list(x)}, which ${x.length === 1 ? "is" : "are"} accepted with it.` },
       ...(pair.length ? [{ others: [...unit, ...pair], tag: "-pair", note: (x: Item[]) => `On its own this change breaks the document, so it is shown with ${list(x)}, which complete${x.length === 1 ? "s" : ""} it. Accept them together.` }] : []),

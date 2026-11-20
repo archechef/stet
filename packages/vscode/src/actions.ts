@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { moveOthers, movesOut, partId, type Item } from "@stet/core";
+import { hasPreview, moveOthers, movesOut, partId, type Item } from "@stet/core";
 import { isLive, type Ref, type TreeModel } from "./model.js";
 
 export interface ChangeAction {
@@ -67,7 +67,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
   }
   out.push({ label: "Comment…", icon: "comment", key: "c", command: "stet.comment", args: r, tier: "talk", detail: "A message about the change; the agent can reply." });
   out.push({ label: "Diff", icon: "diff", key: "d", command: "stet.showDiff", args: r, tier: "view", detail: "Your file with and without this change, side by side; edit the proposed side to change its wording." });
-  if (modify && /\.tex$/i.test(item.file) && opts.previews !== false) {
+  if (modify && hasPreview(item.file) && opts.previews !== false) {
     out.push({ label: "PDF preview", icon: "file-pdf", key: "p", command: "stet.preview", args: r, tier: "view", detail: "The compiled page with the change, after and before." });
   }
   if (live && modify) out.push({ label: "Review file", icon: "diff-multiple", key: "f", command: "stet.reviewFile", args: r, tier: "view", detail: "All pending changes of this file in one editable diff." });

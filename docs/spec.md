@@ -68,7 +68,7 @@ Item, group and changeset IDs are short sequential numbers (`S12`, `G7`, `C4`) u
 
 | Package | Contents |
 |---|---|
-| `@stet/core` | Store, git operations, tokenizer and splitter, anchoring, replay, service API, event bus. Has no UI. |
+| `@stet/core` | Store, git operations, splitter, anchoring, replay, service API, event bus, and the language profiles (§6.0) that hold everything it knows about LaTeX and BibTeX. Has no UI. |
 | `stet-tex` (npm) → binary `stet` | CLI and MCP server (`stet mcp`). Later also `stet serve` (HTTP and web UI). |
 | `@stet/ui` | Web components: item list, diff view, comment threads, preview viewer. Used by the VS Code webview and by the web UI. |
 | `stet-vscode` | VS Code extension. Bundles the core and ui packages and adds native editor integration: decorations, CodeLens, the Comments API. |
@@ -211,9 +211,25 @@ A group is `resolved` once all its members are in final states, and `broken` whe
 
 Input: the tree diff `refs/stet/base..stet/<agent>` for the newly submitted commits.
 
+### 6.0 Language profiles
+Everything Stet knows about a document language is in its **profile** (`packages/core/src/lang/`): `latex.ts` and `latex-preview.ts`, `bibtex.ts`, and `plain.ts` for any other text. The rest of Stet works on text, paragraphs, sentences and changes, and asks the file's profile for the rest. A profile has optional sections, and without one Stet falls back to what works for any text:
+
+| Section | What it holds (LaTeX) | Used by | Without it |
+|---|---|---|---|
+| `syntax` | tokenizer; structure lines and boundaries (`\section`, `\begin`, `\item`); maths and key arguments kept whole; verbatim environments; what ends a sentence; nesting | splitting (§6.2), moves (§6.4.7), replacements in parts | changes are whole changed lines; moves see sentences only |
+| `splitUnits` | (BibTeX) one item per entry | splitting (§6.1) | lines |
+| `references` | keys defined (`\label`; BibTeX: entries) and used (`\ref`, `\cite` with the configured commands) | rename and *Add reference* groups (§6.4) | no such groups |
+| `definitions` | macros, environments, TikZ styles: defined, used | macro groups; parts | none |
+| `includes` | files read in (`\input`, `\includegraphics`, …) | *Add file and read it in* groups | none |
+| `parts` | global changes (packages, classes, includes); what nests (braces, environments, maths) | parts of linked groups (§6.4.6); which changes complete a preview | none |
+| `typesetter` | latexmk in TeX Live (or the image's), SyncTeX, the log's errors and missing files, the words the source typesets | PDF previews (§14), `stet doctor` | no previews |
+| `agentTerms` | examples for agents (`\label` with its references, an undefined macro) | the agents' instructions, the MCP tools' descriptions | generic examples |
+
+A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`); keys are matched by kind across languages (a `.bib` entry defines the citation key a `\cite` uses). The config keeps its shape: `files.tex` and the `preview` settings are the LaTeX profile's.
+
 ### 6.1 Per file
-- **`.tex`, `.sty`, `.cls`, `.md`, `.txt`:** LaTeX-aware splitting (§6.2).
-- **`.bib`:** one item per changed entry (`@type{key, …}`). New and removed entries are separate items.
+- **Files of `files.tex`** (default `*.tex`, `*.sty`, `*.cls`, `*.ltx`, `*.dtx`): the LaTeX profile's splitting (§6.2).
+- **Files of `files.bib`** (default `*.bib`): one item per changed entry (`@type{key, …}`). New and removed entries are separate items.
 - **Other text files:** one item per line hunk.
 - **Binary, new, deleted and renamed files:** one item per file.
 
@@ -671,6 +687,8 @@ The web UI will expose this API as REST plus Server-Sent Events on `localhost`, 
 ---
 
 ## 14. PDF previews (M5, on request)
+
+What compiles the document and finds a change on its pages is the document language's **typesetter** (§6.0; LaTeX's in `lang/latex-preview.ts`); `preview.ts` holds the rest: isolation, the build cache, pages and the words on them. The steps for LaTeX:
 
 1. The user clicks **Preview** on an item.
 2. Stet builds two temporary trees: the review base, and the review base plus this item. It compiles them with `latexmk -synctex=1` in a cache directory, reusing auxiliary files between builds.

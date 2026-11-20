@@ -1,5 +1,12 @@
 /** Agent instructions (spec §10.3). Shared by the MCP server and the workspace files. */
 import type { Agent } from "./model.js";
+import { documentProfile } from "./lang/index.js";
+
+/** The document's language, and examples in it (LaTeX's unless another profile has previews). */
+const doc = () => {
+  const p = documentProfile();
+  return { name: p.name, terms: p.agentTerms ?? { location: 'main.txt:12 "suggestion"', linked: "a definition and its uses", undefinedUse: "an undefined name", reference: "a name with its uses", dependencies: "a definition and its uses, the same symbol renamed" } };
+};
 
 /** What an agent (and its instruction files) are told once the reviewer archived its workspace. */
 export function archivedMessage(agent: Agent): string {
@@ -23,7 +30,7 @@ export function agentInstructions(agentId: string, watch = "stet watch"): string
   return `${STET_MARKER}
 # You are working under Stet review (agent: ${agentId})
 
-This folder is a *proposal workspace* for a LaTeX project. Nothing you change
+This folder is a *proposal workspace* for a ${doc().name} project. Nothing you change
 here reaches the real document until a human accepts it.
 
 - This file is written by Stet and rewritten at every sync: don't edit it, and
@@ -40,14 +47,14 @@ here reaches the real document until a human accepts it.
 - Tell Stet how changes belong together via \`groups\` in \`stet_submit\`.
   Locations are "file:line" or "file:from-to" in THIS folder after your edits.
   A paragraph is often a single line: to pick one of several changes on a
-  line, add a quoted snippet of its new text, e.g. 'main.tex:12 "suggestion"'.
+  line, add a quoted snippet of its new text, e.g. '${doc().terms.location}'.
   Always do this when the parts of a group share a line, or they can't be
   separated.
   - \`linked\` means all or nothing, which is tiring to review. Use it ONLY
     when accepting some of the edits without the others would break the
-    document or lose text: a macro or environment definition and its uses,
-    a \`\\begin\` and its \`\\end\` in different edits, one symbol renamed in
-    several formulas. Stet detects moves, label/ref and citation renames
+    document or lose text:
+    ${doc().terms.linked},
+    one symbol renamed in several formulas. Stet detects moves, label/ref and citation renames
     itself. Edits that merely serve one goal, are in one section, or read
     better together are NOT linked: make them \`related\` (the reviewer can
     still accept them all at once).
@@ -59,10 +66,10 @@ here reaches the real document until a human accepts it.
     A large linked group is hard to review. Split it into \`parts\` (each with
     a title and its locations) when every part can be accepted on its own:
     accepting one part alone must leave the document compiling (warnings such
-    as undefined references are fine; an undefined macro is not), and must not
+    as undefined references are fine; ${doc().terms.undefinedUse} is not), and must not
     stop any other part from being accepted later. Make parts as SMALL as
     these two conditions allow: one sentence, one formula, one wording change,
-    or a \`\\label\` with its references. Never put changes in one part just
+    or ${doc().terms.reference}. Never put changes in one part just
     because they are in the same paragraph or section, or serve the same goal;
     say what they are for in the group's rationale instead. Stet keeps
     identical changes, a definition and its uses, and changes touching the
@@ -118,7 +125,7 @@ here reaches the real document until a human accepts it.
 }
 
 /** Short protocol summary sent as MCP server instructions. */
-export const MCP_INSTRUCTIONS = `Stet manages human review of your edits to a LaTeX project.
+export const MCP_INSTRUCTIONS = `Stet manages human review of your edits to a ${doc().name} project.
 You work in a proposal workspace (a git worktree); the human's files are never
 touched directly. Edit files normally, then call stet_submit with a title and
 rationale (and groups: linked for edits that must be accepted together,

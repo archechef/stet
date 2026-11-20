@@ -1,11 +1,14 @@
-/** LaTeX-aware tokenizer (spec §6.2 step 2). */
+/**
+ * Tokens of a document's text (spec §6.2 step 2): each language profile's tokenizer makes them
+ * (LaTeX's is in `lang/latex.ts`). The kinds are the language's own, mapped to these.
+ */
 
 export type TokenType =
   | "word"
-  | "cmd"
-  | "lbrace"
-  | "rbrace"
-  | "math" // $, $$, \( \) \[ \]
+  | "cmd" // markup: \emph, \section
+  | "lbrace" // a group: {
+  | "rbrace" // }
+  | "math" // a maths delimiter: $, $$, \( \) \[ \]
   | "comment"
   | "ws"
   | "parbreak" // whitespace containing >= 2 newlines
@@ -21,7 +24,8 @@ export interface Token {
 const WORD = /[\p{L}\p{N}\p{M}]/u;
 const WORD_INNER = /[-']/;
 
-export function tokenize(text: string): Token[] {
+/** Tokens of any text, for languages without a tokenizer of their own: words, whitespace, punctuation. */
+export function tokenizeWords(text: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   const push = (type: TokenType, end: number) => {
@@ -38,24 +42,7 @@ export function tokenize(text: string): Token[] {
         j++;
       }
       push(newlines >= 2 ? "parbreak" : "ws", j);
-    } else if (c === "%") {
-      let j = text.indexOf("\n", i);
-      if (j === -1) j = text.length;
-      push("comment", j);
-    } else if (c === "\\") {
-      const next = text[i + 1];
-      if (next === undefined) push("punct", i + 1);
-      else if (/[A-Za-z@]/.test(next)) {
-        let j = i + 1;
-        while (j < text.length && /[A-Za-z@]/.test(text[j]!)) j++;
-        if (text[j] === "*") j++; // starred variants: \section*
-        push("cmd", j);
-      } else if ("()[]".includes(next)) push("math", i + 2);
-      else push("cmd", i + 2); // \%, \&, \\, \, ...
-    } else if (c === "{") push("lbrace", i + 1);
-    else if (c === "}") push("rbrace", i + 1);
-    else if (c === "$") push("math", text[i + 1] === "$" ? i + 2 : i + 1);
-    else if (WORD.test(c)) {
+    } else if (WORD.test(c)) {
       let j = i + 1;
       while (j < text.length) {
         const d = text[j]!;
