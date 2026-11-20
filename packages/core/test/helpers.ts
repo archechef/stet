@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach } from "vitest";
+import { PROFILES } from "../src/lang/index.js";
 import { Stet } from "../src/service.js";
 
 const dirs: string[] = [];
@@ -75,3 +76,68 @@ We show that this approach is effective in practice. It scales to large document
 As shown in Section~\\ref{sec:intro}, the approach works. The formula $a+b=c$ holds.
 \\end{document}
 `;
+
+/**
+ * The document languages prose tests run in: the same scenarios, written in each language.
+ * Typst's runs are skipped until its profile is registered (typst.test.ts specifies it).
+ */
+export interface DocLang {
+  name: string;
+  /** The main file, and the extension of others. */
+  file: string;
+  ext: string;
+  available: boolean;
+  /** What comes before the first heading (`beginLines` lines), and after the last line. */
+  begin: string;
+  beginLines: number;
+  end: string;
+  heading(title: string): string;
+  /** A maths shorthand `name` for θ̂: its definition, and a use in inline maths. */
+  def(name: string): string;
+  use(name: string): string;
+  /** Opening and closing lines of a block around paragraphs, which must go together. */
+  wrap: [string, string];
+  geq: string;
+  /** A theorem-like block, a sentence referring to it, and what a move's title calls the block. */
+  theorem: string;
+  refersToTheorem: string;
+  theoremKind: string;
+}
+
+export const LATEX_DOC: DocLang = {
+  name: "LaTeX",
+  file: "main.tex",
+  ext: "tex",
+  available: true,
+  begin: "\\documentclass{article}\n\\begin{document}\n",
+  beginLines: 2,
+  end: "\\end{document}\n",
+  heading: (t) => `\\section{${t}}`,
+  def: (name) => `\\newcommand{\\${name}}{\\hat\\theta}`,
+  use: (name) => `$\\${name}$`,
+  wrap: ["\\begin{proof}", "\\end{proof}"],
+  geq: "\\geq",
+  theorem: "\\begin{theorem}[Master theorem]\nThe randomized algorithm runs in time $T$.\\footnote{The bound is tight.} It uses space $S$.\n\\end{theorem}",
+  refersToTheorem: "The algorithm of \\cref{thm:master} is simple. It has three steps.",
+  theoremKind: "theorem environment",
+};
+
+export const TYPST_DOC: DocLang = {
+  name: "Typst",
+  file: "main.typ",
+  ext: "typ",
+  available: PROFILES.some((p) => p.id === "typst"),
+  begin: "",
+  beginLines: 0,
+  end: "",
+  heading: (t) => `= ${t}`,
+  def: (name) => `#let ${name} = $hat(theta)$`,
+  use: (name) => `$${name}$`,
+  wrap: ["#block[", "]"],
+  geq: ">=",
+  theorem: '#figure(kind: "theorem", supplement: [Theorem], caption: [Master theorem])[\n  The randomized algorithm runs in time $T$.#footnote[The bound is tight.] It uses space $S$.\n] <thm:master>',
+  refersToTheorem: "The algorithm of @thm:master is simple. It has three steps.",
+  theoremKind: "figure",
+};
+
+export const DOC_LANGS: DocLang[] = [LATEX_DOC, TYPST_DOC];

@@ -227,6 +227,16 @@ Everything Stet knows about a document language is in its **profile** (`packages
 
 A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`); keys are matched by kind across languages (a `.bib` entry defines the citation key a `\cite` uses). The config keeps its shape: `files.tex` and the `preview` settings are the LaTeX profile's.
 
+#### Typst (planned)
+Specified, before it is built, by `packages/core/test/typst.test.ts`, which mirrors the LaTeX tests and is skipped until a profile with id `typst` is registered. It covers tokens, splitting, references and citations, parts, files read in, prose (raw text, rebuilt sentences, moved paragraph breaks), and six realistic revisions, each reviewed in every way it allows: polishing a paper, restructuring, moving a proof into an appendix, maths, a figure with a table, and scripting (`#let` data, `#for`, `#if`). `scenarios.test.ts` and `moves.test.ts` run in both languages (`DOC_LANGS` in `test/helpers.ts`). The decisions:
+
+- **Files:** `files.typ` (default `*.typ`); code blocks fenced as `typst`. Tokens: `#name` is a command, `[ ]`, `{ }` and `( )` nest, `$…$` is maths (inline or display), `//` and `/* */` are comments, raw text (backticks) keeps its spaces, and `\#`, `\$`, `\@` are plain characters. Headings (`=`, `==`, …) and list items are structure lines.
+- **References and citations:** `<key>` defines a label; `@key` and `#ref(<key>)` use it. `@key` and `#cite(<key>)` are citations when the bibliography defines the key, so whether `@key` is a reference or a citation follows from what the project defines, not from its syntax. Bibliographies are BibTeX (`.bib`, the existing profile) for now. Hayagriva (`.yml`) is to come later as a profile of its own whose entries define citation keys: nothing may assume that citation keys come only from `.bib` files.
+- **Definitions and parts:** `#let` defines a name (with or without parameters), used as `#name` or by name in maths, and is joined with its uses in parts. `#import`, `#set` and `#show` are global. A label and its references stay in separate parts, as with `\label`.
+- **Includes:** `#include "…"`, `#image("…")` and `#bibliography("…")` read files in.
+- **Project language:** detected at setup from the files (`.typ` and no `.tex` → Typst, otherwise LaTeX) and kept in the config as `language`. `documentProfile(cfg)` follows it, and so do the agents' instructions ("for a Typst project", with Typst examples).
+- **No PDF previews yet:** Typst has no SyncTeX to find a change on the page. The preview status is *unavailable* with a message saying so.
+
 ### 6.1 Per file
 - **Files of `files.tex`** (default `*.tex`, `*.sty`, `*.cls`, `*.ltx`, `*.dtx`): the LaTeX profile's splitting (§6.2).
 - **Files of `files.bib`** (default `*.bib`): one item per changed entry (`@type{key, …}`). New and removed entries are separate items.
