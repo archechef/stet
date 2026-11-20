@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
-import { applyChanges, containerArgs, findWords, markRuns, parseWords, plainWords, wordDiff, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
+import { applyChanges, changeMarks, containerArgs, findWords, markRuns, parseWords, plainWords, wordDiff, missingFiles, previewExtrasContainerfile, cropRegion, DEFAULT_PREVIEW, detectEngine, detectPreviewEnv, detectRoot, errorsOf, excerpt, parseSynctex } from "../src/preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -231,6 +231,40 @@ describe("preview: marking the changed words", () => {
     expect(d.removed.map((x) => x.text)).toEqual(["problem."]);
     // A change of case is a change between two versions.
     expect(wordDiff([w("task", 0, 0)], [w("Task", 0, 0)]).inserted).toHaveLength(1);
+  });
+
+  it("compares words as typeset: punctuation counts, hyphens from reflowing don't", () => {
+    // `k` → `k^2` before the equation number (2): the exponent is the change, not the number.
+    const d = wordDiff([w("k.", 0, 0), w("(2)", 300, 0)], [w("k", 0, 0), w("2", 8, -3), w(".", 14, 0), w("(2)", 300, 0)]);
+    expect(d.inserted.map((x) => x.text)).toEqual(["k", "2", "."]);
+    expect(wordDiff([w("However", 0, 0)], [w("However,", 0, 0)]).inserted).toHaveLength(1);
+    expect(wordDiff([w("change-by-change", 0, 0)], [w("changeby-change", 0, 0)]).inserted).toHaveLength(0);
+  });
+
+  describe("only where the changes are", () => {
+    // "By (2) the bound holds. We add a NEW sentence here. See (3)." with (2)→(3) renumbered far off.
+    const words = ["By", "(3)", "the", "bound", "holds.", "We", "add", "a", "NEW", "sentence", "here.", "See", "(4)."].map((t, i) => w(t, i * 40, 0));
+    const differ = [words[1]!, words[8]!, words[12]!];
+    const at = (...i: number[]) => i.map((k) => words[k]!);
+
+    it("marks the differences between the context around a change, not consequences elsewhere", () => {
+      const m = changeMarks(words, differ, [{ words: at(5, 6, 7, 8, 9, 10), around: false, before: words[4]!, after: words[11]! }]);
+      expect(m.map((x) => x.text)).toEqual(["NEW"]);
+    });
+
+    it("marks a change the editor shows whole, but nothing next to it that didn't change", () => {
+      const m = changeMarks(words, differ, [{ words: at(6, 7, 8), around: false, before: words[4]!, after: words[11]!, whole: true }]);
+      expect(m.map((x) => x.text)).toEqual(["add", "a", "NEW"]);
+    });
+
+    it("marks a context word that differs (punctuation added to it)", () => {
+      const m = changeMarks(words, [words[4]!], [{ words: at(4, 5), around: true, before: words[4]!, after: words[5]! }]);
+      expect(m.map((x) => x.text)).toEqual(["holds."]);
+    });
+
+    it("marks every difference when no change could be found on the page", () => {
+      expect(changeMarks(words, differ, [])).toEqual(differ);
+    });
   });
 
   it("joins neighbouring marked words on a line, not across lines", () => {

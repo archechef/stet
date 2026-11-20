@@ -9,6 +9,7 @@
 - **Decide in the review with the same actions as in your file:** the buttons above a change now say *Accept move* or *Accept all 3 linked* where the change must be decided that way, and the hover (with its PDF preview) and Ctrl+. work in the review too. Every action there saves your unsaved edits in the review first, so a decision uses the wording you see.
 - **Edit & accept** starts from your wording when you have one from a review.
 - **Fix: the Stet panel kept changes and groups that were gone** after an agent merged changes into one (`stet_group` atomic) or removed a group, until something else reloaded it. Those changes append no event, and the panel only watched the event log. The store now rewrites a `changed` file after every operation that changes its records, and the panel reloads on it.
+- **PDF previews highlight the change, and only it.** The page view no longer marks what a change merely causes (equations and references renumbered further down). Words compare as typeset, so a change in a formula (`k` → `k^2`) marks the exponent, not the equation number that looked the same without its brackets, and a comma added is marked. A mostly rewritten sentence is marked whole, as the editor shows it, instead of in fragments around common words like "the".
 - Tests: the real-world review checks run four at a time and build their repositories with fewer git calls. One of them hit the 120 s limit where starting git is slow.
 
 ## 0.13.0 — 2026-11-19

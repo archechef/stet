@@ -26,6 +26,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, utim
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, posix, sep } from "node:path";
 import { filterOverrides, Repo } from "./git.js";
+import { inlineDiff } from "./inline.js";
 import { writeInside } from "./safefs.js";
 import { fromLf, lineOf, type Eol } from "./text.js";
 
@@ -661,13 +662,15 @@ export class PreviewBuilder {
     const lines = (text: string, from: number, to: number) => [lineOf(text, from), lineOf(text, Math.max(from, to - 1))];
     // Every change shown in this file, in each version's own text: the one asked for first.
     const same = req.changes.map((c, k) => ({ c, k })).filter((x) => x.c.file === target.file).sort((a, b) => (a.k === req.target ? -1 : b.k === req.target ? 1 : 0));
-    const spansAfter = same.map(({ c, k }) => around(after, applied.starts[k]!, applied.starts[k]! + c.newText.length));
-    const spansBefore = same.map(({ c }) => around(c.baseText, c.range.start, c.range.end));
-    const afterImg = await this.region(work, built.pdf, target.file, lines(after, applied.start, applied.start + target.newText.length), join(itemDir, "after.png"), spansAfter);
-    if (!afterImg) return noSpot;
-    const beforeImg = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), target.file, lines(target.baseText, target.range.start, target.range.end), join(itemDir, "before.png"), spansBefore);
-    // Whole pages with the changed words marked (a word diff of the two versions around the change).
-    const pages = await this.pageView(work, built.pdf, afterImg.page, base, beforeImg?.page ?? null, req, itemDir, baseDir).catch(() => undefined);
+    const whole = same.map(({ c }) => shownWhole(c.baseText.slice(c.range.start, c.range.end), c.newText));
+    const spansAfter = same.map(({ c, k }, n) => around(after, applied.starts[k]!, applied.starts[k]! + c.newText.length, whole[n]));
+    const spansBefore = same.map(({ c }, n) => around(c.baseText, c.range.start, c.range.end, whole[n]));
+    const afterAt = await this.region(work, built.pdf, target.file, lines(after, applied.start, applied.start + target.newText.length), join(itemDir, "after.png"), spansAfter);
+    if (!afterAt) return noSpot;
+    const beforeAt = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), target.file, lines(target.baseText, target.range.start, target.range.end), join(itemDir, "before.png"), spansBefore);
+    const [afterImg, beforeImg] = [afterAt.img, beforeAt?.img ?? null];
+    // Whole pages with the changed words marked (a word diff of the two versions, where the changes are).
+    const pages = await this.pageView(work, built.pdf, afterImg.page, base, beforeImg?.page ?? null, req, itemDir, baseDir, afterAt.found, beforeAt?.found ?? []).catch(() => undefined);
     await rm(work, { recursive: true, force: true }); // keep the images and this version's PDF only
     await utimes(baseDir, new Date(), new Date()).catch(() => undefined);
     // Errors only this version has: the PDF is there, but the reviewer should know.
@@ -701,6 +704,8 @@ export class PreviewBuilder {
     req: PreviewRequest,
     itemDir: string,
     baseDir: string,
+    aFound: Located[],
+    bFound: Located[],
   ): Promise<PageView | undefined> {
     await cp(afterPdf, join(itemDir, "after.pdf"), { mode: constants.COPYFILE_FICLONE });
     const bWork = join(base.dir, "src");
@@ -714,14 +719,14 @@ export class PreviewBuilder {
     const after: PageSide = {
       page: aPage, ...aInfo,
       file: await this.renderPage(itemDir, "after.pdf", aPage, join(itemDir, "pages", `after-${aPage}.png`)),
-      marks: markRuns(inserted.filter((w) => w.page === aPage)),
+      marks: markRuns(changeMarks(aWords, inserted, aFound).filter((w) => w.page === aPage)),
     };
     const before: PageSide | null =
       bInfo && base.pdf
         ? {
             page: bPage!, ...bInfo,
             file: await this.renderPage(bWork, base.pdf, bPage!, join(baseDir, "pages", `${bPage}.png`)),
-            marks: markRuns(removed.filter((w) => w.page === bPage)),
+            marks: markRuns(changeMarks(bWords, removed, bFound).filter((w) => w.page === bPage)),
           }
         : null;
     return { base: req.base, key: req.key, after, before };
@@ -788,7 +793,8 @@ export class PreviewBuilder {
   }
 
   /** Locate source lines in a PDF with SyncTeX and render that region to `out`. */
-  private async region(work: string, pdf: string, file: string, lines: number[], out: string, spans: Span3[] = []): Promise<PreviewImage | null> {
+  /** `found`: where the changes (`spans`) are on the page, for the page view's marks. */
+  private async region(work: string, pdf: string, file: string, lines: number[], out: string, spans: Span3[] = []): Promise<{ img: PreviewImage; found: Located[] } | null> {
     const pdfRel = relTo(work, pdf);
     const boxes: SyncBox[] = [];
     for (const line of [...new Set(lines)]) {
@@ -807,16 +813,21 @@ export class PreviewBuilder {
     // The words of the changes, on SyncTeX's pages and the one after (a paragraph may go on).
     let shown = boxes;
     let at = page;
+    let located: Located[] = [];
     if (spans.length) {
       const pages = boxes.map((b) => b.page);
       const first = Math.min(...pages), last = Math.max(...pages) + 1;
       const text = await runIsolated(this.env, this.cfg, work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
       const words = text.code === 0 ? parseWords(text.stdout, first) : [];
-      const found = spans.map((s) => findWords(words, plainWords(s.before).slice(-6), plainWords(s.text), plainWords(s.after).slice(0, 6), page));
+      const found = spans.map((s) => {
+        const f = findWordsIn(words, plainWords(s.before).slice(-6), plainWords(s.text), plainWords(s.after).slice(0, 6), page);
+        return f && { ...f, whole: s.whole };
+      });
+      located = found.filter((f): f is Located & { whole: boolean } => !!f);
       if (found[0]) {
-        at = found[0][0]!.page;
+        at = found[0].words[0]!.page;
         // The others shown with it, where they are on the same page.
-        shown = found.filter((f): f is PdfWord[] => !!f && f.some((w) => w.page === at)).flatMap((f) => wordBoxes(f.filter((w) => w.page === at)));
+        shown = located.filter((f) => f.words.some((w) => w.page === at)).flatMap((f) => wordBoxes(f.words.filter((w) => w.page === at)));
       }
     }
     const info = await runIsolated(this.env, this.cfg, work, ["pdfinfo", "-f", String(at), "-l", String(at), pdfRel]);
@@ -832,7 +843,7 @@ export class PreviewBuilder {
     ]);
     if (r.code !== 0) return null;
     await rename(join(work, `${name}.png`), out);
-    return { file: out, page: crop.page };
+    return { img: { file: out, page: crop.page }, found: located };
   }
 
   /** Compile `root` in `work` with latexmk; the PDF path, or null with the log. */
@@ -1009,6 +1020,25 @@ function lcs(a: string[], b: string[]): [number, number][] {
  * around it. Null if it can't be found with some confidence. `hint`: SyncTeX's page, preferred.
  */
 export function findWords(words: PdfWord[], before: string[], target: string[], after: string[], hint?: number): PdfWord[] | null {
+  return findWordsIn(words, before, target, after, hint)?.words ?? null;
+}
+
+/**
+ * A change found on the page: its words, or (`around`) the two words around it. `before` and
+ * `after`: the words of its context found right before and after it, which bound where it is
+ * (its own words may typeset differently, as maths does: `k^2` is "k", "2").
+ */
+export interface Located {
+  words: PdfWord[];
+  around: boolean;
+  before?: PdfWord;
+  after?: PdfWord;
+  /** Shown whole (mostly rewritten), as the editor shows it; set by the caller. */
+  whole?: boolean;
+}
+
+/** `findWords`, saying whether it found the change's own words or only those around it. */
+export function findWordsIn(words: PdfWord[], before: string[], target: string[], after: string[], hint?: number): Located | null {
   // Long changes: their beginning and end are enough.
   const t = target.length > 40 ? [...target.slice(0, 20), ...target.slice(-20)] : target;
   const seq = [...before, ...t, ...after];
@@ -1025,27 +1055,61 @@ export function findWords(words: PdfWord[], before: string[], target: string[], 
   }
   if (!best || best.pairs.length < Math.max(2, Math.ceil(seq.length * 0.5))) return null;
   const inTarget = best.pairs.filter(([i]) => i >= before.length && i < before.length + t.length).map(([, j]) => words[j]!);
-  if (inTarget.length) return inTarget;
-  // A deletion (or a change whose words didn't match): the words on either side of it.
   const lastBefore = best.pairs.filter(([i]) => i < before.length).at(-1);
   const firstAfter = best.pairs.find(([i]) => i >= before.length + t.length);
+  const bounds = { ...(lastBefore ? { before: words[lastBefore[1]]! } : {}), ...(firstAfter ? { after: words[firstAfter[1]]! } : {}) };
+  if (inTarget.length) return { words: inTarget, around: false, ...bounds };
+  // A deletion (or a change whose words didn't match): the words on either side of it.
   const around = [lastBefore, firstAfter].filter((x): x is [number, number] => !!x).map(([, j]) => words[j]!);
-  return around.length ? around : null;
+  return around.length ? { words: around, around: true, ...bounds } : null;
 }
 
 /**
  * The words that differ between two versions: those of `after` not in `before` (inserted), and
- * the other way round (removed). Compared as plain words, so a reflowed paragraph isn't a change.
+ * the other way round (removed). Compared as typeset, punctuation included (a comma added is a
+ * change, and an equation number "(2)" is not the exponent 2), but without hyphens, which
+ * reflowing a paragraph adds and removes.
  */
 export function wordDiff(before: PdfWord[], after: PdfWord[]): { inserted: PdfWord[]; removed: PdfWord[] } {
   // Between two PDFs a change of case is a change (unlike matching source words to the page).
-  const exact = (w: string) => w.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
+  const exact = (w: string) => w.normalize("NFKC").replace(/[\s\-\u00ad\u2010\u2011]/g, "");
   const b = before.filter((w) => exact(w.text));
   const a = after.filter((w) => exact(w.text));
   const pairs = lcs(b.map((w) => exact(w.text)), a.map((w) => exact(w.text)));
   const inB = new Set(pairs.map(([i]) => i));
   const inA = new Set(pairs.map(([, j]) => j));
   return { inserted: a.filter((_, j) => !inA.has(j)), removed: b.filter((_, i) => !inB.has(i)) };
+}
+
+/**
+ * The marks of the changes shown: of the words that differ (`differ`, from `wordDiff`), those
+ * where a change is on the page (`spans`, from `findWordsIn`, in `words`: the pages compared):
+ * between the context found before and after it. Elsewhere a difference is a consequence (an
+ * equation or a reference renumbered, a float moved), not the change. A change the editor shows
+ * whole (mostly rewritten) is marked whole. Without spans (none could be found), every difference.
+ */
+export function changeMarks(words: PdfWord[], differ: PdfWord[], spans: Located[]): PdfWord[] {
+  const key = (w: PdfWord) => `${w.page}:${w.x0}:${w.y0}:${w.x1}`;
+  const index = new Map(words.map((w, i) => [key(w), i]));
+  const marked = new Set(differ.map(key));
+  const out = new Set<number>();
+  let placed = 0;
+  for (const s of spans) {
+    const own = s.around ? [] : s.words.map((w) => index.get(key(w))).filter((i): i is number => i !== undefined);
+    const b = s.before && index.get(key(s.before));
+    const a = s.after && index.get(key(s.after));
+    // From the context before it to the context after it; its own words where a side is missing.
+    const lo = b !== undefined ? b + 1 : own.length ? Math.min(...own) : undefined;
+    const hi = a !== undefined ? a - 1 : own.length ? Math.max(...own) : undefined;
+    if (lo === undefined || hi === undefined) continue;
+    placed++;
+    // Whole: its own words, first to last (not, say, a section number between it and the context).
+    const [first, last] = s.whole && own.length ? [Math.min(...own), Math.max(...own)] : [Infinity, -Infinity];
+    // The context words too where they differ: punctuation added to one ("However" → "However,").
+    for (let i = b ?? lo; i <= (a ?? hi); i++) if ((i >= first && i <= last) || marked.has(key(words[i]!))) out.add(i);
+  }
+  if (!placed) return differ;
+  return [...out].sort((x, y) => x - y).map((i) => words[i]!);
 }
 
 /** Marked words as boxes, neighbours on one line joined into one. */
@@ -1098,8 +1162,16 @@ interface Span3 {
   before: string;
   text: string;
   after: string;
+  /** The editor shows it whole: marked whole on the page too. */
+  whole: boolean;
 }
-const around = (text: string, start: number, end: number): Span3 => ({ before: text.slice(Math.max(0, start - 300), start), text: text.slice(start, end), after: text.slice(end, end + 300) });
+const around = (text: string, start: number, end: number, whole = false): Span3 => ({ before: text.slice(Math.max(0, start - 300), start), text: text.slice(start, end), after: text.slice(end, end + 300), whole });
+
+/** Does the editor show this change whole (mostly rewritten), rather than the words that differ? */
+const shownWhole = (oldText: string, newText: string): boolean => {
+  const d = inlineDiff(oldText, newText);
+  return d.removed.length <= 1 && d.inserted.length <= 1 && (d.removed[0]?.[1] ?? 0) - (d.removed[0]?.[0] ?? 0) === oldText.length && (d.inserted[0]?.text ?? "") === newText;
+};
 
 /** Whether `file` is somewhere below `root` (no `..`). */
 function insideTree(file: unknown, root: string): boolean {
