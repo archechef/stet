@@ -5,7 +5,7 @@ import { hostname } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 import { configDelta, defaultConfig, mergeConfig, validateConfig, type StetConfig } from "./config.js";
-import type { Agent, Changeset, Group, Item, Note, StetEvent, StoreState } from "./model.js";
+import { compareItemIds, type Agent, type Changeset, type Group, type Item, type Note, type StetEvent, type StoreState } from "./model.js";
 import { StetError } from "./errors.js";
 import { pathExists } from "./paths.js";
 
@@ -285,10 +285,7 @@ export class Store {
       }
       if (lockContext.getStore() === this && this.session) this.session.set(kind, records);
     }
-    const num = (x: any) => Number(String(x.id).replace(/^\D+/, "")) || 0;
-    return [...records.values()]
-      .map((v) => structuredClone(v))
-      .sort((a, b) => num(a) - num(b) || String((a as any).id).localeCompare(String((b as any).id)));
+    return [...records.values()].map((v) => structuredClone(v)).sort((a, b) => byId(String((a as any).id), String((b as any).id)));
   }
 
   private async put(kind: Kind, v: { id: string }) {
@@ -318,8 +315,7 @@ export class Store {
     const records = this.cached("items")!;
     if (this.itemsView?.records !== records) this.itemsView = null;
     if (!this.itemsView) {
-      const num = (x: Item) => Number(x.id.replace(/^\D+/, "")) || 0;
-      const list = ([...records.values()] as Item[]).sort((a, b) => num(a) - num(b) || a.id.localeCompare(b.id));
+      const list = ([...records.values()] as Item[]).sort((a, b) => byId(a.id, b.id));
       this.itemsView = { records, list };
     }
     return this.itemsView.list;
@@ -407,4 +403,14 @@ export class Store {
     }
     return this.eventCache.events.filter((e) => e.seq > since);
   }
+}
+
+/**
+ * Order of records by id: items by round and number (1.2 before 1.10: as decimals, 1.10 was 1.1,
+ * test report v0.16.0), the others (C3, G12, N4) by their number.
+ */
+function byId(a: string, b: string): number {
+  if (/^\d+\.\d+$/.test(a) && /^\d+\.\d+$/.test(b)) return compareItemIds(a, b);
+  const num = (x: string) => Number(x.replace(/^\D+/, "")) || 0;
+  return num(a) - num(b) || a.localeCompare(b);
 }

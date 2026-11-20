@@ -202,3 +202,66 @@ describe("B13: feedback sentences end in one full stop", () => {
     expect(describeFeedback(reopened)).toMatch(/took back the request to revise it/);
   });
 });
+
+describe("UX: ids in order", () => {
+  it("lists 1.2 before 1.10", async () => {
+    const { stet } = await setup({ "main.tex": LINES });
+    const { worktree: wt } = await stet.newAgent("a");
+    let t = read(wt, "main.tex");
+    for (let i = 1; i <= 12; i++) t = t.replace(`omega${i} in every round`, `omega${i} in all rounds`);
+    write(wt, "main.tex", t);
+    const { items } = await stet.submit("a", { title: "t" });
+    expect(items).toHaveLength(12);
+    expect((await stet.listItems()).map((i) => i.id)).toEqual(Array.from({ length: 12 }, (_, i) => `1.${i + 1}`));
+  });
+});
+
+describe("UX: merged linked groups don't confuse the agent", () => {
+  it("parts sharing a change are joined, quietly when the groups were merged", async () => {
+    const { settleParts } = await import("../src/parts.js");
+    const mk = (id: string): any => ({ id, file: "a.tex", kind: "modify", oldText: id, newText: id + "!", status: "pending", groups: [], range: { start: 0, end: 0 }, context: { before: "", after: "" } });
+    const [a, b, c] = [mk("1.1"), mk("1.2"), mk("1.3")];
+    const drafts = [{ title: "Old", items: ["1.1", "1.2"] }, { title: "New", items: ["1.2", "1.3"] }];
+    const loud = await settleParts(drafts, [a, b, c]);
+    expect(loud.notes.join(" ")).toMatch(/both contain 1\.2/);
+    const quiet = await settleParts(drafts, [a, b, c], undefined, { quietOverlaps: true });
+    expect(quiet.parts).toBeUndefined(); // one part: the whole group
+    expect(quiet.notes).toEqual([]);
+  });
+});
+
+describe("UX: locating while typing", () => {
+  it("locateMany uses the items the caller has, without reading the store", async () => {
+    const { stet, repo } = await setup({ "main.tex": LINES });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.tex", read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds"));
+    const { items } = await stet.submit("a", { title: "t" });
+    const all = await stet.listItems();
+    const reads = { n: 0 };
+    const orig = stet.store.items;
+    (stet.store as any).items = async () => (reads.n++, orig());
+    const text = read(repo, "main.tex");
+    const r = await stet.locateMany(items, text, all);
+    expect(reads.n).toBe(0);
+    expect(r.get(items[0]!.id)!.line).toBe(3);
+    (stet.store as any).items = orig;
+  });
+});
+
+describe("Resolved notes can be opened again", () => {
+  it("reopenNote opens it and tells the agent", async () => {
+    const { describeFeedback } = await import("../src/mcp.js");
+    const { stet } = await setup({ "main.tex": PAPER });
+    await stet.newAgent("a");
+    const n = await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Too long.");
+    await stet.sync("a");
+    await stet.resolveNote(n.id);
+    expect((await stet.reopenNote(n.id)).state).toBe("open");
+    const fb = await stet.feedback("a");
+    expect(fb.map((e) => e.type)).toEqual(["note_resolved", "note_reopened"]);
+    expect(describeFeedback(fb[1]!)).toMatch(/^NOTE REOPENED N1 \(main\.tex\): the reviewer opened it again/);
+    // Open already: nothing happens.
+    await stet.reopenNote(n.id);
+    expect(await stet.feedback("a")).toEqual([]);
+  });
+});

@@ -47,7 +47,7 @@ export class Locator {
     const lf = toLf(doc.getText());
     const idx = new LineIndex(lf);
     const out: Located[] = [];
-    const where = await p.stet.locateMany(items, lf).catch(() => new Map<string, { span: { start: number; end: number } | null }>());
+    const where = await p.stet.locateMany(items, lf, p.snapshot.items).catch(() => new Map<string, { span: { start: number; end: number } | null }>());
     for (const item of items) {
       const span = where.get(item.id)?.span;
       if (!span) continue;
@@ -288,15 +288,21 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     const model = this.host.model(p);
     const lenses: vscode.CodeLens[] = [];
     const ref = (id: string): Ref => ({ path: p.mainPath, id });
-    for (const { item, range } of await this.locator.locate(doc)) {
+    const located = await this.locator.locate(doc);
+    const onLine = new Map<number, number>();
+    for (const { range } of located) onLine.set(range.start.line, (onLine.get(range.start.line) ?? 0) + 1);
+    for (const { item, range } of located) {
       const at = new vscode.Range(range.start, range.start);
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
+      // Several changes on one line: Reject… and More… name theirs, or "Show CodeLens commands
+      // for current line" lists them alike (test report v0.16.0).
+      const whose = (onLine.get(range.start.line) ?? 0) > 1 ? ` ${item.id}` : "";
       // The two decisions everyone needs, and More… for the rest (the same list as everywhere).
       const accept = acceptAction(model, p.mainPath, item);
       lenses.push(
         new vscode.CodeLens(at, { title: `${item.id}${tag}: ${withIcon(accept)}`, tooltip: accept.detail, command: accept.command, arguments: accept.args }),
-        new vscode.CodeLens(at, { title: withIcon({ icon: "close", label: item.move ? "Reject move…" : "Reject…" }), tooltip: `Reject ${item.id}, with an optional reason for the agent`, command: "stet.reject", arguments: [ref(item.id)] }),
-        new vscode.CodeLens(at, { title: withIcon({ icon: "ellipsis", label: "More…" }), tooltip: "Every action on this change (also Ctrl+. in the change)", command: "stet.changeActions", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: withIcon({ icon: "close", label: `${item.move ? "Reject move" : "Reject"}${whose}…` }), tooltip: `Reject ${item.id}, with an optional reason for the agent`, command: "stet.reject", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, { title: withIcon({ icon: "ellipsis", label: `More${whose}…` }), tooltip: `Every action on ${item.id} (also Ctrl+. in the change)`, command: "stet.changeActions", arguments: [ref(item.id)] }),
       );
     }
     return lenses;

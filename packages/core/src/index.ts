@@ -5,7 +5,7 @@ export { StetError } from "./errors.js";
 export type { SubmitResult, SyncResult, AcceptResult, AgentStatus, ItemFilter, UndoResult } from "./service.js";
 export type { GroupHint, NoteHint } from "./grouping.js";
 export { tokenizeWords } from "./tokenizer.js";
-export { BIBTEX, LATEX, PLAIN, PROFILES, documentProfile, hasPreview, profileByName, profileFor, type LanguageProfile } from "./lang/index.js";
+export { BIBTEX, LATEX, PLAIN, PROFILES, buildIgnores, documentProfile, matchesAny, hasPreview, profileByName, profileFor, type LanguageProfile } from "./lang/index.js";
 export type { Typesetter, SyntaxRules } from "./lang/profile.js";
 export { inlineDiff, type InlineDiff } from "./inline.js";
 export { moveChanges, moveChangesOf, moveTexts, type MoveChange } from "./moves.js";

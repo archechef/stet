@@ -112,7 +112,7 @@ export class Threads implements vscode.Disposable {
           continue;
         }
         const thread = this.controller.createCommentThread(p.fileUri(item.file), range ?? new vscode.Range(0, 0, 0, 0), this.comments(p, item));
-        thread.label = `${item.id} · ${item.agent}`;
+        thread.label = `${item.id} · ${item.agent}${inProject(p)}`;
         thread.canReply = true;
         thread.contextValue = item.id;
         // Open by default only to show a long proposal; the user's collapsing is kept afterwards.
@@ -145,14 +145,14 @@ export class Threads implements vscode.Disposable {
           existing.note = note;
           if (existing.sig !== sig) {
             existing.thread.comments = this.noteComments(note);
-            existing.thread.label = this.noteLabel(note);
+            existing.thread.label = this.noteLabel(note, p);
             existing.sig = sig;
           }
           if (range && !existing.thread.range?.isEqual(range)) existing.thread.range = range;
           continue;
         }
         const thread = this.controller.createCommentThread(p.fileUri(note.file), range ?? new vscode.Range(0, 0, 0, 0), this.noteComments(note));
-        thread.label = this.noteLabel(note);
+        thread.label = this.noteLabel(note, p);
         thread.canReply = true;
         thread.contextValue = note.id;
         thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
@@ -167,8 +167,8 @@ export class Threads implements vscode.Disposable {
     }
   }
 
-  private noteLabel(n: Note): string {
-    return `${n.id} · note for ${n.agent}${n.deliveredAt ? "" : " (arrives at its next sync)"}`;
+  private noteLabel(n: Note, p: Project): string {
+    return `${n.id} · note for ${n.agent}${inProject(p)}${n.deliveredAt ? "" : " (arrives at its next sync)"}`;
   }
 
   private noteComments(n: Note): vscode.Comment[] {
@@ -249,4 +249,9 @@ export class Threads implements vscode.Disposable {
     for (const t of [...this.threads.values(), ...this.notes.values()]) t.thread.dispose();
     for (const d of this.disposables) d.dispose();
   }
+}
+
+/** " · paper-a" in a window with several folders, where two projects have the same ids (test report v0.16.0); else "". */
+export function inProject(p: Project): string {
+  return (vscode.workspace.workspaceFolders?.length ?? 0) > 1 ? ` · ${p.name}` : "";
 }

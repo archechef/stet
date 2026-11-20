@@ -18,6 +18,10 @@ describe("accessibility", () => {
     expect(p).toMatch(/tabindex="0" role="region"/);
     expect(p).toContain('addEventListener("keydown"');
     expect(p).toContain("--vscode-diffEditor-insertedTextBackground");
+    // Pages and versions from the keyboard, and pictures that say what changed (test report v0.16.0).
+    expect(p).toContain('e.key === "PageDown"');
+    expect(p).toMatch(/e\.key === "b"/);
+    expect(p).toContain('" with the change: " + PAGES.what');
   });
 
   it("inserted text is not marked by colour alone in high-contrast themes", () => {
@@ -35,9 +39,17 @@ describe("accessibility", () => {
     for (const m of ["Comment on ${t.item.id} sent", "Revision of ${t.item.id} requested", "Note ${t.note.id} resolved", "Reply on note ${note.id} sent", "Reply on ${hit.item.id} sent"]) expect(e).toContain(m);
   });
 
+  it("offers the bordered style once in High Contrast themes when proposed text wraps (test report v0.16.0)", () => {
+    const e = src("extension.ts");
+    const offer = e.slice(e.indexOf("private async offerContrastStyle"), e.indexOf("Whether the user last picked"));
+    for (const part of ["ColorThemeKind.HighContrast", "usesHints(uri)", "stet.askedContrastStyle"]) expect(offer).toContain(part);
+    expect(e).toContain('this.setOption("newTextStyle", "highlighted")');
+    expect(e).toContain("onDidChangeActiveColorTheme");
+  });
+
   it("tree items and the status bar have spoken labels", () => {
     const e = src("extension.ts");
-    expect(e).toContain("t.accessibilityInformation = { label: itemSpoken(it, line) }");
+    expect(e).toMatch(/t\.accessibilityInformation = \{ label: itemSpoken\(it, /);
     expect(e).toContain("this.status.accessibilityInformation");
   });
 });

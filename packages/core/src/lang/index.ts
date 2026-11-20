@@ -44,3 +44,22 @@ export function hasPreview(path: string): boolean {
 export function profileByName(path: string): LanguageProfile {
   return PROFILES.find((p) => p.extensions.test(path)) ?? PLAIN;
 }
+
+/**
+ * A .gitignore for the build files in a folder, by its files (relative paths): every profile's
+ * build files, and the outputs of its sources that are there (`/main.pdf` next to `main.tex`, not
+ * every PDF: figures are PDFs too). Empty if the folder has none.
+ */
+export function buildIgnores(paths: string[]): string[] {
+  const have = new Set(paths.map((p) => p.toLowerCase()));
+  const out: string[] = [];
+  for (const prof of PROFILES) {
+    const patterns = prof.buildFiles ?? [];
+    if (paths.some((p) => matchesAny(p, patterns))) out.push(...patterns.filter((pat) => paths.some((p) => matchesAny(p, [pat]))));
+    for (const p of paths) {
+      const o = prof.outputOf?.(p);
+      if (o && have.has(o.toLowerCase())) out.push("/" + paths.find((x) => x.toLowerCase() === o.toLowerCase())!);
+    }
+  }
+  return [...new Set(out)];
+}

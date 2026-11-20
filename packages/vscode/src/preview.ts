@@ -7,7 +7,7 @@
  */
 import { dirname, join, relative, sep } from "node:path";
 import * as vscode from "vscode";
-import type { Item, PageSide, PreviewEnv, PreviewResult } from "@stet/core";
+import { changeSummary, type Item, type PageSide, type PreviewEnv, type PreviewResult } from "@stet/core";
 import type { Project } from "./project.js";
 
 type Target = { project: Project; item: Item };
@@ -149,10 +149,13 @@ export class PreviewPanel implements vscode.Disposable {
     const img = (file: string) => `${w.asWebviewUri(vscode.Uri.file(file))}?v=${Date.now()}`;
     let body: string;
     let pageData: unknown = null;
+    // What changed, for the pictures' alt text: where the changes are said nothing of what they are (test report v0.16.0).
+    const [was, now] = changeSummary(t.item.oldText, t.item.newText, 60);
+    const what = !t.item.oldText ? `“${now}” inserted` : !t.item.newText ? `“${was}” deleted` : `“${was}” replaced with “${now}”`;
     if (!r) body = `<p class="muted">Building the preview… The change is already in the editor; its page appears here when it's compiled.</p>`;
     else if (r.status === "ready" && r.pages && inPreviewCache(t.project, r.pages.after.file) && (!r.pages.before || inPreviewCache(t.project, r.pages.before.file))) {
       const side = (s: PageSide) => ({ page: s.page, count: s.count, width: s.width, height: s.height, src: img(s.file), marks: s.marks });
-      pageData = { after: side(r.pages.after), before: r.pages.before ? side(r.pages.before) : null };
+      pageData = { after: side(r.pages.after), before: r.pages.before ? side(r.pages.before) : null, what };
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
         (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>${html(r.typesetter ?? "Build")} log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
@@ -160,15 +163,15 @@ export class PreviewPanel implements vscode.Disposable {
         `<span class="seg" role="group" aria-label="Version"><button id="show-after" class="on" aria-pressed="true" title="With the change">After</button><button id="show-before" aria-pressed="false" title="Without it"${r.pages.before ? "" : " disabled"}>Before</button></span>` +
         `<button id="prev" title="Previous page" aria-label="Previous page">◀</button><span id="pageno" class="muted" aria-live="polite"></span><button id="next" title="Next page" aria-label="Next page">▶</button>` +
         ZOOM_BUTTONS + `<span id="level" class="muted" aria-live="polite"></span>` +
-        `<span class="muted hint">changes marked · Ctrl/Cmd + wheel zooms, drag or arrow keys move</span></div>` +
-        `<div class="page tall" tabindex="0" role="region" aria-label="The page; arrow keys move it, + and − zoom"><div class="sheet"><img alt="The page with the change" draggable="false"></div></div>`;
+        `<span class="muted hint">changes marked · Ctrl/Cmd + wheel zooms, drag or arrow keys move · Page Up/Down turn pages, A/B after and before</span></div>` +
+        `<div class="page tall" tabindex="0" role="region" aria-label="The page; arrow keys move it, + and − zoom, Page Up and Page Down turn pages, A and B show it after and before the change"><div class="sheet"><img alt="The page with the change" draggable="false"></div></div>`;
     } else if (r.status === "ready") {
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
         (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>${html(r.typesetter ?? "Build")} log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
         `<div class="zoom">` + ZOOM_BUTTONS +
         `<span id="level" class="muted" aria-live="polite"></span><span class="muted hint">Ctrl/Cmd + wheel zooms, drag or arrow keys move, double-click zooms in</span></div>` +
-        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page" tabindex="0" role="region" aria-label="After; arrow keys move it, + and − zoom"><img src="${img(r.after.file)}" alt="Page ${r.after.page} with the change" draggable="false"></div>` +
+        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page" tabindex="0" role="region" aria-label="After; arrow keys move it, + and − zoom"><img src="${img(r.after.file)}" alt="Page ${r.after.page} with the change: ${html(what)}" draggable="false"></div>` +
         (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><div class="page" tabindex="0" role="region" aria-label="Before; arrow keys move it, + and − zoom"><img src="${img(r.before.file)}" alt="Page ${r.before.page} without the change" draggable="false"></div>` : "");
     } else if (r.status === "no-spot") body = `<p class="muted">${html(r.message)}</p>`;
     else if (r.status === "failed") body = `<p class="warn">${html(r.message)}</p>${extrasButton(r.missing)}<pre>${html(r.log)}</pre>`;
@@ -364,7 +367,7 @@ if (PAGES) {
       btn.classList.toggle("on", v === s);
       btn.setAttribute("aria-pressed", String(v === s));
     }
-    im.alt = "Page " + n + (s === "after" ? " with the change" : " without the change") + (marks.length ? ", " + marks.length + " changed place" + (marks.length > 1 ? "s" : "") + " marked" : "");
+    im.alt = "Page " + n + (s === "after" ? " with the change: " + PAGES.what : " without the change: " + PAGES.what) + (marks.length ? ", " + marks.length + " changed place" + (marks.length > 1 ? "s" : "") + " marked" : "");
     if (first && marks.length) {
       // Open at the change: its first mark in the middle of the frame.
       const m = marks[0];
@@ -394,6 +397,15 @@ if (PAGES) {
   if (PAGES.before) document.getElementById("show-before").onclick = () => goto("before", shown.before);
   document.getElementById("prev").onclick = () => goto(side, shown[side] - 1);
   document.getElementById("next").onclick = () => goto(side, shown[side] + 1);
+  // Pages and versions from the keyboard too, not only with Tab and Enter (test report v0.16.0).
+  frame.addEventListener("keydown", (e) => {
+    if (e.key === "PageDown" && shown[side] < PAGES[side].count) goto(side, shown[side] + 1);
+    else if (e.key === "PageUp" && shown[side] > 1) goto(side, shown[side] - 1);
+    else if (e.key === "a" || e.key === "A") goto("after", shown.after);
+    else if ((e.key === "b" || e.key === "B") && PAGES.before) goto("before", shown.before);
+    else return;
+    e.preventDefault();
+  });
   // A full page is taller than the frame: the wheel moves it at any zoom.
   frame.addEventListener("wheel", (e) => {
     if (e.ctrlKey || e.metaKey || zoom > 1) return;

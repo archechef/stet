@@ -384,8 +384,10 @@ export class Stet {
    * store and each file are read once. Item by item, every item read the whole store again:
    * listing 750 changes took 25 s (test report 2026-11-20, B3).
    */
-  async locateMany(items: Item[], text?: string): Promise<Map<string, { line: number; span: Span | null }>> {
-    const all = await this.store.items();
+  async locateMany(items: Item[], text?: string, known?: readonly Item[]): Promise<Map<string, { line: number; span: Span | null }>> {
+    // `known`: all items as the caller has them (the extension's snapshot). Reading them from the
+    // store again on every keystroke took seconds while background checks ran (test report v0.16.0).
+    const all = known ?? (await this.store.items());
     const files = new Map<string, Promise<TextFile | null>>();
     const fileOf = (p: string) => {
       if (!files.has(p)) files.set(p, this.workingView().read(p).catch(() => null));
@@ -1513,10 +1515,12 @@ export class Stet {
     }));
     // Linked groups from earlier submissions that now share members get merged into the new one.
     const priorGroups = (await this.store.groups()).filter((g) => g.agent === agent.id && g.kind === "linked" && g.state === "open");
+    const merged = new Set<Group>();
     for (const g of groups.filter((g) => g.kind === "linked")) {
       for (const pg of priorGroups.filter((pg) => pg.items.some((i) => g.items.includes(i)))) {
         const parts = combineParts(pg, g);
         if (parts) g.parts = parts;
+        merged.add(g);
         for (const i of pg.items) if (!g.items.includes(i)) g.items.push(i);
         g.title = joinTitles(pg.title, g.title);
         for (const i of pg.items) {
@@ -1537,7 +1541,7 @@ export class Stet {
           byId.set(it.id, it);
         }
       }
-      result.warnings.push(...(await this.settleParts(g, getItem)));
+      result.warnings.push(...(await this.settleParts(g, getItem, merged.has(g))));
       await this.store.putGroup(g);
     }
     for (const it of byId.values()) if (!created.includes(it)) await this.store.putItem(it);
@@ -1660,7 +1664,7 @@ export class Stet {
     return parts ? parts.map((p) => p.items) : [members.map((m) => m.id)];
   }
 
-  private async settleParts(g: Group, get: (id: string) => Promise<Item | undefined>): Promise<string[]> {
+  private async settleParts(g: Group, get: (id: string) => Promise<Item | undefined>, merged = false): Promise<string[]> {
     if (g.kind !== "linked" || !g.parts) {
       delete g.parts;
       return [];
@@ -1668,7 +1672,7 @@ export class Stet {
     const members = (await Promise.all(g.items.map(get))).filter((x): x is Item => !!x && x.status !== "superseded");
     const base = members.find((m) => isLive(m.status))?.baseCommit;
     const cfg = await this.config();
-    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { profileOf: (f) => this.profile(cfg, f) });
+    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { profileOf: (f) => this.profile(cfg, f), quietOverlaps: merged });
     if (parts) g.parts = parts;
     else delete g.parts;
     // Joins of parts Stet proposed itself are no news to the agent.
@@ -1962,7 +1966,7 @@ export class Stet {
       out.push(
         `${g.id} (${g.title}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
           `${no.map((m) => m.id).join(", ")} ${no.every((m) => m.status === "rejected") ? "rejected" : "not"}. ` +
-          `Check that the document is still consistent (a \\ref to a label that no longer exists, say); \`stet undo\` takes a decision back.`,
+          `Check that the document is still consistent (a \\ref to a label that no longer exists, say). Undo takes a decision back.`,
       );
     }
     return out;
@@ -2862,6 +2866,18 @@ export class Stet {
     });
   }
 
+  /** Open a resolved note again (from History): the agent is told, if it had it already. */
+  async reopenNote(id: string): Promise<Note> {
+    return this.store.withLock(async () => {
+      const n = await this.getNote(id);
+      if (n.state === "open") return n;
+      n.state = "open";
+      await this.store.putNote(n);
+      await this.store.appendEvent({ type: "note_reopened", agent: n.agent, data: { note: n.id, file: n.file } });
+      return n;
+    });
+  }
+
   /** Hand the agent its open, undelivered notes, located in its workspace as it is now. Under the lock. */
   private async deliverNotes(agent: Agent): Promise<DeliveredNote[]> {
     const waiting = (await this.store.notes()).filter((n) => n.agent === agent.id && n.state === "open" && !n.deliveredAt);
@@ -2888,7 +2904,7 @@ export class Stet {
       const notes = new Map((await this.store.notes()).map((n) => [n.id, n]));
       // Note events before the note was delivered are part of the delivery itself (§7.8).
       const early = (e: StetEvent) => {
-        if (e.type !== "note_comment" && e.type !== "note_resolved") return false;
+        if (e.type !== "note_comment" && e.type !== "note_resolved" && e.type !== "note_reopened") return false;
         const n = notes.get(String(e.data?.note ?? ""));
         return !n?.deliveredAt || e.at <= n.deliveredAt;
       };

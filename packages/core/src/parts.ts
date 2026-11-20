@@ -114,7 +114,7 @@ export async function settleParts(
   proposed: PartDraft[],
   members: Item[],
   interferes?: Interference,
-  opts: { sameSymbol?: (a: Item, b: Item) => boolean; profileOf?: ProfileOf } = {},
+  opts: { sameSymbol?: (a: Item, b: Item) => boolean; profileOf?: ProfileOf; quietOverlaps?: boolean } = {},
 ): Promise<{ parts: GroupPart[] | undefined; notes: string[] }> {
   const profileOf = opts.profileOf ?? profileByName;
   const byId = new Map(members.map((m) => [m.id, m]));
@@ -137,10 +137,10 @@ export async function settleParts(
   const open = (root: number) => itemsOf(root).some((i) => isLive(byId.get(i)!.status));
   const titleOf = (root: number) => drafts[root]!.title;
   const notes: string[] = [];
-  const join = (a: number, b: number, why: string, force = false): boolean => {
+  const join = (a: number, b: number, why: string, force = false, quiet = false): boolean => {
     const [ra, rb] = [find(a), find(b)];
     if (ra === rb || (!force && (!open(ra) || !open(rb)))) return false;
-    notes.push(`joined parts "${titleOf(ra)}" and "${titleOf(rb)}": ${why}.`);
+    if (!quiet) notes.push(`joined parts "${titleOf(ra)}" and "${titleOf(rb)}": ${why}.`);
     parent[rb] = ra;
     drafts[ra]!.title = joinTitles(drafts[ra]!.title, drafts[rb]!.title);
     return true;
@@ -150,7 +150,8 @@ export async function settleParts(
     for (const i of d.items) {
       const prev = partOf.get(i);
       // Usually two parts naming the same line: say how to name one change on it.
-      if (prev !== undefined) join(prev, k, `both contain ${i} (to separate changes on one line, add a snippet of the new text to the location: file:line "snippet")`, true);
+      // Groups merged because they share changes overlap by design: joined without a word (test report v0.16.0).
+      if (prev !== undefined) join(prev, k, `both contain ${i} (to separate changes on one line, add a snippet of the new text to the location: file:line "snippet")`, true, opts.quietOverlaps);
       else partOf.set(i, k);
     }
   });

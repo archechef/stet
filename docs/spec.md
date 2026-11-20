@@ -470,7 +470,7 @@ Status → `withdrawn`. The change disappears from the branch at the next replay
 A **note** asks one agent for something about a passage that has no proposed change yet ("shorten this paragraph", "check this proof"). Record `notes/N<n>.json`: `agent`, `file`, the passage `text` with its `range` and `context` (as for items, so it can be found again; taken from the reviewer's view, unsaved editor text included), `body`, `state` (`open` | `resolved`), `deliveredAt`, and a `thread`.
 - **Leaving one:** `addNote(agent, {file, start/end or fromLine/toLine, text?}, body)`. Only active agents; paths inside the project; a `note_added` event (not feedback).
 - **Delivery at the next sync:** `stet_sync` delivers every open, undelivered note of the agent, located (§8, without a reference text) in the agent's workspace as it is after the sync, with its `file:line` range, the quoted passage, and any replies written before delivery. A passage that can't be found is delivered with its quote and a remark. A note is delivered once (`deliveredAt`). Notes don't change the base, so `stet_status` reports `notesWaiting` and the instructions tell agents to sync then. Sync still refuses a workspace with unsubmitted edits, but delivers the waiting notes in its refusal: a note should not wait until the agent's current work is done.
-- **Afterwards:** a conversation like an item's. The agent answers with `stet_reply N3` (`note_reply`); the reviewer's replies are `note_comment` feedback, and *Resolve* gives `note_resolved` feedback. Note events from before the delivery are not repeated as feedback, since the delivery included them. Resolved notes are never delivered. Archiving an agent resolves its open notes.
+- **Afterwards:** a conversation like an item's. The agent answers with `stet_reply N3` (`note_reply`); the reviewer's replies are `note_comment` feedback, and *Resolve* gives `note_resolved` feedback, and *Reopen* (from History) `note_reopened`. Note events from before the delivery are not repeated as feedback, since the delivery included them. Resolved notes are never delivered. Archiving an agent resolves its open notes.
 
 ---
 
@@ -540,7 +540,7 @@ Known limitations:
 | `stet_group` | `itemIds`, `kind`, `title`, `rationale?`, `parts?: [{title, itemIds}]` | the group with its parts and warnings; for `atomic`, the new merged item |
 | `stet_ungroup` | `groupId` | ok. The agent may remove its own groups and `auto` groups in its changesets. |
 | `stet_sync` | — | new base sha, items that became stale, reviewer notes delivered (§7.8) |
-| `stet_get_feedback` | `ack?: bool` (default true) | events since the cursor: `accepted` (with the final text if edited), `rejected` (reason), `revision_requested`, `comment`, `stale` (with current context), `repeat_rejected`, `group_broken` (member statuses), `group_partial` (each part and its outcome), `note_comment`, `note_resolved` |
+| `stet_get_feedback` | `ack?: bool` (default true) | events since the cursor: `accepted` (with the final text if edited), `rejected` (reason), `revision_requested`, `comment`, `stale` (with current context), `repeat_rejected`, `group_broken` (member statuses), `group_partial` (each part and its outcome), `note_comment`, `note_resolved`, `note_reopened`, `reopened` (a decision undone) |
 | `stet_list` | `status?`, `file?` | items with status |
 | `stet_show` | `id` (item, group or delivered note) | old/new text, note, groups, thread; for a group its parts and members; for a note its passage and thread |
 | `stet_reply` | `itemId` (an item, or a delivered note `N3`), `text` | ok |
@@ -602,8 +602,8 @@ reaches the real document until a human accepts it.
   - accepted with edited text: prefer the human's wording style from now on.
   - group_broken: some linked edits were applied without the others; propose
     whatever is needed to make the document consistent again.
-  - note_comment / note_resolved: the reviewer wrote in a note's thread, or
-    closed the note.
+  - note_comment / note_resolved / note_reopened: the reviewer wrote in a
+    note's thread, closed the note, or opened it again.
   - group_partial: some parts of a linked group were accepted, others not;
     propose what makes the document consistent.
 - Use `stet_withdraw` for proposals you no longer believe in.

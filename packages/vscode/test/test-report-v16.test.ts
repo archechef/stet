@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
 import { acceptAction, acceptQuestion, changeActions } from "../src/actions.js";
-import { actionsTitle, behindAgents, draftMarkdown, editedPart, itemSpoken, editFrame, FINISH_SAVE, finishQuestion, fromPanel, nextItemIndex, TreeModel, type Snapshot } from "../src/model.js";
+import { actionsTitle, behindAgents, manyQuestion, changesAt, documentOrder, threadText, unreadReplies, draftMarkdown, editedPart, itemSpoken, editFrame, FINISH_SAVE, finishQuestion, fromPanel, nextItemIndex, TreeModel, type Snapshot } from "../src/model.js";
 
 const agent: Agent = { id: "a", kind: "claude-code", branch: "stet/a", worktree: "/w/a", baseCommit: "b", lastTip: "b", replayedAt: "", feedbackCursor: 0, createdAt: "", state: "active" };
 const item = (id: string, extra: Partial<Item> = {}): Item => ({
@@ -175,5 +175,75 @@ describe("Accessibility: a change's spoken label says what its row shows", () =>
   it("the wording a change was accepted with", () => {
     const acc = item("2.3", { oldText: "problem", newText: "task", status: "accepted", resolution: { appliedText: "job", edited: true, committed: null } });
     expect(itemSpoken(acc)).toBe("Change 2.3, replace “problem” with “job”, in main.tex, accepted");
+  });
+});
+
+describe("Replies you haven't seen", () => {
+  const thread = [{ author: "user" }, { author: "agent" }, { author: "user" }, { author: "agent" }];
+  it("counts the agent's replies after what you have seen", () => {
+    expect(unreadReplies(thread, 0)).toBe(2);
+    expect(unreadReplies(thread, 2)).toBe(1);
+    expect(unreadReplies(thread, 4)).toBe(0);
+    expect(unreadReplies([{ author: "user" }], 0)).toBe(0); // your own messages are never news
+  });
+  it("shows them on the row and in the spoken label", () => {
+    expect(threadText(4, 1)).toBe("💬 4 (1 new)");
+    expect(threadText(4, 0)).toBe("💬 4");
+    expect(threadText(0, 0)).toBe("");
+    const it2 = item("2.1", { thread: [{ at: "", author: "agent", text: "done" }] });
+    expect(itemSpoken(it2, undefined, 1)).toMatch(/1 message, 1 new$/);
+  });
+});
+
+describe("A change that can't be found in your file", () => {
+  it("offers Reject and Revise first, and says Accept can't work", () => {
+    const m = model({}, [item("1.1", { groups: [] })]);
+    const normal = changeActions(m, "/p", m.item("1.1")!).map((a) => a.label);
+    expect(normal.slice(0, 2)).toEqual(["Accept", "Reject…"]);
+    const lost = changeActions(m, "/p", m.item("1.1")!, { lost: true });
+    expect(lost.slice(0, 3).map((a) => a.label)).toEqual(["Reject…", "Revise…", "Accept"]);
+    expect(lost[2]!.detail).toMatch(/^Can't work now/);
+  });
+});
+
+describe("stet.navigationOrder: document", () => {
+  it("orders changes by project, file and line, then id", () => {
+    const xs = [
+      { project: "/a", file: "b.tex", line: 3, id: "1.1" },
+      { project: "/a", file: "a.tex", line: 9, id: "2.4" },
+      { project: "/a", file: "a.tex", line: 2, id: "1.10" },
+      { project: "/a", file: "a.tex", line: 2, id: "1.2" },
+    ];
+    expect(documentOrder(xs).map((x) => x.id)).toEqual(["1.2", "1.10", "2.4", "1.1"]);
+  });
+});
+
+describe("Resolved notes in History", () => {
+  it("are listed under their agent in History, not in the Review panel", () => {
+    const note = (id: string, state: "open" | "resolved") => ({ id, agent: "a", file: "main.tex", text: "", range: { start: 0, end: 0 }, context: { before: "", after: "" }, body: "b", createdAt: "", state, deliveredAt: "", thread: [] });
+    const s = { agents: [agent], changesets: [], groups: [], items: [], notes: [note("N1", "open"), note("N2", "resolved")], syncNeeded: new Set(), uncommitted: [], unshared: false, missing: [] } as unknown as Snapshot;
+    const ids = (m: TreeModel) => m.children(m.children()[0]).map((n) => (n.type === "note" ? n.note.id : n.type));
+    expect(ids(new TreeModel(s, "review"))).toEqual(["N1"]);
+    expect(ids(new TreeModel(s, "history"))).toEqual(["N2"]);
+  });
+});
+
+describe("Overlapping changes at the cursor", () => {
+  const r = (l0: number, c0: number, l1: number, c1: number, id: string) => ({ id, range: { start: { line: l0, character: c0 }, end: { line: l1, character: c1 } } });
+  it("are all named, so the command can ask which", () => {
+    const a = r(2, 0, 2, 20, "1.1");
+    const b = r(2, 5, 2, 30, "2.1");
+    expect(changesAt([a, b], { line: 2, character: 10 }).map((x) => x.id)).toEqual(["1.1", "2.1"]);
+    expect(changesAt([a, b], { line: 2, character: 25 })).toEqual([]); // only in one
+    expect(changesAt([a], { line: 2, character: 10 })).toEqual([]);
+  });
+});
+
+describe("Several changes selected", () => {
+  it("asks whether to take along what they are linked with, that first", () => {
+    const q = manyQuestion("Accept", 3, ["1.4", "1.5"]);
+    expect(q.title).toBe("The 3 selected changes are linked with 1.4, 1.5");
+    expect(q.choices.map((c) => [c.label, c.withRest])).toEqual([["Accept the 3 selected and the 2 linked with them", true], ["Accept only the 3 selected", false]]);
+    expect(manyQuestion("Reject", 2, ["1.1"]).choices[1]!.label).toBe("Reject only the 2 selected");
   });
 });

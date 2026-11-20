@@ -104,6 +104,7 @@ here reaches the real document until a human accepts it.
     whatever is needed to make the document consistent again.
   - note_comment: the reviewer wrote in a note's thread; answer or act on it.
   - note_resolved: the reviewer closed a note; nothing more to do for it.
+  - note_reopened: the reviewer opened a closed note again; act on it as before.
   - group_partial: the reviewer accepted some parts of a linked group and
     rejected others. The document compiles but may be inconsistent (e.g.
     references to a renamed label); propose what makes it consistent.

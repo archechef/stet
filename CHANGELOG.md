@@ -25,7 +25,27 @@ Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code f
 - Agent and round rows count changes waiting for the agent's revision apart ("3 pending · 1 awaiting revision").
 - When an accept fails because the text around a change was edited since, the message says what to do next.
 
+**Reviewing in VS Code**
+- **Agent replies are marked until you see them:** "💬 3 (1 new)" and a speech-bubble icon on the change or note, a count on the agent's row and in the status bar. Going to the change or note marks them seen.
+- **A change that can't be found in your file any more says so** on its row (⚠ *not found in main.tex*), and its actions offer Reject and Revise first; accepting it can't work.
+- **Several changes can be selected** (Ctrl/Shift+click) and accepted or rejected together, with one reason; Stet asks whether to take along what they are linked with.
+- **Resolved notes are in History**, with their replies, and can be reopened (the agent gets `note_reopened`).
+- **Undo my last decision** is a button in the panel's title while there is something to undo.
+- With the cursor in two overlapping changes, palette commands and *More…* ask which one.
+- `stet.navigationOrder`: `j`/`k` go through the changes as the panel lists them (default) or by file and line.
+- **Set up project:** one question for a new repository and its first commit, with an offer to leave LaTeX's build files out (a `.gitignore`); a question for a folder without `.tex` files; the CLI's warning about uncommitted edits; and a short message when it was set up already.
+- An agent without proposals says *no proposals yet*, and its tooltip what to do next.
+- Several projects in one window: project names on threads, diffs and the PDF preview, counts per project on its row and in the status bar's tooltip, the project next to each agent in agent pickers, and Finish review offers only projects with something to commit.
+- Dissolving a related group asks first, as it can't be undone; with several changes on a line, *Reject…* and *More…* name theirs; messages without command-line jargon (`stet_sync`, `stet undo`, "C1" for round 1, the main branch).
+- Locating changes while you type no longer reads every change from disk each time: it took seconds while background checks ran.
+
+**Agents and the command line**
+- Ids are listed in order: 1.2 before 1.10.
+- Agents no longer get "joined parts … both contain 1.60" when a new linked group is merged with an earlier one it overlaps.
+
 **Accessibility**
+- The PDF preview turns pages with Page Up/Down and shows after and before with A/B, and its picture's text says what the change is.
+- In a High Contrast theme, where proposed text that wraps with the line has no border and isn't read, Stet offers once to use the highlighted style.
 - Results reach screen readers (as notifications when VS Code's screen-reader mode is on), and comments, revision requests, replies and resolved notes say they were sent.
 - A change's spoken label says what its row says: *revision requested*, *your wording*, the number of messages, and the wording a change was accepted with.
 - The PDF preview's title names the project in a window with several; the Reject… CodeLens has a tooltip.

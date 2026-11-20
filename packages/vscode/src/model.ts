@@ -197,7 +197,7 @@ export class TreeModel {
   private allChildren(node?: Node): Node[] {
     if (!node) {
       return this.snap.agents
-        .filter((a) => (this.mode === "review" && a.state === "active") || this.snap.items.some((i) => i.agent === a.id && this.visible(i)))
+        .filter((a) => (this.mode === "review" && a.state === "active") || this.snap.items.some((i) => i.agent === a.id && this.visible(i)) || this.resolvedNotes(a.id).length > 0)
         .sort((a, b) => a.id.localeCompare(b.id))
         .map((agent) => ({ type: "agent", agent }));
     }
@@ -205,6 +205,8 @@ export class TreeModel {
       case "agent":
         return [
           ...this.openNotes(node.agent.id).map((note): Node => ({ type: "note", note })),
+          // Resolved notes, with their replies, in History (test report v0.16.0: they vanished from VS Code).
+          ...this.resolvedNotes(node.agent.id).map((note): Node => ({ type: "note", note })),
           ...this.snap.changesets
             .filter((c) => c.agent === node.agent.id && this.csVisible(c))
             .sort((a, b) => num(b.id) - num(a.id))
@@ -227,6 +229,11 @@ export class TreeModel {
       case "item":
         return [];
     }
+  }
+
+  /** Resolved notes for an agent, shown in History only. */
+  resolvedNotes(agent: string): Note[] {
+    return this.mode === "history" ? this.snap.notes.filter((n) => n.agent === agent && n.state === "resolved").sort(byNum) : [];
   }
 
   /** Open notes for an agent, shown in the Review panel only. */
@@ -527,6 +534,38 @@ export function behindAgents(snap: Pick<Snapshot, "agents" | "syncNeeded">): str
   return snap.agents.filter((a) => a.state === "active" && snap.syncNeeded.has(a.id)).map((a) => a.id);
 }
 
+/**
+ * Replies of the agent in a thread after its first `seen` entries: what the reviewer hasn't seen
+ * yet (test report v0.16.0: replies arrived without a sign).
+ */
+export function unreadReplies(thread: readonly { author: string }[], seen: number): number {
+  return thread.slice(seen).filter((e) => e.author === "agent").length;
+}
+
+/** "💬 3 (1 new)", for a row's description; "" without messages. */
+export function threadText(count: number, unread: number): string {
+  return count ? `💬 ${count}${unread ? ` (${unread} new)` : ""}` : "";
+}
+
+/** Changes in document order: by project, file and line, then id (`stet.navigationOrder`: "document"). */
+export function documentOrder<T extends { project: string; file: string; line: number; id: string }>(xs: T[]): T[] {
+  return [...xs].sort((a, b) => a.project.localeCompare(b.project) || a.file.localeCompare(b.file) || a.line - b.line || compareItemIds(a.id, b.id));
+}
+
+/**
+ * What to ask when several selected changes are linked with others not selected: take those
+ * along (recommended), or decide only the selected ones, which breaks their linked groups.
+ */
+export function manyQuestion(verb: "Accept" | "Reject", count: number, rest: string[]): { title: string; choices: { label: string; detail: string; withRest: boolean }[] } {
+  return {
+    title: `The ${count} selected changes are linked with ${rest.join(", ")}`,
+    choices: [
+      { label: `${verb} the ${count} selected and the ${rest.length} linked with them`, detail: "Linked changes belong together.", withRest: true },
+      { label: `${verb} only the ${count} selected`, detail: "Breaks their linked groups; the agent is asked to repair the document.", withRest: false },
+    ],
+  };
+}
+
 export const fitsInline = (s: string, max = 80): boolean => !/[\r\n]/.test(s) && s.length <= max;
 
 /** The full new text of a proposal, for the editor's inline widget. Agent text: fenced, never rendered. */
@@ -617,6 +656,16 @@ export function changeAt<T extends { range: { start: Pos; end: Pos } }>(located:
 }
 
 /**
+ * The changes the cursor is inside of, when there are several (overlapping changes of two agents):
+ * commands ask which one rather than pick one silently (test report v0.16.0). Empty otherwise.
+ */
+export function changesAt<T extends { range: { start: Pos; end: Pos } }>(located: T[], pos: Pos): T[] {
+  const before = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && a.character <= b.character);
+  const inside = located.filter((l) => before(l.range.start, pos) && before(pos, l.range.end));
+  return inside.length > 1 ? inside : [];
+}
+
+/**
  * The buttons of the archive dialog, the safe one first (Enter takes it): archiving can't be
  * undone, and deleting the folder came first (test report 2026-11-20, D5). `unsubmitted`: files
  * the agent changed and didn't submit, named on the delete button.
@@ -639,20 +688,23 @@ export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what
 
 /** The question before dissolving a group, or null: a linked group's changes can then be decided apart, which can break the document. */
 export function dissolveQuestion(g: { id: string; kind: string; title: string }): string | null {
-  return g.kind === "linked" ? `Dissolve linked group ${g.id} “${g.title}”? Its changes can then be accepted one by one, which can break the document. This can't be undone.` : null;
+  if (g.kind === "linked") return `Dissolve linked group ${g.id} “${g.title}”? Its changes can then be accepted one by one, which can break the document. This can't be undone.`;
+  // A related group too: dissolving it can't be undone either (test report v0.16.0).
+  if (g.kind === "related") return `Dissolve group ${g.id} “${g.title}”? Its changes are then listed one by one in their round. This can't be undone.`;
+  return null;
 }
 
 /**
  * A change as a screen reader reads it: what, where and its state in words, with no symbols or
  * colour (decorations aren't read; test report 2026-11-20, accessibility).
  */
-export function itemSpoken(it: Item, line?: number): string {
+export function itemSpoken(it: Item, line?: number, unread = 0): string {
   const where = `in ${it.file}${line && it.kind === "modify" ? ` line ${line}` : ""}`;
   // As the row says it (test report v0.16.0, accessibility): "revision requested", your wording,
   // the conversation.
   const extra = [
     ...(it.draft !== undefined && isLive(it) ? ["your wording"] : []),
-    ...(it.thread.length ? [`${it.thread.length} message${it.thread.length === 1 ? "" : "s"}`] : []),
+    ...(it.thread.length ? [`${it.thread.length} message${it.thread.length === 1 ? "" : "s"}${unread ? `, ${unread} new` : ""}`] : []),
   ];
   const state = [STATUS_TEXT[it.status], ...extra].join(", ");
   if (it.kind !== "modify") return `Change ${it.id}, ${it.kind.replace("-", " ")} ${where}, ${state}`;

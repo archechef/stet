@@ -91,7 +91,7 @@ export function acceptAction(model: TreeModel, mainPath: string, item: Item): Ch
 }
 
 /** Every action on `item`, in the order they're shown everywhere. */
-export function changeActions(model: TreeModel, mainPath: string, item: Item, opts: { previews?: boolean } = {}): ChangeAction[] {
+export function changeActions(model: TreeModel, mainPath: string, item: Item, opts: { previews?: boolean; lost?: boolean } = {}): ChangeAction[] {
   const ref = (id: string): Ref => ({ path: mainPath, id });
   const r = [ref(item.id)];
   const out: ChangeAction[] = [];
@@ -106,6 +106,14 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
     out.push({ label: item.move ? "Reject move…" : "Reject…", icon: "close", key: "r", command: "stet.reject", args: r, tier: "decide", detail: "With an optional reason, which the agent gets." });
     if (modify && !item.move) out.push({ label: "Edit & accept…", icon: "edit", key: "e", command: "stet.edit", args: r, tier: "decide", detail: "Change the wording, then accept it. The agent sees your version." });
     out.push({ label: "Revise…", icon: "sync", key: "v", command: "stet.revise", args: r, tier: "decide", detail: "Tell the agent what to change; the change stays open until it resubmits." });
+    // Can't be found in your file: accepting can't work, so Reject and Revise come first (test report v0.16.0).
+    if (opts.lost) {
+      const first = (label: string) => out.findIndex((a) => a.label.startsWith(label));
+      const pick = [first("Reject"), first("Revise")].map((k) => out[k]!);
+      for (const a of pick) out.splice(out.indexOf(a), 1);
+      out.unshift(...pick);
+      for (const a of out) if (a.label.startsWith("Accept") || a.label.startsWith("Edit & accept")) a.detail = `Can't work now: the change can't be found in your file. ${a.detail ?? ""}`.trim();
+    }
   }
   out.push({ label: "Comment…", icon: "comment", key: "c", command: "stet.comment", args: r, tier: "talk", detail: "A message about the change; the agent can reply." });
   out.push({ label: "Diff", icon: "diff", key: "d", command: "stet.showDiff", args: r, tier: "view", detail: "Your file with and without this change, side by side; edit the proposed side to change its wording." });

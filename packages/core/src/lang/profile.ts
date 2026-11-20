@@ -31,6 +31,10 @@ export interface LanguageProfile {
   fence: string;
   /** A file of the document itself: new ones are part of the user's tree when Stet snapshots it. */
   document: boolean;
+  /** What a build leaves next to the sources, as .gitignore patterns (`*.aux`), offered at setup. */
+  buildFiles?: string[];
+  /** The output a build makes of a source file (main.tex → main.pdf), offered at setup too. */
+  outputOf?: (source: string) => string | null;
   /** Examples in this language for agents (their instructions, the MCP tools' descriptions). */
   agentTerms?: AgentTerms;
   /** Token-level splitting into sentences and paragraphs (spec §6.2). */

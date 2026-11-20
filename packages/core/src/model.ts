@@ -68,7 +68,7 @@ export function triggerOf(e: { type: EventType; data?: Record<string, unknown> }
     case "stale":
       return "document";
     default:
-      return "comment"; // comment, note_comment, note_resolved
+      return "comment"; // comment, note_comment, note_resolved, note_reopened
   }
 }
 
@@ -270,6 +270,8 @@ export type EventType =
   /** The agent replied to a note. */
   | "note_reply"
   | "note_resolved"
+  /** The reviewer opened a resolved note again. */
+  | "note_reopened"
   /** The reviewer undid a decision: the item is pending again. */
   | "reopened";
 
@@ -295,6 +297,7 @@ export const FEEDBACK_TYPES: readonly EventType[] = [
   "group_partial",
   "note_comment",
   "note_resolved",
+  "note_reopened",
   "reopened",
 ];
 

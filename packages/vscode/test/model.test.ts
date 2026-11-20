@@ -110,7 +110,7 @@ describe("tree model", () => {
     expect(after.children(g2).map((n) => (n.type === "part" ? n.index : -1))).toEqual([1]);
   });
 
-  it("lists an agent's open notes before its rounds, in the Review panel only", () => {
+  it("lists an agent's open notes before its rounds in the Review panel, resolved ones in History", () => {
     const s = snap();
     const note = (id: string, state: "open" | "resolved", agentId = "claude-1") => ({
       id, agent: agentId, file: "main.tex", text: "x", range: { start: 0, end: 1 }, context: { before: "", after: "" },
@@ -120,7 +120,7 @@ describe("tree model", () => {
     const m = new TreeModel(s, "review");
     expect(ids(m.children(m.children()[0]))).toEqual(["N2", "N10", "C1"]);
     const h = new TreeModel(s, "history");
-    expect(ids(h.children(h.children()[0])).filter((x) => x.startsWith("N"))).toEqual([]);
+    expect(ids(h.children(h.children()[0])).filter((x) => x.startsWith("N"))).toEqual(["N1"]);
   });
 
   it("hides atomic groups (their members are merged)", () => {
@@ -316,7 +316,7 @@ describe("test report 2026-11-20: confirmations and screen readers", () => {
     expect(bulkQuestion("Accept", s(4, false, true))).toBeNull(); // a linked group goes together anyway
     expect(bulkQuestion("Reject", s(1, true, false))).toBeNull();
     expect(dissolveQuestion({ id: "G2", kind: "linked", title: "Rename" })).toMatch(/can't be undone/);
-    expect(dissolveQuestion({ id: "G3", kind: "related", title: "Wording" })).toBeNull();
+    expect(dissolveQuestion({ id: "G3", kind: "related", title: "Wording" })).toMatch(/^Dissolve group G3 “Wording”\?.*can't be undone/);
   });
 
   it("reads a change out in words", () => {

@@ -280,6 +280,8 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
       return d.was === "stale"
         ? `${label("PENDING AGAIN", "info")} ${it}: it was stale because of an accept the reviewer has undone. Nothing to do.`
         : `${label("REOPENED", "info")} ${it}: the reviewer undid ${d.was === "accepted" ? "accepting" : "rejecting"} it; it is pending again${d.was === "accepted" ? " and no longer part of the document" : ""}. Nothing to do.`;
+    case "note_reopened":
+      return `${label("NOTE REOPENED", "info")} ${d.note} (${d.file}): the reviewer opened it again; it still needs your attention.`;
     case "note_resolved":
       return `${label("NOTE RESOLVED", "good")} ${d.note} (${d.file}): the reviewer closed it.`;
     case "group_partial": {

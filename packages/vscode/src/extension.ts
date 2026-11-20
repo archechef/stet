@@ -4,12 +4,13 @@ import { inPreviewCache, PreviewPanel, previewNotice, previewPlace } from "./pre
 import { REVIEW_SCHEME, ReviewFiles, type ReviewHost } from "./review.js";
 import { EDIT_SCHEME, EditFiles } from "./edits.js";
 import { closeSync, openSync, readSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { doctor, documentProfile, foldPath, gitIdentity, profileByName, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
+import { buildIgnores, doctor, documentProfile, foldPath, gitIdentity, matchesAny, profileByName, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
 import { acceptAction, acceptQuestion, changeActions, withIcon, type ChangeAction } from "./actions.js";
-import { esc, inlineProblems, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
-import { Threads } from "./comments.js";
+import { esc, inlineProblems, itemMarkdown, usesHints, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
+import { inProject, Threads } from "./comments.js";
 import {
   AGENT_ID,
   fence,
@@ -18,9 +19,14 @@ import {
   actionsTitle,
   archiveChoices,
   behindAgents,
+  threadText,
+  unreadReplies,
   bulkQuestion,
+  manyQuestion,
   changeAt,
+  changesAt,
   dissolveQuestion,
+  documentOrder,
   editedPart,
   finishQuestion,
   fromPanel,
@@ -104,7 +110,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   readonly onDidChange = this.changed.event;
   private readonly treeChanged = new vscode.EventEmitter<El | undefined>();
   readonly onDidChangeTreeData = this.treeChanged.event;
-  private lines = new Map<string, number>();
+  private lines = new Map<string, { line: number; found: boolean }>();
   private readonly tree: vscode.TreeView<El>;
   /** Decided changes, by round (the Review panel shows only open ones). */
   private readonly history: vscode.TreeView<El>;
@@ -129,6 +135,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   private disposables: vscode.Disposable[] = [];
 
   constructor(private ctx: vscode.ExtensionContext) {
+    this.seen = { ...(ctx.workspaceState.get<Record<string, number>>(StetExtension.SEEN) ?? {}) };
     this.locator = new Locator(this);
     const host: ReviewHost = {
       project: (key) => this.projects.get(key),
@@ -148,7 +155,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       (p) => this.installExtras(p),
       (p, files) => void this.offerExtras(p, files),
     );
-    this.tree = vscode.window.createTreeView("stet.review", { treeDataProvider: this, showCollapseAll: true });
+    // Several changes can be selected (Ctrl/Shift+click) and accepted or rejected together.
+    this.tree = vscode.window.createTreeView("stet.review", { treeDataProvider: this, showCollapseAll: true, canSelectMany: true });
     this.history = vscode.window.createTreeView("stet.history", {
       showCollapseAll: true,
       treeDataProvider: {
@@ -194,7 +202,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }),
       vscode.window.onDidChangeActiveTextEditor((ed) => {
         if (ed) void this.checkInline(ed.document);
+        if (ed) void this.offerContrastStyle(ed.document.uri);
         void this.updateFileContext();
+      }),
+      vscode.window.onDidChangeActiveColorTheme(() => {
+        const uri = vscode.window.activeTextEditor?.document.uri;
+        if (uri) void this.offerContrastStyle(uri);
       }),
       // Which the user chose last, a change in the panel or a place in a file: commands from the
       // palette act on that one (test report 2026-11-20, B8).
@@ -341,7 +354,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       "vscode.diff",
       this.diffLeft(p, file),
       ReviewFiles.uriFor(p, file),
-      `${file}: yours ↔ ${live} proposed change${live === 1 ? "" : "s"} (editable)`,
+      `${file}${inProject(p)}: yours ↔ ${live} proposed change${live === 1 ? "" : "s"} (editable)`,
       { preview: false, viewColumn: this.columnFor(ReviewFiles.uriFor(p, file)) },
     );
   }
@@ -469,7 +482,50 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     });
   }
 
+  // --- Replies you haven't seen (test report v0.16.0) -----------------------
+
+  /** How many entries of each thread you have seen, by `project|id`; `project|*` marks a project counted from. */
+  private seen: Record<string, number> = {};
+  private static readonly SEEN = "stet.seenThreads";
+
+  private seenKey = (p: Project, id: string) => `${p.mainPath}|${id}`;
+
+  /** Agent replies on a change or note you haven't seen. */
+  unread(p: Project, x: { id: string; thread: readonly { author: string }[] }): number {
+    return unreadReplies(x.thread, this.seen[this.seenKey(p, x.id)] ?? 0);
+  }
+
+  /** Unread replies on the changes and notes of `p` that match `pred`. */
+  private unreadOf(p: Project, pred: (x: { agent: string }) => boolean): number {
+    const s = p.snapshot;
+    return [...s.items.filter((i) => isLive(i) || i.thread.length), ...s.notes].filter(pred).reduce((n, x) => n + this.unread(p, x), 0);
+  }
+
+  /** You saw the thread of a change or note (went to it, replied). */
+  markRead(p: Project, x: { id: string; thread: readonly unknown[] }): void {
+    const k = this.seenKey(p, x.id);
+    if ((this.seen[k] ?? 0) >= x.thread.length) return;
+    this.seen[k] = x.thread.length;
+    void this.ctx.workspaceState.update(StetExtension.SEEN, this.seen);
+    void this.onProjectChanged();
+  }
+
+  /** The first time a project is seen here, its replies so far count as read: no flood of old ones. */
+  private baselineSeen(): void {
+    let changed = false;
+    for (const p of this.projects.values()) {
+      const mark = this.seenKey(p, "*");
+      if (this.seen[mark]) continue;
+      for (const x of [...p.snapshot.items, ...p.snapshot.notes]) if (x.thread.length) this.seen[this.seenKey(p, x.id)] = x.thread.length;
+      if (!p.snapshot.items.length && !p.snapshot.notes.length && !p.snapshot.agents.length) continue; // not loaded yet
+      this.seen[mark] = 1;
+      changed = true;
+    }
+    if (changed) void this.ctx.workspaceState.update(StetExtension.SEEN, this.seen);
+  }
+
   private async onProjectChanged(): Promise<void> {
+    this.baselineSeen();
     this.models.clear();
     this.lines.clear();
     this.lineBatches.clear();
@@ -497,12 +553,20 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     this.changed.fire();
     this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
     if (all.length) {
+      const fresh = all.reduce((n, p) => n + this.unreadOf(p, () => true), 0);
       this.status.text =
-        `$(checklist) ${pending}` + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "") + (unshared.length ? " $(cloud-upload)" : "") + (missing.length ? " $(warning)" : "");
+        `$(checklist) ${pending}` + (fresh ? ` $(comment-unresolved) ${fresh}` : "") + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "") + (unshared.length ? " $(cloud-upload)" : "") + (missing.length ? " $(warning)" : "");
       const tip = [`Stet: ${pending} change${pending === 1 ? "" : "s"} to review`];
+      if (fresh) tip.push(`${fresh} new repl${fresh === 1 ? "y" : "ies"} from agents (marked in the panel; read when you go to the change or note)`);
+      if (all.length > 1) {
+        for (const p of all) {
+          const n = p.snapshot.items.filter((i) => i.status === "pending").length;
+          tip.push(`  ${p.name}: ${n} to review${p.snapshot.uncommitted.length ? `, ${p.snapshot.uncommitted.length} to commit` : ""}`);
+        }
+      }
       if (uncommitted) tip.push(`${uncommitted} accepted, not committed yet (Finish review)`);
       if (unshared.length) tip.push(`Agents don't see your latest saved edits${all.length > 1 ? ` in ${unshared.join(", ")}` : ""} (Share my edits)`);
-      if (sync.length) tip.push(`Behind your latest text: ${sync.join(", ")}. Agents catch up when they next call stet_sync.`);
+      if (sync.length) tip.push(`Behind your latest text: ${sync.join(", ")}. Agents catch up the next time they sync with your text.`);
       for (const m of missing) tip.push(`Agents don't get accepted ${m.id}: ${m.reason}. Finish the review or share your edits.`);
       this.status.tooltip = tip.join("\n");
       // Read out as words, not as "3 2" (test report 2026-11-20, accessibility).
@@ -630,7 +694,18 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     // From a round or group row too: the change after (or before) it, not the panel's first or last (test report v0.16.0, B4).
     const i = nextItemIndex(rows.map((e) => e.node?.type === "item"), cur ? rows.findIndex((e) => elId(e) === elId(cur)) : -1, dir);
     if (i < 0) return;
-    const next = rows[i]!;
+    let next = rows[i]!;
+    // Or by file and line, if you'd rather go through the document (stet.navigationOrder).
+    if (vscode.workspace.getConfiguration("stet").get<string>("navigationOrder", "panel") === "document" && cur?.node?.type === "item") {
+      const items = rows.filter((e) => e.node?.type === "item");
+      const placed = await Promise.all(items.map(async (e) => {
+        const it = (e.node as { item: Item }).item;
+        return { el: e, project: e.project.mainPath, file: it.file, line: await this.lineOf(e.project, it), id: it.id };
+      }));
+      const order = documentOrder(placed);
+      const k = order.findIndex((x) => elId(x.el) === elId(cur));
+      if (k >= 0) next = order[Math.min(order.length - 1, Math.max(0, k + dir))]!.el;
+    }
     await this.tree.reveal(next, { select: true, focus: true });
     await this.showItem(next, true);
   }
@@ -663,6 +738,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const t = new vscode.TreeItem(el.project.name, E);
       t.iconPath = new vscode.ThemeIcon("repo");
       t.tooltip = el.project.mainPath;
+      // Each project's own counts: the status bar adds them up (test report v0.16.0).
+      const model = this.model(el.project, mode);
+      const done = el.project.snapshot.uncommitted.length;
+      t.description = mode === "history" ? model.outcome(() => true) : [model.openText(() => true), ...(done ? [`${done} to commit`] : [])].join(" · ");
       return t;
     }
     const n = el.node;
@@ -671,18 +750,23 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const snap = el.project.snapshot;
     switch (n.type) {
       case "agent": {
-        const t = new vscode.TreeItem(fitLabel(n.agent.id, 28), E);
-        const parts = [history ? model.outcome((i) => i.agent === n.agent.id) : model.openText((i) => i.agent === n.agent.id)];
+        // An agent that hasn't proposed anything yet says what to do, not "0 pending" (test report v0.16.0).
+        const fresh = !history && n.agent.state === "active" && !snap.changesets.some((c) => c.agent === n.agent.id);
+        const t = new vscode.TreeItem(fitLabel(n.agent.id, 28), fresh && !model.children(n).length ? vscode.TreeItemCollapsibleState.None : E);
+        const parts = [history ? model.outcome((i) => i.agent === n.agent.id) : fresh ? "no proposals yet" : model.openText((i) => i.agent === n.agent.id)];
         const behind = behindAgents(snap).includes(n.agent.id);
         if (behind) parts.push("behind your text");
         if (n.agent.state === "archived") parts.push("archived");
+        const replies = this.unreadOf(el.project, (x) => x.agent === n.agent.id);
+        if (replies && !history) parts.push(`${replies} new repl${replies === 1 ? "y" : "ies"}`);
         const notify = notifyMode(n.agent);
         if (n.agent.state === "active" && notify === "off") parts.push("not notified");
         t.description = parts.join(" · ");
         t.iconPath = new vscode.ThemeIcon(n.agent.kind === "codex" ? "terminal" : "hubot");
         t.tooltip = new vscode.MarkdownString(
           `**${esc(n.agent.id)}** (${n.agent.kind})\n\nWorkspace: ${esc(n.agent.worktree)}` +
-            (behind ? "\n\nThe agent works on an older version of your text; it catches up when it calls `stet_sync`." : "") +
+            (fresh ? `\n\nOpen this folder in ${n.agent.kind === "codex" ? "Codex" : n.agent.kind === "claude-code" ? "the Claude desktop app (Code tab) or Claude Code" : "your agent"} and give it a task: its proposals appear here. *Open agent workspace…* (the folder button on the row) copies the path.` : "") +
+            (behind ? "\n\nThe agent works on an older version of your text; it catches up the next time it syncs with your text." : "") +
             (n.agent.state === "active"
               ? `\n\nNotifications: ${NOTIFY_PICKS.find((x) => x.mode === notify)!.label}` +
                 (notifyTriggers(n.agent).length < NOTIFY_TRIGGERS.length
@@ -697,14 +781,16 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       case "note": {
         const nt = n.note;
         const t = new vscode.TreeItem(`${nt.id}  ${oneLine(nt.body, 50)}`, vscode.TreeItemCollapsibleState.None);
-        const replies = nt.thread.length ? ` · ${nt.thread.length} repl${nt.thread.length === 1 ? "y" : "ies"}` : "";
+        const fresh = this.unread(el.project, nt);
+        const replies = nt.thread.length ? ` · ${nt.thread.length} repl${nt.thread.length === 1 ? "y" : "ies"}${fresh ? ` (${fresh} new)` : ""}` : "";
         t.description = `${nt.file}${nt.deliveredAt ? "" : " · not delivered yet"}${replies}`;
-        t.iconPath = new vscode.ThemeIcon("note");
+        t.iconPath = fresh ? new vscode.ThemeIcon("comment-unresolved", new vscode.ThemeColor("notificationsInfoIcon.foreground")) : new vscode.ThemeIcon("note");
         t.tooltip = new vscode.MarkdownString(
           `**${nt.id}** note for ${esc(nt.agent)} on ${esc(nt.file)}${nt.deliveredAt ? "" : " (the agent receives it at its next sync)"}\n\n${esc(nt.body)}\n\n${fence(nt.text, profileByName(nt.file).fence)}` +
             nt.thread.slice(-3).map((r) => `\n\n> **${r.author === "user" ? "You" : esc(nt.agent)}:** ${esc(r.text)}`).join(""),
         );
-        t.contextValue = "note.open";
+        t.contextValue = nt.state === "resolved" ? "note.resolved" : "note.open";
+        if (nt.state === "resolved") t.description = `${t.description} · resolved`;
         t.command = { command: "stet.showNote", title: "Go to note", arguments: [el] };
         return t;
       }
@@ -759,11 +845,17 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       case "item": {
         const it = n.item;
         const t = new vscode.TreeItem(itemLabel(it, model.get), vscode.TreeItemCollapsibleState.None);
-        const line = await this.lineOf(el.project, it);
-        t.description = `${it.file}${it.kind === "modify" ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}${it.thread.length ? ` · 💬 ${it.thread.length}` : ""}`;
-        t.iconPath = itemIcon(it);
-        t.accessibilityInformation = { label: itemSpoken(it, line) };
-        const md = new vscode.MarkdownString(itemMarkdown(it, model));
+        const { line, found } = await this.placeOf(el.project, it);
+        // Can't be found in your file any more: said on the row, with what to do (test report v0.16.0).
+        const lost = !found && !history;
+        t.description = `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, this.unread(el.project, it))}` : ""}`;
+        t.iconPath = lost
+          ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
+          : this.unread(el.project, it)
+            ? new vscode.ThemeIcon("comment-unresolved", new vscode.ThemeColor("notificationsInfoIcon.foreground"))
+            : itemIcon(it);
+        t.accessibilityInformation = { label: itemSpoken(it, lost ? undefined : line, this.unread(el.project, it)) + (lost ? `, ${LOST_TEXT}` : "") };
+        const md = new vscode.MarkdownString((lost ? `⚠ **${LOST_TEXT}.** ${LOST_NEXT}\n\n` : "") + itemMarkdown(it, model));
         t.tooltip = md;
         // Undoable: a rejection, or an accept not committed yet.
         const undo = it.status === "rejected" || (it.status === "accepted" && !!it.resolution && !it.resolution.committed);
@@ -778,33 +870,43 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   }
 
   private async lineOf(p: Project, it: Item): Promise<number> {
+    return (await this.placeOf(p, it)).line;
+  }
+
+  /**
+   * Where a change is in your file (the editor's text if open, else the file on disk), and
+   * whether it is there at all: you may have edited the words around it since (test report v0.16.0).
+   */
+  private async placeOf(p: Project, it: Item): Promise<{ line: number; found: boolean }> {
     const key = `${p.mainPath}|${it.id}`;
     const hit = this.lines.get(key);
     if (hit !== undefined) return hit;
     const doc = vscode.workspace.textDocuments.find((d) => p.relPath(d.uri) === it.file);
-    let line: number | undefined;
-    if (doc) {
+    let place: { line: number; found: boolean } | undefined;
+    if (doc && isLive(it)) {
       const l = (await this.locator.locate(doc)).find((x) => x.item.id === it.id);
-      if (l) line = l.range.start.line + 1;
+      if (l) place = { line: l.range.start.line + 1, found: true };
     }
-    line ??= (await this.workingLines(p)).get(it.id) ?? (await p.stet.locateInWorkingCopy(it).catch(() => ({ line: 1 }))).line;
-    this.lines.set(key, line);
-    return line;
+    if (!place) {
+      const w = (await this.workingLines(p)).get(it.id) ?? (await p.stet.locateInWorkingCopy(it).catch(() => ({ line: 1, span: null })));
+      place = { line: w.line, found: it.kind !== "modify" || !isLive(it) || (!doc && w.span !== null) };
+    }
+    this.lines.set(key, place);
+    return place;
   }
 
   /**
    * Lines of all open changes of a project in its files on disk, found in one go after each
    * refresh: row by row, a panel of 424 changes took 6.5 s to redraw (test report v0.16.0, B2).
    */
-  private lineBatches = new Map<string, Promise<Map<string, number>>>();
-  private workingLines(p: Project): Promise<Map<string, number>> {
+  private lineBatches = new Map<string, Promise<Map<string, { line: number; span: unknown }>>>();
+  private workingLines(p: Project): Promise<Map<string, { line: number; span: unknown }>> {
     let b = this.lineBatches.get(p.mainPath);
     if (!b) {
       const live = p.snapshot.items.filter((i) => isLive(i) && i.kind === "modify");
       b = p.stet
-        .locateMany(live)
-        .then((m) => new Map([...m].map(([id, l]) => [id, l.line])))
-        .catch(() => new Map<string, number>());
+        .locateMany(live, undefined, p.snapshot.items)
+        .catch(() => new Map<string, { line: number; span: unknown }>());
       this.lineBatches.set(p.mainPath, b);
     }
     return b;
@@ -863,7 +965,16 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const ed = vscode.window.activeTextEditor;
     const p = ed && this.projectFor(ed.document.uri);
     if (!ed || !p) return undefined;
-    const hit = changeAt(await this.locator.locate(ed.document), ed.selection.active);
+    const located = await this.locator.locate(ed.document);
+    const several = changesAt(located, ed.selection.active);
+    if (several.length) {
+      const pick = await vscode.window.showQuickPick(
+        several.map((l) => ({ label: itemLabel(l.item, this.model(p).get), description: l.item.agent, detail: `${l.item.id}: “${oneLine(l.item.oldText, 50)}” → “${oneLine(l.item.newText, 50)}”`, item: l.item })),
+        { title: "The cursor is in several proposed changes: which one?" },
+      );
+      return pick && { project: p, node: { type: "item", item: pick.item, parent: "" } };
+    }
+    const hit = changeAt(located, ed.selection.active);
     return hit && { project: p, node: { type: "item", item: hit.item, parent: "" } };
   }
 
@@ -936,6 +1047,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   }
 
   private showUndo(): void {
+    // The panel's title has Undo while there is something to undo: mouse users had only the
+    // status-bar button for 15 seconds (test report v0.16.0).
+    void vscode.commands.executeCommand("setContext", "stet.canUndo", this.decisions.length > 0);
     const d = this.decisions.at(-1);
     if (!d) return void this.undoButton.hide();
     const label = `Undo the ${d.what} of ${d.ids.length > 3 ? `${d.ids.length} changes` : d.ids.join(", ")}`;
@@ -951,6 +1065,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** Finish review committed `p`'s accepts: they can't be undone here any more. */
   private forgetAccepts(p: Project): void {
     this.decisions = this.decisions.filter((d) => !(d.project === p && d.what === "accept"));
+    this.showUndo();
     this.undoButton.hide();
   }
 
@@ -960,6 +1075,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
    */
   async undoLast(): Promise<void> {
     const d = this.decisions.pop();
+    void vscode.commands.executeCommand("setContext", "stet.canUndo", this.decisions.length > 0);
     this.undoButton.hide();
     if (!d) return void vscode.window.showInformationMessage("Nothing more to undo: every decision made in this window is undone, committed, or older than this session.");
     const state: Record<Decision, string> = { accept: "accepted", rejection: "rejected", "revision request": "needs_revision" };
@@ -981,6 +1097,26 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     });
     if (undone.length) announce(`$(discard) Undid the ${d.what} of ${[...new Set(undone)].join(", ")}`, 5000);
     else announce(`$(info) The ${d.what} of ${d.ids.join(", ")} was already undone or decided again`, 5000);
+  }
+
+  /**
+   * In a High Contrast theme, proposed text drawn as an inlay hint (the wrapping style) has no
+   * border and no colour, and screen readers skip it: offer once to use the highlighted style,
+   * which has the border (test report v0.16.0, accessibility).
+   */
+  private async offerContrastStyle(uri: vscode.Uri): Promise<void> {
+    const memo = "stet.askedContrastStyle";
+    const kind = vscode.window.activeColorTheme.kind;
+    const contrast = kind === vscode.ColorThemeKind.HighContrast || kind === vscode.ColorThemeKind.HighContrastLight;
+    if (!contrast || !this.projectFor(uri) || !usesHints(uri) || this.ctx.globalState.get<boolean>(memo)) return;
+    await this.ctx.globalState.update(memo, true);
+    const use = "Use the highlighted style";
+    const pick = await vscode.window.showInformationMessage(
+      "In High Contrast themes, proposed text that wraps with the line has no border or colour of its own, and screen readers don't read it. Use the highlighted style instead, which has a border? (It doesn't wrap with the line.)",
+      use,
+      "Keep wrapping",
+    );
+    if (pick === use) await this.setOption("newTextStyle", "highlighted");
   }
 
   /** Whether the user last picked a change in the panel or moved in a file (see `target`). */
@@ -1044,7 +1180,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   // -------------------------------------------------------------------------
   // Review commands
 
-  async accept(arg: unknown): Promise<void> {
+  async accept(arg: unknown, all?: unknown): Promise<void> {
+    const many = this.selectedMany(arg, all);
+    if (many) return this.acceptMany(many.project, many.items, fromPanel(arg));
     const t = await this.targetItem(arg);
     if (!t) return;
     const { project: p, item } = t;
@@ -1063,6 +1201,65 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return pick?.c;
   }
 
+  /**
+   * The pending changes selected in the panel, when there are several: a menu or button of a row
+   * passes the selection as its second argument, a key in the panel uses the panel's selection.
+   * Undefined for one change, so the usual one-change path runs.
+   */
+  private selectedMany(arg: unknown, all: unknown): { project: Project; items: Item[] } | undefined {
+    const els: El[] = Array.isArray(all) ? (all as El[]) : arg === "panel" ? [...this.tree.selection] : [];
+    const items = els.filter((e) => e?.node?.type === "item" && isLive((e.node as { item: Item }).item));
+    if (items.length < 2) return undefined;
+    const project = items[0]!.project;
+    if (items.some((e) => e.project !== project)) {
+      void vscode.window.showInformationMessage("Select changes of one project at a time.");
+      return { project, items: [] };
+    }
+    return { project, items: items.map((e) => this.model(project).item((e.node as { item: Item }).item.id)).filter((i): i is Item => !!i && isLive(i)) };
+  }
+
+  /** Accept several selected changes; asks whether to take along what they are linked with. */
+  private async acceptMany(p: Project, items: Item[], panel: boolean): Promise<void> {
+    if (!items.length) return;
+    const ids = [...new Set(items.flatMap((i) => this.model(p).withMove(i)))];
+    const rest = this.model(p).linkedRest(ids);
+    let take = ids;
+    let overrideLinked = false;
+    if (rest.length) {
+      const q = manyQuestion("Accept", ids.length, rest.map((r) => r.id));
+      const pick = await vscode.window.showQuickPick(q.choices, { title: q.title });
+      if (!pick) return;
+      if (pick.withRest) take = [...ids, ...rest.map((r) => r.id)];
+      else overrideLinked = true;
+    }
+    await this.decide(p, ids[0]!, panel, () => this.doAccept(p, take, { overrideLinked }));
+  }
+
+  /** Reject several selected changes with one reason; asks about what they are linked with. */
+  private async rejectMany(p: Project, items: Item[], panel: boolean): Promise<void> {
+    if (!items.length) return;
+    const ids = [...new Set(items.flatMap((i) => this.model(p).withMove(i)))];
+    const rest = this.model(p).linkedRest(ids);
+    let mode: "all" | "only" | undefined;
+    if (rest.length) {
+      const q = manyQuestion("Reject", ids.length, rest.map((r) => r.id));
+      const pick = await vscode.window.showQuickPick(q.choices, { title: q.title });
+      if (!pick) return;
+      mode = pick.withRest ? "all" : "only";
+    }
+    const reason = await this.reason(`Reject ${ids.length} changes`);
+    if (reason === undefined) return;
+    await this.decide(p, ids[0]!, panel, () =>
+      this.run(p, async () => {
+        const r = await p.stet.reject(ids, { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
+        const warnings = await p.stet.partlyDecided(r);
+        this.noteDecision(p, r.map((i) => i.id), "rejection");
+        if (warnings.length) void vscode.window.showWarningMessage([`Rejected ${r.map((i) => i.id).join(", ")}.`, ...warnings].join(" "));
+        else announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}`, 4000);
+      }),
+    );
+  }
+
   /** Accept only this change of a linked group (breaks it; the agent is asked to repair it). */
   async acceptOnly(arg: unknown): Promise<void> {
     const t = await this.targetItem(arg);
@@ -1078,7 +1275,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     const { project: p, item } = t;
-    const actions = changeActions(this.model(p), p.mainPath, item, { previews: previewPlace() !== "off" });
+    const actions = changeActions(this.model(p), p.mainPath, item, { previews: previewPlace() !== "off", lost: !(await this.placeOf(p, item)).found });
     type Pick = vscode.QuickPickItem & { action?: (typeof actions)[number] };
     const items: Pick[] = [];
     actions.forEach((a, i) => {
@@ -1146,7 +1343,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (n.type === "changeset") {
       const cs = n.changeset;
       const ids = p.snapshot.items.filter((i) => i.changeset === cs.id && isLive(i)).map((i) => i.id);
-      return ids.length ? { project: p, ids, what: `${cs.id} “${cs.title}”`, changeset: true, linked: false } : void vscode.window.showInformationMessage(`Nothing pending in ${cs.id}.`);
+      return ids.length ? { project: p, ids, what: `round ${roundOf(cs.id)} “${cs.title}”`, changeset: true, linked: false } : void vscode.window.showInformationMessage(`Nothing pending in round ${roundOf(cs.id)}.`);
     }
     return undefined;
   }
@@ -1165,7 +1362,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return vscode.window.showInputBox({ title: prompt, prompt: "Optional, but it helps the agent: why? (Enter to skip)", placeHolder: "e.g. keep the original formula" });
   }
 
-  async reject(arg: unknown): Promise<void> {
+  async reject(arg: unknown, all?: unknown): Promise<void> {
+    const many = this.selectedMany(arg, all);
+    if (many) return this.rejectMany(many.project, many.items, fromPanel(arg));
     const t = await this.targetItem(arg);
     if (!t) return;
     const { project: p, item } = t;
@@ -1406,6 +1605,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return undefined;
   }
 
+  async reopenNote(arg: unknown): Promise<void> {
+    const t = this.noteTarget(arg);
+    if (!t) return;
+    const ok = await this.run(t.project, async () => (await t.project.stet.reopenNote(t.note.id), true));
+    if (ok) announce(`$(note) Note ${t.note.id} is open again; the agent is told.`);
+  }
+
   async resolveNote(arg: unknown): Promise<void> {
     const t = this.noteTarget(arg);
     if (!t) return;
@@ -1416,7 +1622,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** Reply in a note's thread (from the editor). */
   async replyNote(p: Project, note: Note, text: string): Promise<void> {
     const ok = await this.run(p, async () => (await p.stet.replyNote(note.id, text, "user"), true));
-    if (ok) announce(`$(comment) Reply on note ${note.id} sent.`);
+    if (ok) {
+      this.markRead(p, note);
+      announce(`$(comment) Reply on note ${note.id} sent.`);
+    }
   }
 
   /** Create a note from a comment thread the user started on a line without a proposed change. */
@@ -1435,6 +1644,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   async showNote(arg: unknown): Promise<void> {
     const t = this.noteTarget(arg);
     if (!t) return;
+    this.markRead(t.project, t.note);
     const doc = await vscode.workspace.openTextDocument(t.project.fileUri(t.note.file));
     const text = toLf(doc.getText());
     const span = t.project.stet.locateNoteInText(t.note, text);
@@ -1469,7 +1679,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     }
     if (!threads.isOwn(reply.thread)) reply.thread.dispose();
     const ok = await this.run(hit.project, async () => (await hit.project.stet.comment(hit.item.id, reply.text, "user"), true));
-    if (ok) announce(`$(comment) Reply on ${hit.item.id} sent.`);
+    if (ok) {
+      this.markRead(hit.project, hit.item);
+      announce(`$(comment) Reply on ${hit.item.id} sent.`);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1479,6 +1692,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     const { project: p, item } = t;
+    this.markRead(p, item);
     if (item.kind !== "modify") return this.showDiff({ project: p, node: { type: "item", item, parent: "" } } satisfies El);
     const uri = p.fileUri(item.file);
     if (!(await pathExists(uri.fsPath))) return void vscode.window.showWarningMessage(`${item.file} does not exist in your project.`);
@@ -1525,13 +1739,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const rest = this.model(p).linkedRest([item.id]).filter((r) => r.file === item.file && r.kind === "modify");
       const ids = [item.id, ...rest.map((r) => r.id)];
       const others = this.model(p).linkedRest([item.id]).length - rest.length;
-      const title = `${ids.join(" + ")} ${item.file}: yours ↔ proposed${others ? ` (${others} linked in other files)` : ""} (editable)`;
+      const title = `${ids.join(" + ")} ${item.file}${inProject(p)}: yours ↔ proposed${others ? ` (${others} linked in other files)` : ""} (editable)`;
       const right = ReviewFiles.uriFor(p, item.file, ids);
       return void (await vscode.commands.executeCommand("vscode.diff", this.diffLeft(p, item.file), right, title, { preview: true, viewColumn: this.columnFor(right) }));
     }
     const key = encodeURIComponent(p.mainPath);
     const mk = (side: string) => vscode.Uri.from({ scheme: "stet-diff", path: `/${item.file}`, query: `p=${key}&id=${item.id}&side=${side}` });
-    await vscode.commands.executeCommand("vscode.diff", mk("before"), mk("after"), `${item.id} ${item.file} (current ↔ proposed)`, { preview: true, viewColumn: this.columnFor(mk("after")) });
+    await vscode.commands.executeCommand("vscode.diff", mk("before"), mk("after"), `${item.id} ${item.file}${inProject(p)} (current ↔ proposed)`, { preview: true, viewColumn: this.columnFor(mk("after")) });
   }
 
   /**
@@ -1618,26 +1832,38 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         identity = await this.askIdentity();
         if (!identity) return;
       }
-      if ((await repo.tryRun(["rev-parse", "--is-inside-work-tree"])) !== "true") {
-        const ok = await vscode.window.showWarningMessage(
-          `${folder.name} is not a git repository.`,
-          { modal: true, detail: "Stet uses git to keep the agents' proposals apart from your files. Create a repository here and commit the current files as a starting point?" },
-          "Create repository",
+      const files = (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*"), "**/{.git,node_modules}/**", 5000)).map((u) => vscode.workspace.asRelativePath(u, false));
+      // A folder without any document file is likely the wrong one (test report v0.16.0).
+      const doc = documentProfile();
+      if (doc.defaultFiles && !files.some((f) => matchesAny(f, doc.defaultFiles!))) {
+        const go = await vscode.window.showWarningMessage(
+          `${folder.name} has no ${doc.name} files.`,
+          { modal: true, detail: `Stet reviews changes to a ${doc.name} project. Set it up for this folder anyway?` },
+          "Set up anyway",
         );
-        if (ok !== "Create repository") return;
-        await repo.run(["init"]);
+        if (go !== "Set up anyway") return;
       }
-      if (identity) {
-        await repo.run(["config", "user.name", identity.name]);
-        await repo.run(["config", "user.email", identity.email]);
-      }
-      if (!(await repo.revParse("HEAD"))) {
+      const isRepo = (await repo.tryRun(["rev-parse", "--is-inside-work-tree"])) === "true";
+      if (!isRepo || !(await repo.revParse("HEAD"))) {
+        // One question for a new repository and its first commit (it was two in a row), with the
+        // build files left out if you like: they went into that commit (test report v0.16.0).
+        const ignores = files.includes(".gitignore") ? [] : buildIgnores(files);
+        const commit = "Commit files";
+        const ignoring = "Commit, ignoring build files";
         const ok = await vscode.window.showWarningMessage(
-          "The repository has no commits yet.",
-          { modal: true, detail: "Stet reviews changes against your last commit. Commit the current files now?" },
-          "Commit files",
+          isRepo ? "The repository has no commits yet." : `${folder.name} is not a git repository yet.`,
+          {
+            modal: true,
+            detail:
+              (isRepo ? "Stet reviews changes against your last commit. Commit the current files now?" : "Stet uses git to keep the agents' proposals apart from your files. Create a repository here and commit the current files as a starting point?") +
+              (ignores.length ? `\n\n“${ignoring}” first writes a .gitignore for what LaTeX builds (${ignores.slice(0, 4).join(", ")}${ignores.length > 4 ? ", …" : ""}), so it isn't committed.` : ""),
+          },
+          ...(ignores.length ? [ignoring, commit] : [commit]),
         );
-        if (ok !== "Commit files") return;
+        if (!ok) return;
+        if (!isRepo) await repo.run(["init"]);
+        if (identity) await this.setIdentity(repo, identity);
+        if (ok === ignoring) await writeFile(join(dir, ".gitignore"), `# Built by LaTeX (written by Stet's setup)\n${ignores.join("\n")}\n`, { flag: "wx" });
         await repo.run(["add", "-A"]);
         try {
           await repo.run(["commit", "-m", "Initial commit"]);
@@ -1645,7 +1871,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
           await repo.tryRun(["reset", "-q"]); // nothing left staged
           throw e;
         }
-      }
+      } else if (identity) await this.setIdentity(repo, identity);
       const loc = await Stet.locate(dir);
       const storeRoot = join(loc.commonDir, "stet");
       let keepCli = false;
@@ -1660,17 +1886,28 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const script = await installCli(this.ctx.asAbsolutePath("dist/stet.mjs"), storeRoot);
         opts.cli = await cliCommand(vscode.workspace.getConfiguration("stet").get<RuntimeMode>("runtime", "auto"), script);
       }
+      const already = await Stet.open(dir, loc).then(() => true, () => false);
       const stet = await Stet.init(dir, opts);
       await this.discover();
-      const cfg = await stet.config();
+      // Agents start from the last commit: edits not committed yet are not theirs to see (as `stet init` says).
+      const dirty = !!(await stet.repo.tryRun(["status", "--porcelain", "--untracked-files=no"]));
+      const edits = dirty ? " You have uncommitted edits: agents start from your last commit, so commit them first, or use Share my edits." : "";
+      const hasAgents = (await stet.listAgents()).some((a) => a.state === "active");
+      // A second run refreshes the setup; it says so, instead of the first-time message (test report v0.16.0).
+      if (already) return void vscode.window.showInformationMessage(`Stet was already set up for ${folder.name}; its setup is refreshed.${edits}`);
       const next = await vscode.window.showInformationMessage(
-        `Stet is set up for ${folder.name} (main branch '${cfg.mainBranch}'). Next, create a workspace for an AI agent.`,
-        "New agent workspace",
+        `Stet is set up for ${folder.name}.${edits} Next, create a workspace for an AI agent.`,
+        ...(hasAgents ? [] : ["New agent workspace"]),
       );
       if (next) await this.newAgent();
     } catch (e: any) {
       void vscode.window.showErrorMessage(`Stet setup failed: ${e?.message ?? e}`);
     }
+  }
+
+  private async setIdentity(repo: Repo, id: { name: string; email: string }): Promise<void> {
+    await repo.run(["config", "user.name", id.name]);
+    await repo.run(["config", "user.email", id.email]);
   }
 
   /** Name and email for git's commits in this repository, asked when git has none; null if cancelled. */
@@ -1739,7 +1976,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const all = this.allProjects().flatMap((project) => project.snapshot.agents.filter((a) => a.state === "active").map((agent) => ({ project, agent })));
     if (!all.length) return void vscode.window.showInformationMessage("No agent workspaces yet.", "New agent workspace").then((c) => c && this.newAgent());
     const pick = await vscode.window.showQuickPick(
-      all.map((x) => ({ label: x.agent.id, description: x.agent.kind, detail: x.agent.worktree, x })),
+      // With several projects, the same agent name can be in both: say whose (test report v0.16.0).
+      all.map((x) => ({ label: x.agent.id, description: this.allProjects().length > 1 ? `${x.project.name} · ${x.agent.kind}` : x.agent.kind, detail: x.agent.worktree, x })),
       { title: "Agent workspace" },
     );
     return pick?.x;
@@ -1881,7 +2119,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       {
         modal: true,
         detail:
-          (pending ? `Its ${pending} pending change${pending === 1 ? " is" : "s are"} withdrawn. ` : "") +
+          (pending ? `Its ${pending} pending change${pending === 1 ? " is" : "s are"} withdrawn: closed without being applied (History keeps ${pending === 1 ? "it" : "them"}). ` : "") +
           (unsubmitted.length ? `It changed files it did not submit: ${unsubmitted.slice(0, 5).join(", ")}${unsubmitted.length > 5 ? ", …" : ""}. ` : "") +
           `Deleting the folder also deletes the branch ${a.agent.branch} and anything the agent did not submit, for good. Close the agent's session first.`,
       },
@@ -1900,10 +2138,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   }
 
   async finishReview(): Promise<void> {
-    const p = await this.pickProject();
+    // Only projects with something to commit: asking "Which project?" for one was a needless step (test report v0.16.0).
+    const ps = this.allProjects().filter((x) => x.snapshot.uncommitted.length);
+    if (!ps.length) return void vscode.window.showInformationMessage("Nothing to commit: all accepted changes are committed.");
+    const p =
+      ps.length === 1
+        ? ps[0]!
+        : (await vscode.window.showQuickPick(ps.map((x) => ({ label: x.name, description: `${x.snapshot.uncommitted.length} accepted, not committed`, detail: x.mainPath, x })), { title: "Finish the review of which project?" }))?.x;
     if (!p) return;
     const items = p.snapshot.uncommitted;
-    if (!items.length) return void vscode.window.showInformationMessage("Nothing to commit: all accepted changes are committed.");
     const files = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
     const preview = await this.run(p, () => p.stet.commitPreview());
     if (!preview) return;
@@ -2068,6 +2311,9 @@ function elId(el: El): string {
 }
 
 /** The notification modes as offered in the panel. */
+const LOST_TEXT = "can't be found in your file";
+const LOST_NEXT = "You edited the text around it since it was proposed, so Stet can't tell where it goes. Reject it, or ask the agent for a revision against your current text.";
+
 /** Whether VS Code is set up for a screen reader (`editor.accessibilitySupport`). */
 const screenReader = (): boolean => vscode.workspace.getConfiguration("editor").get<string>("accessibilitySupport") === "on";
 
@@ -2167,10 +2413,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.toggleHighlight", () => ext.setHighlight(!ext.highlighted()));
   reg("stet.highlightOn", () => ext.setHighlight(true));
   reg("stet.highlightOff", () => ext.setHighlight(false));
-  reg("stet.accept", inOrder((a) => ext.accept(a)));
+  reg("stet.accept", inOrder((a, all) => ext.accept(a, all)));
   reg("stet.acceptOnly", inOrder((a) => ext.acceptOnly(a)));
   reg("stet.changeActions", (a) => ext.changeActions(a));
-  reg("stet.reject", inOrder((a) => ext.reject(a)));
+  reg("stet.reject", inOrder((a, all) => ext.reject(a, all)));
   reg("stet.edit", inOrder((a) => ext.edit(a)));
   reg("stet.comment", (a) => ext.comment(a));
   reg("stet.revise", inOrder((a) => ext.revise(a)));
@@ -2184,6 +2430,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.replyThread", (r: vscode.CommentReply) => ext.replyThread(r, threads));
   reg("stet.noteForAgent", () => ext.noteForAgent());
   reg("stet.resolveNote", (a) => ext.resolveNote(a));
+  reg("stet.reopenNote", (a) => ext.reopenNote(a));
   reg("stet.showNote", (a) => ext.showNote(a));
   await ext.updateHighlightContext();
   await ext.discover();

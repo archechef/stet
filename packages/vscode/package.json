@@ -273,6 +273,12 @@
         "icon": "$(check)"
       },
       {
+        "command": "stet.reopenNote",
+        "title": "Reopen note",
+        "category": "Stet",
+        "icon": "$(issue-reopened)"
+      },
+      {
         "command": "stet.showNote",
         "title": "Go to note",
         "category": "Stet"
@@ -496,6 +502,11 @@
           "group": "navigation@0"
         },
         {
+          "command": "stet.undoLast",
+          "when": "view == stet.review && stet.canUndo",
+          "group": "navigation@1"
+        },
+        {
           "command": "stet.finishReview",
           "when": "view == stet.review && stet.uncommitted",
           "group": "navigation@1"
@@ -681,6 +692,16 @@
           "command": "stet.resolveNote",
           "when": "view == stet.review && viewItem == note.open",
           "group": "inline@1"
+        },
+        {
+          "command": "stet.reopenNote",
+          "when": "view == stet.history && viewItem == note.resolved",
+          "group": "inline@1"
+        },
+        {
+          "command": "stet.reopenNote",
+          "when": "view == stet.history && viewItem == note.resolved",
+          "group": "1_decide@1"
         },
         {
           "command": "stet.resolveNote",
@@ -1003,6 +1024,19 @@
           "type": "boolean",
           "default": true,
           "description": "After you accept, reject, edit or request a revision of a change, select the next pending change and show it."
+        },
+        "stet.navigationOrder": {
+          "type": "string",
+          "enum": [
+            "panel",
+            "document"
+          ],
+          "default": "panel",
+          "enumDescriptions": [
+            "j and k go to the next and previous change as the panel lists them (by agent, round and group).",
+            "j and k go through the changes by file and line, as they are in your document."
+          ],
+          "description": "The order j and k (Next and Previous change) go through the changes in."
         },
         "stet.codeLens": {
           "type": "boolean",

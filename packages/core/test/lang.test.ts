@@ -146,3 +146,12 @@ describe("language profiles", () => {
     expect(t).toContain(LATEX.agentTerms!.location);
   });
 });
+
+describe("build files at setup (test report v0.16.0)", () => {
+  it("ignores LaTeX's build files and the PDF of each source, not every PDF", async () => {
+    const { buildIgnores } = await import("../src/lang/index.js");
+    const files = ["main.tex", "main.aux", "main.log", "main.pdf", "main.synctex.gz", "figs/plot.pdf", "refs.bib", "ch/one.tex"];
+    expect(buildIgnores(files)).toEqual(["*.aux", "*.log", "*.synctex.gz", "/main.pdf"]);
+    expect(buildIgnores(["main.tex", "refs.bib"])).toEqual([]);
+  });
+});

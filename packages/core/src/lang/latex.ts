@@ -350,6 +350,8 @@ export const LATEX: LanguageProfile = {
   extensions: /\.(tex|sty|cls|ltx|dtx)$/i,
   fence: "latex",
   document: true,
+  buildFiles: ["*.aux", "*.log", "*.out", "*.toc", "*.lof", "*.lot", "*.fls", "*.fdb_latexmk", "*.synctex.gz", "*.synctex(busy)", "*.bbl", "*.blg", "*.bcf", "*.run.xml", "*.nav", "*.snm", "*.vrb", "*.xdv", "*.dvi"],
+  outputOf: (source) => (/\.tex$/i.test(source) ? source.replace(/\.tex$/i, ".pdf") : null),
   agentTerms: {
     location: 'main.tex:12 "suggestion"',
     linked: "a macro or environment definition and its uses, a `\\begin` and its `\\end` in different edits",
