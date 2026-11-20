@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0 — 2026-11-20
 
 Fixes from the test report of 2026-11-20 (three testers, Stet 0.14.0).
 

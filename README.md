@@ -99,7 +99,7 @@ stet commit -m "Polish the introduction"   # commits the files whole, your own e
 
 ## Status
 
-Version 0.15.0. Milestones M1–M3 are done:
+Version 0.16.0. Milestones M1–M3 are done:
 - **M1:** core library and CLI.
 - **M2:** MCP server and guardrails.
 - **M3:** VS Code extension.
