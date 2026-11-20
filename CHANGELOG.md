@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fix: Stet could stop accepting anything ("Timed out waiting for the Stet lock").** A Stet process stopped just as it took the store's lock (a window reloaded, a command killed) left an empty lock behind that named no owner, and nobody took it over: every decision timed out while hovers and previews kept working. The lock is now written whole before it appears, and an empty or unreadable lock older than 30 seconds is taken over.
 - **Fix: PDF previews of long rewrites highlighted only their end.** A change of more than about 80 words was searched for on the page in too short a stretch, so only the edits near its end were marked. All of it is found now.
 - **Diffs show your text on the left, not your text with the proposals in it.** The left side of Diff and Review file is your text as it is, read-only, with what the changes remove in red. **View options → Diffs: your side shows the proposals too** brings back your file itself there (editable, marked as in the editor).
 - **Save your wording without accepting.** Editing a longer change opens an editor of its own instead of an untitled tab and a notification: Ctrl+S keeps your wording (the change stays pending), and Accept with this wording, Agent's wording and More… are above the text and in the title bar. The input box for short changes has a save button for the same.

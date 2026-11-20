@@ -1,5 +1,5 @@
 /** On-disk store in `<git-common-dir>/stet/` (spec §4, §15). */
-import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -125,11 +125,10 @@ export class Store {
     if (lockContext.getStore() === this) return fn();
     const token = randomUUID();
     const started = Date.now();
+    const owner = JSON.stringify({ pid: process.pid, host: hostname(), token, at: Date.now() });
     for (;;) {
       try {
-        const fh = await open(this.lockPath, "wx");
-        await fh.writeFile(JSON.stringify({ pid: process.pid, host: hostname(), token, at: Date.now() }));
-        await fh.close();
+        await this.createLock(owner, token);
         break;
       } catch (e: any) {
         if (e.code !== "EEXIST" && e.code !== "EPERM") throw e;
@@ -159,16 +158,40 @@ export class Store {
     }
   }
 
+  /**
+   * Create the lock file with its owner in it, failing (EEXIST) if it exists. The owner is written
+   * to a file of its own first, which is then linked as the lock: the lock appears whole or not at
+   * all. Created empty and then written, a process stopped in between (a window reloaded, a
+   * command killed) left an empty lock that named no owner, which nobody took over (bug report
+   * 2026-11-20). Where links aren't possible, it is created and written as before.
+   */
+  private async createLock(owner: string, token: string): Promise<void> {
+    const tmp = `${this.lockPath}.${token}.new`;
+    await writeFile(tmp, owner);
+    try {
+      await link(tmp, this.lockPath);
+    } catch (e: any) {
+      if (e.code === "EEXIST") throw e;
+      const fh = await open(this.lockPath, "wx");
+      await fh.writeFile(owner);
+      await fh.close();
+    } finally {
+      await rm(tmp, { force: true });
+    }
+  }
+
   /** Remove the lock if its owner is gone. Returns true if it was removed. */
   private async takeOverIfAbandoned(): Promise<boolean> {
     let info: { pid?: number; host?: string; token?: string } | null;
     let mtime: number;
     try {
-      info = await readJson(this.lockPath);
       mtime = (await stat(this.lockPath)).mtimeMs;
     } catch {
-      return false; // released meanwhile, or unreadable for a moment: just retry
+      return false; // released meanwhile: just retry
     }
+    // A lock that doesn't say whose it is (empty, or cut short) counts as another machine's: taken
+    // over once it is older than `stale`. Its owner, if any, would have written it in milliseconds.
+    info = await readJson<{ pid?: number; host?: string; token?: string }>(this.lockPath).catch(() => null);
     const age = Date.now() - mtime;
     const here = !!info?.pid && info.host === hostname();
     const alive = here && processAlive(info!.pid!);
@@ -184,7 +207,8 @@ export class Store {
       return false;
     }
     const moved = await readJson<{ token?: string }>(aside).catch(() => null);
-    if (info?.token && moved?.token !== info.token) {
+    // Not the lock looked at (a new one appeared meanwhile): put it back.
+    if ((moved?.token ?? null) !== (info?.token ?? null)) {
       await rename(aside, this.lockPath).catch(() => undefined);
       return false;
     }

@@ -1,5 +1,5 @@
 /** Findings F1–F7 of the Codex security review (2026-09-26): each test reproduces the report's scenario. */
-import { chmodSync, closeSync, existsSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -365,6 +365,35 @@ describe("F5: store lock", () => {
       }),
     ).rejects.toThrow(/lost its lock/);
     expect(JSON.parse(readFileSync(join(root, "items", "S1.json"), "utf8")).status).toBe("pending");
+  });
+
+  it("takes over an empty lock left by a process stopped while taking it (bug report 2026-11-20)", async () => {
+    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 250, timeout: 5000 });
+    const root = outsideDir();
+    writeFileSync(join(root, "lock"), "");
+    const old = new Date(Date.now() - 10_000);
+    utimesSync(join(root, "lock"), old, old);
+    let entered = false;
+    await new Store(root).withLock(async () => void (entered = true));
+    expect(entered).toBe(true);
+    expect(existsSync(join(root, "lock"))).toBe(false);
+  });
+
+  it("waits for an empty lock that is still fresh (its owner may be writing it)", async () => {
+    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 60_000, timeout: 300 });
+    const root = outsideDir();
+    writeFileSync(join(root, "lock"), "");
+    await expect(new Store(root).withLock(async () => undefined)).rejects.toThrow(/Timed out/);
+    expect(readFileSync(join(root, "lock"), "utf8")).toBe("");
+  });
+
+  it("never shows the lock without its owner, and leaves no temporary files", async () => {
+    const root = outsideDir();
+    const s = new Store(root);
+    await s.withLock(async () => {
+      expect(JSON.parse(readFileSync(join(root, "lock"), "utf8"))).toMatchObject({ pid: process.pid, token: expect.any(String) });
+    });
+    expect(readdirSync(root).filter((f) => f.startsWith("lock"))).toEqual([]);
   });
 
   it("takes over a lock whose heartbeat stopped", async () => {
