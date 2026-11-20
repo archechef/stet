@@ -341,8 +341,17 @@ exports.run = async function run() {
     // Review all changes in a file: an editable diff. Saving keeps changes pending with the
     // user's wording; ✓ Accept there accepts with it.
     const mainFile = vscode.Uri.file(join(fx.repo, "main.tex"));
+    // Diff of a pending change: the same kind of review, with only that change.
+    await vscode.commands.executeCommand("stet.showDiff", { path: fx.repo, id: fx.items[0] });
+    const oneDoc = await until("review of one change", async () => vscode.workspace.textDocuments.find((d) => d.uri.scheme === "stet-review" && d.uri.query.includes(`ids=${fx.items[0]}`)) || null, 10000).catch(() => null);
+    const oneLenses = oneDoc ? (await vscode.commands.executeCommand("vscode.executeCodeLensProvider", oneDoc.uri)) || [] : [];
+    check(
+      "Diff of a pending change is an editable review of just that change",
+      !!oneDoc && oneDoc.getText().includes("the task of reviewing") && oneLenses.some((l) => l.command && l.command.title.startsWith(`${fx.items[0]}: $(check) Accept`)) && !oneLenses.some((l) => l.command && l.command.title.startsWith(`${fx.items[1]}:`)),
+      oneDoc ? oneLenses.map((l) => l.command && l.command.title).join(" | ") : "no review document",
+    );
     await vscode.commands.executeCommand("stet.reviewFile", mainFile);
-    const reviewDoc = await until("review document", async () => vscode.workspace.textDocuments.find((d) => d.uri.scheme === "stet-review" && d.uri.path.endsWith("main.tex")) || null, 10000).catch(() => null);
+    const reviewDoc = await until("review document", async () => vscode.workspace.textDocuments.find((d) => d.uri.scheme === "stet-review" && d.uri.path.endsWith("main.tex") && !d.uri.query.includes("ids=")) || null, 10000).catch(() => null);
     check("the review of a file shows its pending changes", !!reviewDoc && reviewDoc.getText().includes("the task of reviewing"), reviewDoc ? reviewDoc.getText().slice(0, 200) : "no review document");
     if (reviewDoc) {
       const replaceIn = async (from, to) => {
@@ -358,9 +367,27 @@ exports.run = async function run() {
       const outside = await replaceIn("In this work", "In this paper").catch(() => false);
       check("an edit outside the changes isn't saved", outside === false && item0().draft === "hard task", JSON.stringify({ outside }));
       await vscode.commands.executeCommand("workbench.action.files.revert");
-      await vscode.commands.executeCommand("stet.reviewAccept", reviewDoc.uri, { path: fx.repo, id: fx.items[0] });
+      // The same actions as in the file: the row above the change, the hover, Ctrl+.
+      const at = reviewDoc.positionAt(reviewDoc.getText().indexOf("hard task") + 2);
+      const rl = (await vscode.commands.executeCommand("vscode.executeCodeLensProvider", reviewDoc.uri)) || [];
+      const rt = rl.map((l) => l.command && l.command.title);
+      const rh = ((await vscode.commands.executeCommand("vscode.executeHoverProvider", reviewDoc.uri, at)) || []).flatMap((h) => h.contents.map((c) => (typeof c === "string" ? c : c.value))).join("\n");
+      const rc = ((await vscode.commands.executeCommand("vscode.executeCodeActionProvider", reviewDoc.uri, new vscode.Range(at, at))) || []).map((a) => a.title);
+      check(
+        "the review has the file's actions: row above, hover, Ctrl+.",
+        rt.includes(`${fx.items[0]}: $(check) Accept (your wording)`) && rt.includes("$(close) Reject…") && rt.includes("$(ellipsis) More…") && rl.every((l) => !l.command || l.command.command === "stet.reviewRun") &&
+          rh.includes("stet.reviewRun") && rh.includes("Reject") && rc.includes(`Stet ${fx.items[0]}: Accept`) && rc.some((t) => t.endsWith("Comment…")),
+        JSON.stringify({ rt, rc }) + " " + rh.slice(0, 200),
+      );
+      // Accept from the row above the change, with an unsaved edit: it is saved first and used.
+      const k = reviewDoc.getText().indexOf("hard task");
+      const e = new vscode.WorkspaceEdit();
+      e.replace(reviewDoc.uri, new vscode.Range(reviewDoc.positionAt(k), reviewDoc.positionAt(k + 4)), "harder");
+      await vscode.workspace.applyEdit(e);
+      const acceptLens = rl.find((l) => l.command && l.command.title.startsWith(`${fx.items[0]}:`));
+      await vscode.commands.executeCommand(acceptLens.command.command, ...acceptLens.command.arguments);
       const accepted = await until("accept from the review", async () => (item0().status === "accepted" ? readFileSync(join(fx.repo, "main.tex"), "utf8") : null), 10000).catch(() => null);
-      check("✓ Accept in the review accepts with your wording", !!accepted && accepted.includes("the hard task of reviewing"), JSON.stringify({ status: item0().status }));
+      check("✓ Accept in the review accepts with your (unsaved) wording", !!accepted && accepted.includes("the harder task of reviewing"), JSON.stringify({ status: item0().status, dirty: reviewDoc.isDirty }));
     }
 
     // View options switch settings from the panel.

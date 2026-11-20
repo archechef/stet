@@ -84,4 +84,22 @@ describe("reviewing a whole file", () => {
     await stet.clearDraft(formula!.id);
     expect((await stet.getItem(formula!.id))!.draft).toBeUndefined();
   });
+
+  it("reviews one change on its own: only it is applied, and only it can be edited", async () => {
+    const { setup, edit, read, PAPER } = await import("./helpers.js");
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", { title: "t" });
+    const [task, formula] = [...items].sort((x, y) => x.range.start - y.range.start);
+
+    const doc = await stet.reviewOf("main.tex", read(repo, "main.tex"), [formula!.id]);
+    expect(doc.regions.map((r) => r.id)).toEqual([formula!.id]);
+    expect(doc.content).toContain("the problem of reviewing");
+    expect(doc.content).toContain("$a+b=d$");
+    expect(await stet.saveReview(doc, doc.content.replace("the problem", "the task"))).toEqual({ error: expect.stringMatching(/outside the proposed changes/) });
+    expect(await stet.saveReview(doc, doc.content.replace("$a+b=d$", "$a+b=e$"))).toEqual({ changed: [formula!.id] });
+    expect((await stet.getItem(task!.id))!.draft).toBeUndefined();
+  });
 });

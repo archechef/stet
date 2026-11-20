@@ -66,7 +66,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
     out.push({ label: "Revise…", icon: "sync", key: "v", command: "stet.revise", args: r, tier: "decide", detail: "Tell the agent what to change; the change stays open until it resubmits." });
   }
   out.push({ label: "Comment…", icon: "comment", key: "c", command: "stet.comment", args: r, tier: "talk", detail: "A message about the change; the agent can reply." });
-  out.push({ label: "Diff", icon: "diff", key: "d", command: "stet.showDiff", args: r, tier: "view", detail: "Your file with and without this change, side by side." });
+  out.push({ label: "Diff", icon: "diff", key: "d", command: "stet.showDiff", args: r, tier: "view", detail: "Your file with and without this change, side by side; edit the proposed side to change its wording." });
   if (modify && /\.tex$/i.test(item.file) && opts.previews !== false) {
     out.push({ label: "PDF preview", icon: "file-pdf", key: "p", command: "stet.preview", args: r, tier: "view", detail: "The compiled page with the change, after and before." });
   }

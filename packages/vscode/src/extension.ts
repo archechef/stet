@@ -6,7 +6,7 @@ import { closeSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import { doctor, foldPath, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
-import { changeActions, withIcon } from "./actions.js";
+import { changeActions, withIcon, type ChangeAction } from "./actions.js";
 import { esc, inlineProblems, itemMarkdown, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { Threads } from "./comments.js";
 import {
@@ -47,6 +47,8 @@ const HIGHLIGHT: Record<string, string> = {
 const HIGHLIGHT_PREVIOUS = "stet.highlightPrevious";
 
 const HOVER_WIDTH = 520;
+/** Longest change (one line) edited in an input box; that box shows about this many characters. */
+const SHORT_EDIT = 80;
 const pngSizes = new Map<string, { width: number; height: number }>();
 
 /** The hover size of a preview image: its width fixed, its height from the PNG's header. */
@@ -96,7 +98,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
 
   constructor(private ctx: vscode.ExtensionContext) {
     this.locator = new Locator(this);
-    this.review = new ReviewFiles((key) => this.projects.get(key));
+    this.review = new ReviewFiles({
+      project: (key) => this.projects.get(key),
+      model: (p) => this.model(p),
+      previews: () => previewPlace() !== "off",
+      hover: (p, item, route) => this.hoverFor?.(p, item, route),
+    });
     this.preview = new PreviewPanel(
       (p) => this.setupPreview(p),
       (t, n) => {
@@ -280,6 +287,16 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       `${file}: yours ↔ ${live} proposed change${live === 1 ? "" : "s"} (editable)`,
       { preview: false },
     );
+  }
+
+  /** A change's hover as in the file (set once the editor integration exists). */
+  hoverFor?: (p: Project, item: Item, route: (a: ChangeAction) => ChangeAction) => vscode.MarkdownString;
+
+  /** An action from a review document: its unsaved edits first, so a decision uses what the user sees. */
+  async reviewRun(uri: string, command: string, args: unknown[] = []): Promise<void> {
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri);
+    if (doc?.isDirty && !(await doc.save())) return; // the save failed (and said why)
+    await vscode.commands.executeCommand(command, ...args);
   }
 
   /** ✓ Accept in a review document: its unsaved edits first, so the accept uses what the user sees. */
@@ -942,23 +959,54 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const { project: p, item } = t;
     if (item.kind !== "modify") return void vscode.window.showInformationMessage(`${item.id} changes a whole file; it can only be accepted or rejected.`);
     let text: string | undefined;
-    if (!item.newText.includes("\n") && item.newText.length <= 400) {
-      text = await vscode.window.showInputBox({
-        title: `Edit ${item.id} before accepting`,
-        prompt: item.oldText ? `Replaces: ${oneLine(item.oldText, 120)}` : "Inserted text",
-        value: item.newText,
-        valueSelection: [item.newText.length, item.newText.length],
-      });
-    } else {
-      const doc = await vscode.workspace.openTextDocument({ content: item.newText, language: "latex" });
-      await vscode.window.showTextDocument(doc, { preview: false });
-      const ok = await vscode.window.showInformationMessage(`Edit the text of ${item.id} in this tab, then choose “Accept edited”.`, "Accept edited", "Cancel");
-      text = ok === "Accept edited" ? doc.getText() : undefined;
-      if (vscode.window.activeTextEditor?.document === doc) await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+    // Your wording, if you have one (from a review document).
+    let start = item.draft ?? item.newText;
+    // The input box shows one line of about 80 characters: anything longer is edited in a tab,
+    // and the box can hand over to one (keeping what was typed).
+    if (!start.includes("\n") && start.length <= SHORT_EDIT) {
+      const r = await this.editInBox(item, start);
+      if (r === undefined) return;
+      if (typeof r === "string") text = r;
+      else start = r.inTab;
     }
+    text ??= await this.editInTab(item, start);
     if (text === undefined) return;
     const rest = this.model(p).linkedRest([item.id]);
     await this.decide(p, item.id, !isRef(arg), () => this.doAccept(p, [item.id, ...rest.map((r) => r.id)], { edited: { [item.id]: toLf(text) } }));
+  }
+
+  /** Edit a short change in an input box: the text, `{ inTab }` to continue in a tab, or undefined if cancelled. */
+  private editInBox(item: Item, text: string): Promise<string | { inTab: string } | undefined> {
+    const box = vscode.window.createInputBox();
+    box.title = `Edit ${item.id} before accepting`;
+    box.prompt = item.oldText ? `Replaces: ${oneLine(item.oldText, 120)}` : "Inserted text";
+    box.value = text;
+    box.valueSelection = [text.length, text.length];
+    const toTab: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("go-to-file"), tooltip: "Edit in a tab (for longer text)" };
+    box.buttons = [toTab];
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (r: string | { inTab: string } | undefined) => {
+        if (done) return;
+        done = true;
+        resolve(r);
+        box.dispose();
+      };
+      box.onDidAccept(() => finish(box.value));
+      box.onDidTriggerButton((b) => b === toTab && finish({ inTab: box.value }));
+      box.onDidHide(() => finish(undefined));
+      box.show();
+    });
+  }
+
+  /** Edit a change's text in a tab of its own; the text, or undefined if cancelled. */
+  private async editInTab(item: Item, text: string): Promise<string | undefined> {
+    const doc = await vscode.workspace.openTextDocument({ content: text, language: "latex" });
+    await vscode.window.showTextDocument(doc, { preview: false });
+    const ok = await vscode.window.showInformationMessage(`Edit the text of ${item.id} in this tab, then choose “Accept edited”.`, "Accept edited", "Cancel");
+    const edited = ok === "Accept edited" ? doc.getText() : undefined;
+    if (vscode.window.activeTextEditor?.document === doc) await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+    return edited;
   }
 
   async comment(arg: unknown): Promise<void> {
@@ -1124,9 +1172,28 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     const { project: p, item } = t;
+    // A pending change: the file's review with just this change, and what accepting it takes
+    // along (its linked group, a move's other half) in the same file. Editable, with the same
+    // actions as in the file. Decided ones, whole-file ones and changes that can't be located
+    // get the plain diff.
+    const text = item.kind === "modify" && isLive(item) ? await this.currentText(p, item.file) : undefined;
+    if (text !== undefined && (await p.stet.locateInText(item, text))) {
+      const rest = this.model(p).linkedRest([item.id]).filter((r) => r.file === item.file && r.kind === "modify");
+      const ids = [item.id, ...rest.map((r) => r.id)];
+      const others = this.model(p).linkedRest([item.id]).length - rest.length;
+      const title = `${ids.join(" + ")} ${item.file}: yours ↔ proposed${others ? ` (${others} linked in other files)` : ""} (editable)`;
+      return void (await vscode.commands.executeCommand("vscode.diff", p.fileUri(item.file), ReviewFiles.uriFor(p, item.file, ids), title, { preview: true }));
+    }
     const key = encodeURIComponent(p.mainPath);
     const mk = (side: string) => vscode.Uri.from({ scheme: "stet-diff", path: `/${item.file}`, query: `p=${key}&id=${item.id}&side=${side}` });
     await vscode.commands.executeCommand("vscode.diff", mk("before"), mk("after"), `${item.id} ${item.file} (current ↔ proposed)`, { preview: true });
+  }
+
+  /** The user's text of a file as the editor has it (unsaved edits included), LF. */
+  private async currentText(p: Project, file: string): Promise<string> {
+    const uri = p.fileUri(file);
+    const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString()) ?? (await vscode.workspace.openTextDocument(uri));
+    return toLf(doc.getText());
   }
 
   /** Content of `stet-diff:` documents. */
@@ -1637,6 +1704,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.preview", (a) => ext.showPreview(a));
   reg("stet.reviewFile", (a) => ext.reviewFile(a));
   reg("stet.reviewAccept", inOrder((u, a) => ext.reviewAccept(u, a)));
+  // Not in order itself: the command it runs is (it would wait for itself).
+  reg("stet.reviewRun", (u, c, a) => ext.reviewRun(u, c, a));
+  ext.hoverFor = (p, item, route) => editor.hoverMarkdown(p, item, route);
   reg("stet.clearDraft", (a) => ext.clearDraft(a));
   reg("stet.previewSetup", () => ext.setupPreview());
   // View options: settings you may switch back and forth, from the panel.

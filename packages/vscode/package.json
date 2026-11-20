@@ -416,6 +416,11 @@
         "category": "Stet"
       },
       {
+        "command": "stet.reviewRun",
+        "title": "Run an action from the review",
+        "category": "Stet"
+      },
+      {
         "command": "stet.clearDraft",
         "title": "Use agent's wording",
         "category": "Stet",
@@ -689,6 +694,10 @@
         },
         {
           "command": "stet.reviewAccept",
+          "when": "false"
+        },
+        {
+          "command": "stet.reviewRun",
           "when": "false"
         },
         {

@@ -2,7 +2,7 @@
 import * as vscode from "vscode";
 import { moveChanges, movesOut, moveTexts, partIndexOf, type Item } from "@stet/core";
 import { diffBlock, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
-import { acceptAction, changeActions, withIcon } from "./actions.js";
+import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
 import type { Project } from "./project.js";
 
 export interface Located {
@@ -323,9 +323,9 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   }
 
   /** A change's hover: what it is, its PDF preview, and its actions. */
-  private hoverMarkdown(p: Project, item: Item): vscode.MarkdownString {
+  hoverMarkdown(p: Project, item: Item, route: (a: ChangeAction) => ChangeAction = (a) => a): vscode.MarkdownString {
     const model = this.host.model(p);
-    const actions = changeActions(model, p.mainPath, item, { previews: previewsOn() });
+    const actions = changeActions(model, p.mainPath, item, { previews: previewsOn() }).map(route);
     const md = new vscode.MarkdownString(undefined, true);
     md.isTrusted = { enabledCommands: [...new Set(actions.map((a) => a.command))] };
     md.supportHtml = false;

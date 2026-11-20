@@ -155,7 +155,8 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 
 - **Open it from:** the button in the editor's title bar (shown when the file has pending changes), the editor's right-click menu, or a change's actions (hover, *More…*, Ctrl+., right-click in the panel, `f` in the panel).
 - **Edit the right side** to reword proposals. Saving keeps your wording for those changes (the panel marks them *your wording*); nothing is accepted. Edits outside the proposed changes are refused when you save: make those in your file itself.
-- **Decide** with the buttons above each change on the right: **✓ Accept** (with your wording, if you gave one), **✗ Reject…**, **Use agent's wording** to drop yours, and **More…**. Accepting elsewhere (panel, editor, `stet accept`) uses your wording too. The agent is told when you accept a change in your own wording.
+- **Decide** right there, with the same actions as in your file: the buttons above each change (**✓ Accept**, as the change must be decided, so *Accept move* or *Accept all 3 linked* where it says so; **✗ Reject…**; **Use agent's wording** to drop yours; **More…**), the hover with its PDF preview, and Ctrl+. in the change. Each saves your unsaved edits in the review first, so Accept uses the wording you see. Accepting elsewhere (panel, editor, `stet accept`) uses your wording too. The agent is told when you accept a change in your own wording.
+- **Diff** on a pending change opens the same review with only that change in it, plus what accepting it takes along in the same file (its linked group, a move's other half): editable, with the same actions. Decided changes and whole-file changes get a plain, read-only diff.
 - Changes that overlap another one (two agents on the same text) are not in it; a line at the top names them.
 
 ### 4.3 Actions
@@ -177,10 +178,10 @@ An action that ends in "…" asks you something first (a reason, your wording, a
 |---|---|---|
 | **Accept** | `a` | Applies the change to your file. It is committed together with the rest of the review when you click **Finish review**. On a linked change it reads *Accept all n linked* (see below). |
 | **Reject…** | `r` | Asks for an optional reason. The agent gets the reason and won't propose the same change again. |
-| **Edit & accept…** | `e` | Lets you change the wording first, then accepts it. The agent sees your version and adapts to your style. Short changes are edited in an input box; multi-line ones in a separate tab, where you then choose *Accept edited*. To reword several changes and decide later, use **Review file**. |
+| **Edit & accept…** | `e` | Lets you change the wording first, then accepts it. The agent sees your version and adapts to your style. Short changes (one line, up to 80 characters) are edited in an input box, whose "Edit in a tab" button (top right) moves to a tab if you need more room; longer ones open in a separate tab, where you then choose *Accept edited*. To reword several changes and decide later, use **Review file**. |
 | **Revise…** | `v` | Tells the agent what to change. The change stays open until the agent resubmits it. |
 | **Comment…** | `c` | Sends a message about the change; the agent can reply. |
-| **Diff** | `d` | A side-by-side diff of your current file and the file with this change. File additions, deletions and renames are shown this way too. |
+| **Diff** | `d` | Your file and the file with this change, side by side: a review of just this change (and what accepting it takes along), editable, with the same actions (see *Reviewing a whole file*). Decided changes, and file additions, deletions and renames, get a read-only diff. |
 | **PDF preview** | `p` | The compiled page with the change, after and before (see *PDF previews*). |
 | **Review file** | `f` | All pending changes of the file in one editable diff (see *Reviewing a whole file*). |
 | **Use agent's wording** | | Drops the wording you gave the change in *Review file*. |

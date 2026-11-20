@@ -2172,10 +2172,11 @@ export class Stet {
 
   /**
    * `text` (the reviewer's current text of `file`, LF) with every pending change to it applied, in
-   * the reviewer's wording where they have one, and where each change is in the result.
+   * the reviewer's wording where they have one, and where each change is in the result. `only`:
+   * just these changes (the review of one change, with what accepting it takes along).
    */
-  async reviewOf(file: string, text: string): Promise<ReviewDocument & { items: Item[] }> {
-    const items = (await this.store.items()).filter((i) => i.file === file && i.kind === "modify" && isLive(i.status));
+  async reviewOf(file: string, text: string, only?: string[]): Promise<ReviewDocument & { items: Item[] }> {
+    const items = (await this.store.items()).filter((i) => i.file === file && i.kind === "modify" && isLive(i.status) && (!only || only.includes(i.id)));
     const changes: ReviewChange[] = [];
     const unplaced: string[] = [];
     for (const it of items) {

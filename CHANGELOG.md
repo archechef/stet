@@ -4,6 +4,10 @@
 
 - **Faster submits of large revisions:** paragraphs are paired from the words they share, counted once for the whole region, and the word-by-word comparison runs only for pairs that can be alike. Move detection skips pairs with too few words in common the same way. A section of 60 paragraphs reordered takes 0.2 s instead of 1.2 s, a 400-paragraph paper with an edit in every paragraph 0.3 s instead of 2 s, with the same results.
 - **Fewer git calls:** opening a project takes one git call instead of four from the project folder, and two from an agent workspace (`stet` commands, the agent guard on every tool call, the extension). The guard no longer looks up the repository twice. A submit reads each file and the list of changed files once.
+- **Edit & accept** uses the small input box only for changes of one short line (up to 80 characters, what the box shows); longer ones open in a tab right away. The box has a button to continue in a tab, keeping what you typed.
+- **Diff works like Review file:** on a pending change it opens an editable review of just that change (plus what accepting it takes along: its linked group, a move's other half), instead of a read-only diff. Decided and whole-file changes keep the read-only diff.
+- **Decide in the review with the same actions as in your file:** the buttons above a change now say *Accept move* or *Accept all 3 linked* where the change must be decided that way, and the hover (with its PDF preview) and Ctrl+. work in the review too. Every action there saves your unsaved edits in the review first, so a decision uses the wording you see.
+- **Edit & accept** starts from your wording when you have one from a review.
 - Tests: the real-world review checks run four at a time and build their repositories with fewer git calls. One of them hit the 120 s limit where starting git is slow.
 
 ## 0.13.0 — 2026-11-19

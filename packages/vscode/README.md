@@ -55,7 +55,7 @@ Each change is shown in your file: the old text struck through in red, the new t
 | **Edit & accept…** | `e` | Change the wording, then accept it. The agent sees your version and adapts. |
 | **Revise…** | `v` | Tell the agent what to change; it resubmits. |
 | **Comment…** | `c` | A message about the change; the agent can reply. |
-| **Diff** | `d` | Your file with and without the change, side by side. |
+| **Diff** | `d` | Your file with and without the change, side by side; editable like Review file. |
 | **PDF preview** | `p` | The compiled page with the change, after and before. |
 | **Review file** | `f` | All pending changes of the file in one editable diff. |
 | **Undo** | `u` | A decided change is pending again. |
@@ -64,7 +64,7 @@ Each change is shown in your file: the old text struck through in red, the new t
 
 After each decision Stet moves on to the next change, so a review takes one key per change.
 
-**Review file** shows your file next to the same file with all its pending changes applied, with real line breaks. Type in the right side to reword proposals: saving keeps your wording, and the changes stay pending until you accept them.
+**Review file** shows your file next to the same file with all its pending changes applied, with real line breaks. Type in the right side to reword proposals: saving keeps your wording, and the changes stay pending until you accept them. Each change has the same actions there as in your file (the buttons above it, its hover, Ctrl+.). **Diff** opens the same view for one change.
 
 **Groups.** 🔗 *Linked* changes must go together, like a label and its references; large linked groups come in parts you can accept one at a time. ▣ *Related* changes share a theme and can be decided in one go (`Shift+A` / `Shift+R`).
 
