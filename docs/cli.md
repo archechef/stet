@@ -23,8 +23,10 @@ cd packages/cli && npm link      # optional: puts `stet` on your PATH
 Without `npm link`, run `node <path-to-stet>/packages/cli/dist/index.js` wherever `stet` appears below.
 
 All commands accept:
-- `--help`
+- `--help`, and `--version` (or `stet version`)
 - `--json` for machine-readable output
+
+The exit code is 0 on success, 2 for a wrong command line (an unknown option, a missing argument), 3 for an unknown id or name (`stet show 9.9`), and 1 for any other error.
 
 Colours are switched off when the output is not a terminal, or when `NO_COLOR` is set.
 
@@ -50,7 +52,7 @@ Run these in your LaTeX project, which must be a git repository with at least on
 | `stet agent new <name> [--kind claude-code\|codex\|other] [--path <dir>]` | Creates a workspace folder and prints its path; the default is `<project>.stet/<name>`. Open that folder in the Claude desktop app, Claude Code or Codex. |
 | `stet agent list` | Lists all agents with their state and folder. |
 | `stet agent refresh <name>` | Rewrites the agent's instructions, tool configuration and guardrails, e.g. after a Stet update. |
-| `stet agent archive <name> [--remove]` | Retires an agent: its pending changes are withdrawn. `--remove` also deletes the folder and branch. The agent is told on its next action. |
+| `stet agent archive <name> [--remove [--force]]` | Retires an agent: its pending changes are withdrawn. `--remove` also deletes the folder and branch; it refuses while the agent has changes it did not submit, unless you add `--force`. The agent is told on its next action. |
 | `stet agent notify <name> [now\|batched\|off] [--on <kinds>\|all]` | When an agent waiting with `stet watch` is woken: `batched` (default) once you have paused for half a minute, `now` at each decision, `off` not at all (switching back on delivers what arrived meanwhile). `--on` chooses what wakes it, from `accepted`, `rejected`, `revision`, `comment`, `note`, `document` (commits and shared edits) and `save` (saves, when agents see saved edits), comma-separated, or `all`. Without options, shows the current settings. |
 | `stet agent ping <name> [-m <text>]` | Wakes a watching agent now, whatever its notification settings, optionally with a message. |
 
@@ -60,27 +62,46 @@ Names use letters, digits, `.`, `_` and `-`. What happens inside a workspace, an
 
 ## 4. Reviewing
 
-Run these in your project folder. Changes have ids like `12.3`: change 3 of round 12, where a round is one submission by an agent (`C12` on the command line). Groups are `G3`. Changes from before this numbering keep their old ids (`S412`).
+Run these in your project folder (in an agent's workspace they are refused, so an agent can't decide its own proposals). Changes have ids like `12.3`: change 3 of round 12, where a round is one submission by an agent (`C12` on the command line). Groups are `G3`. Changes from before this numbering keep their old ids (`S412`).
+
+**Words used here**, with the panel's name where it differs:
+
+| Term | Meaning |
+|---|---|
+| round (`C12`, "changeset") | One submission by an agent: its title, rationale and changes. |
+| change (`12.3`, "item") | One edit you accept or reject on its own. |
+| group (`G3`) | Changes that belong together: *linked* ones go together (accepting only some would break the document), *related* ones share a theme. `[auto]`: Stet found the group itself. |
+| part (`G3.2`) | A piece of a large linked group that can be decided on its own and still leaves the document compiling. |
+| broken | A linked group decided inconsistently; the agent is asked to repair the document. |
+| pending / needs revision | Waiting for you / waiting for the agent's new version. |
+| stale | No longer applies to your text (another change overlapped it); the agent is told to redo it. |
+| superseded | Replaced by the agent's newer version of the change (`revises 12.3`). |
+| withdrawn | Taken back by the agent, or by archiving it. |
+| share (*Share my edits*) | Let agents see your saved, uncommitted edits. Accepted changes always reach them. |
+| sync | The agent catching up with your latest text (`stet sync`, or its tool). |
+| `stet commit` (*Finish review*) | Commit everything accepted, in one commit. |
+| `stet ungroup` (*Dissolve group*) | Remove a group; its changes stay. |
+| `notify now` / `batched` (*Right away* / *When I pause*) | When an agent is woken by news: at each decision, or once you've paused for half a minute. |
 
 | Command | What it does |
 |---|---|
 | `stet review [--agent <a>] [--status <s>] [--all]` | Lists changes waiting for review (pending or revision requested), per agent → round → group. `--status` takes a comma-separated list (`pending,accepted,…`); `--all` shows everything. |
 | `stet show <12.3\|G3\|C12\|N3>` | Shows a change with its context, a group or round with its members, or a note with its thread. |
-| `stet accept <12.3\|G3\|G3.2>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
-| `stet reject <12.3\|G3\|G3.2>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes; the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
+| `stet accept <12.3\|G3\|G3.2\|C12>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3; `C12` accepts every pending change of round 12. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
+| `stet reject <12.3\|G3\|G3.2\|C12>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes (`C12`: every pending change of round 12); the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
 | `stet undo <12.3>` | Undoes a rejection, or an accept until you commit it (the change is taken out of your file again): the change is pending again, and so are changes the accept made stale. Changes decided together (a linked group, a move) are undone together. The agent is told. |
 | `stet preview <12.3>` | PDF preview of a change: writes images of the page region after and before the change and prints their paths. Says so when the change has no place on the page, or when the document doesn't compile. |
 | `stet preview <12.3> --page <n> [--before]` | A whole page of the preview as an image: of the version with the change, or `--before` it. |
 | `stet preview status` | What PDF previews can use here, and what is missing. |
 | `stet preview setup` | Builds the container image previews compile in (downloads Debian, Perl and Poppler, about 150 MB). Only ever on this command. |
 | `stet preview setup --extras` | Adds TeX's extra fonts (dsfont, bbm, bbold, …, about 2 GB) to the preview image with its own TeX, and uses it from then on. A preview that fails over a missing file suggests it. |
-| | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. |
+| | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. A sentence that only changes paragraph (the break before or after it moved) is no move: one change, `paragraph break moved`, and `stet show` marks just the breaks (`[-␣-]{+¶+}`). Splits and joins say `paragraph split` / `paragraphs joined`. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <12.3\|N3> -m <text>` | Sends a message about a change, or in a note's thread; the agent can reply. |
 | `stet note <agent> <file[:line[-line]]> -m <text>` | Leaves a note for one agent on a passage (a line range, or the whole file). The agent receives it at its next sync. |
 | `stet note resolve <N3>` | Closes a note. |
 | `stet notes [--agent <a>] [--all]` | Lists open notes (`--all`: resolved ones too). |
-| `stet commit [-m <summary>]` | **Finishes the review:** commits all accepted changes in one commit. The summary line defaults to the changeset titles; the body lists the accepted changes and a `Stet-Applied:` trailer. |
+| `stet commit [-m <summary>]` | **Finishes the review:** commits all accepted changes in one commit. The summary line defaults to the changeset titles; the body lists the accepted changes and a `Stet-Applied:` trailer. It commits the changed files whole, so your own uncommitted edits in them are committed too: Stet names those files in its output and in the commit message. |
 | `stet share` | Lets agents see your saved edits (they pick them up at their next sync). See *What agents see* below. |
 | `stet share manual\|saved\|committed` | Sets when agents see your edits. |
 | `stet group <12.1> <12.2>… --kind atomic\|linked\|related -t <title> [-m <rationale>] [--parts <file.json\|->]` | Groups changes yourself. `--parts` splits a linked group into parts: `[{"title": "Section 2", "items": ["12.1", "12.4"]}, …]`. |
@@ -173,6 +194,7 @@ Settings live in `.git/stet/config.json`. Only settings that differ from the def
 | `agentBranchPrefix` | `stet/` | Prefix of agent branches. |
 | `worktreeRoot` | `../{repo}.stet` | Where agent workspaces are created. It must be outside the project. |
 | `autoCommit` | `on-finish` | `on-finish`: `stet commit` / *Finish review* commits. `when-clean`: commit after each accept. |
+| `maxFileMB` | `20` | The largest file an agent can propose; a submit with a larger one is refused. |
 | `shareEdits` | `manual` | Which of your own edits agents see: `manual` (after `stet share`), `saved` (always), `committed`. |
 | `guardHooks` | `true` | Install the git hooks at `stet init`. |
 | `split.mergeGap`, `split.rewriteRatio`, `split.abbreviations` | 2, 0.5, … | How edits are split into items (spec §6.2). |

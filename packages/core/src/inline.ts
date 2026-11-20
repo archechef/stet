@@ -66,6 +66,7 @@ export function inlineDiff(oldText: string, newText: string): InlineDiff {
     }
   }
   if (open) hunks.push(open);
+  if (!hunks.length) return breaksOnly(oldText, newText) ?? whole;
 
   // Merge hunks separated only by whitespace: "a b" → "c d" reads better as one replacement.
   const merged: Hunk[] = [];
@@ -89,4 +90,34 @@ export function inlineDiff(oldText: string, newText: string): InlineDiff {
     removed: merged.filter((h) => h.end > h.start).map((h) => [h.start, h.end]),
     inserted: merged.filter((h) => h.nStart >= 0).map((h) => ({ at: h.end, text: newText.slice(h.nStart, h.nEnd) })),
   };
+}
+
+/** The whitespace before each word of `s`, and after the last: [start, end) offsets. */
+function gaps(s: string): [number, number][] {
+  const out: [number, number][] = [];
+  let prev = 0;
+  for (const m of s.matchAll(/\S+/g)) {
+    out.push([prev, m.index]);
+    prev = m.index + m[0].length;
+  }
+  out.push([prev, s.length]);
+  return out;
+}
+
+/**
+ * The same words with paragraph breaks added, removed or moved (a sentence that now starts the
+ * next paragraph): just those breaks, not the whole text struck through and inserted again.
+ */
+function breaksOnly(oldText: string, newText: string): InlineDiff | null {
+  const [og, ng] = [gaps(oldText), gaps(newText)];
+  if (og.length !== ng.length || og.length < 2) return null;
+  const br = /\n[ \t]*\n/;
+  const d: InlineDiff = { removed: [], inserted: [] };
+  og.forEach(([a, b], i) => {
+    const [c, e] = ng[i]!;
+    if (br.test(oldText.slice(a, b)) === br.test(newText.slice(c, e))) return;
+    if (b > a) d.removed.push([a, b]);
+    d.inserted.push({ at: b, text: newText.slice(c, e) });
+  });
+  return d.inserted.length ? d : null;
 }

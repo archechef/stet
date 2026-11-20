@@ -97,7 +97,7 @@ describe("frontend support", () => {
     const { items } = await stet.submit("a", { title: "t" });
     await stet.accept([items[0]!.id], { commit: false });
     git(repo, "commit", "-qam", "mine");
-    expect(await stet.commitAcceptedItems()).toEqual({ commit: null, items: [] });
+    expect(await stet.commitAcceptedItems()).toEqual({ commit: null, items: [], yourEdits: [] });
   });
 
   it("records the runtime command and rewrites agent workspaces, including env", async () => {

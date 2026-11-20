@@ -47,8 +47,9 @@ export class Locator {
     const lf = toLf(doc.getText());
     const idx = new LineIndex(lf);
     const out: Located[] = [];
+    const where = await p.stet.locateMany(items, lf).catch(() => new Map<string, { span: { start: number; end: number } | null }>());
     for (const item of items) {
-      const span = await p.stet.locateInText(item, lf).catch(() => null);
+      const span = where.get(item.id)?.span;
       if (!span) continue;
       const a = idx.position(span.start);
       const b = idx.position(span.end);
@@ -169,6 +170,9 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     after: {
       color: new vscode.ThemeColor("stet.insertedText.foreground"),
       backgroundColor: new vscode.ThemeColor("stet.insertedText.background"),
+      // High-contrast themes have no background here: a border marks it, not colour alone.
+      border: "1px dashed",
+      borderColor: new vscode.ThemeColor("stet.insertedText.border"),
     },
   });
   /** Where half of a move goes or comes from (instead of its text). */
@@ -375,6 +379,14 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   const lines = [`**${item.id}** · ${esc(item.agent)} · ${STATUS_TEXT[item.status]}`];
   if (cs) lines.push(`*${esc(cs.title)}*${cs.rationale ? ` — ${esc(cs.rationale)}` : ""}`);
   if (item.note) lines.push(esc(item.note));
+  // A revision: what it revises, and what you asked for there (test report 2026-11-20, B4).
+  if (item.supersedes) {
+    const prev = model.get(item.supersedes);
+    const asked = prev ? [...prev.thread].reverse().find((t) => t.author === "user") : undefined;
+    lines.push(`↻ **Revision of ${item.supersedes}**${asked ? `, where you asked: ${esc(asked.text)}` : ""}`);
+  }
+  if (item.status === "accepted" && item.resolution?.edited && item.kind === "modify")
+    lines.push(`✎ **Accepted with your wording:** ${diffBlock(item.oldText, item.resolution.appliedText)}\n\nThe agent proposed:`);
   if (item.draft !== undefined) lines.push(`✎ **Your wording** (from the review of this file), which Accept uses: ${fence(item.draft, "latex")}`);
   for (const gid of item.groups) {
     const g = model.group(gid);
@@ -396,7 +408,10 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     lines.push(fence(out ? item.oldText : item.newText, "latex"));
   } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
   else lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);
-  const last = item.thread.slice(-3);
+  // A decided change shows its whole conversation (History's tooltip showed only three messages,
+  // and later replies were lost); a pending one the latest three, as more is in its comment thread.
+  const last = isLive(item) ? item.thread.slice(-3) : item.thread;
+  if (last.length < item.thread.length) lines.push(`*${item.thread.length - last.length} earlier message${item.thread.length - last.length === 1 ? "" : "s"} in the comment thread*`);
   if (last.length) lines.push(last.map((t) => `> **${t.author === "user" ? "You" : esc(item.agent)}:** ${esc(t.text)}`).join("\n>\n"));
   return lines.join("\n\n");
 }

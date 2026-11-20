@@ -53,8 +53,13 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   const probe = new Repo(cwd);
   const name = await probe.tryRun(["config", "user.name"]);
   const email = await probe.tryRun(["config", "user.email"]);
+  // What git commits with, also when set by GIT_AUTHOR_* / GIT_COMMITTER_* (test report B10).
+  const ident = name && email ? null : await probe.tryRun(["var", "GIT_AUTHOR_IDENT"]);
+  const fromEnv = ident && (await probe.tryRun(["var", "GIT_COMMITTER_IDENT"])) ? ident.replace(/\s+\d+\s+[+-]\d{4}$/, "") : null;
   add(
-    name && email
+    fromEnv
+      ? { name: "git identity", status: "ok", message: `${fromEnv} (from the environment)` }
+      : name && email
       ? { name: "git identity", status: "ok", message: `${name} <${email}>` }
       : { name: "git identity", status: "warn", message: "user.name / user.email not set; Stet can't commit accepted changes for you", fix: 'git config --global user.name "Your Name" && git config --global user.email you@example.com' },
   );

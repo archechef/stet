@@ -84,7 +84,12 @@
       {
         "view": "stet.review",
         "contents": "Stet is not set up for this folder yet.\n[Set up project](command:stet.setup)\nStet keeps AI agents in their own workspace and lets you review each proposed change.",
-        "when": "workspaceFolderCount > 0 && !stet.active"
+        "when": "workspaceFolderCount > 0 && !stet.active && !stet.agentWorkspace"
+      },
+      {
+        "view": "stet.review",
+        "contents": "This folder is an AI agent's workspace. You review its changes in the window of your project, where its proposals arrive.\n[Open the project](command:stet.openAgentProject)",
+        "when": "stet.agentWorkspace"
       },
       {
         "view": "stet.review",
@@ -109,6 +114,11 @@
         "title": "New agent workspace",
         "category": "Stet",
         "icon": "$(add)"
+      },
+      {
+        "command": "stet.openAgentProject",
+        "title": "Open the project of this agent workspace",
+        "category": "Stet"
       },
       {
         "command": "stet.openAgent",
@@ -286,6 +296,24 @@
         "icon": "$(discard)"
       },
       {
+        "command": "stet.undoLast",
+        "title": "Undo my last decision",
+        "category": "Stet",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "stet.filter",
+        "title": "Filter and search…",
+        "category": "Stet",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "stet.clearFilter",
+        "title": "Show all changes",
+        "category": "Stet",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "stet.toggleInlineChanges",
         "title": "Changes inline in the editor",
         "category": "Stet",
@@ -453,6 +481,16 @@
     "menus": {
       "view/title": [
         {
+          "command": "stet.filter",
+          "when": "view == stet.review && stet.active",
+          "group": "navigation@0"
+        },
+        {
+          "command": "stet.clearFilter",
+          "when": "view == stet.review && stet.filtered",
+          "group": "navigation@0"
+        },
+        {
           "command": "stet.shareEdits",
           "when": "view == stet.review && stet.unshared",
           "group": "navigation@0"
@@ -553,11 +591,6 @@
           "command": "stet.showItem",
           "when": "view == stet.review && viewItem =~ /^item/",
           "group": "3_view@4"
-        },
-        {
-          "command": "stet.undo",
-          "when": "view == stet.review && viewItem =~ /\\.undo$/",
-          "group": "4_other@1"
         },
         {
           "command": "stet.changeActions",
@@ -863,42 +896,50 @@
       {
         "key": "a",
         "command": "stet.accept",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "r",
         "command": "stet.reject",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "e",
         "command": "stet.edit",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "c",
         "command": "stet.comment",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "v",
         "command": "stet.revise",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "d",
         "command": "stet.showDiff",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "shift+a",
         "command": "stet.acceptGroup",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "shift+r",
         "command": "stet.rejectGroup",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "j",
@@ -913,32 +954,42 @@
       {
         "key": "p",
         "command": "stet.preview",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "f",
         "command": "stet.reviewFile",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "u",
-        "command": "stet.undo",
+        "command": "stet.undoLast",
+        "when": "focusedView == stet.review && !inputFocus"
+      },
+      {
+        "key": "/",
+        "command": "stet.filter",
         "when": "focusedView == stet.review && !inputFocus"
       },
       {
         "key": ".",
         "command": "stet.changeActions",
-        "when": "focusedView == stet.review && !inputFocus"
+        "when": "focusedView == stet.review && !inputFocus",
+        "args": "panel"
       },
       {
         "key": "u",
         "command": "stet.undo",
-        "when": "focusedView == stet.history && !inputFocus"
+        "when": "focusedView == stet.history && !inputFocus",
+        "args": "history"
       },
       {
         "key": "d",
         "command": "stet.showDiff",
-        "when": "focusedView == stet.history && !inputFocus"
+        "when": "focusedView == stet.history && !inputFocus",
+        "args": "history"
       }
     ],
     "configuration": {
@@ -962,7 +1013,7 @@
         "stet.inlineChanges": {
           "type": "boolean",
           "default": true,
-          "description": "Show proposed changes inline in the editor (old text struck through, new text as ghost text)."
+          "description": "Show proposed changes in the editor: old text struck through, new text next to it."
         },
         "stet.longChanges": {
           "type": "string",
@@ -975,7 +1026,7 @@
           "enumDescriptions": [
             "Show the full new text in a panel under the change, open.",
             "The same panel, closed: click the change's marker in the gutter to open it.",
-            "Only in the hover (and in Show diff)."
+            "Only in the hover (and in Diff)."
           ],
           "description": "How proposed changes are shown whose new text is too long for one line of grey text."
         },
@@ -990,7 +1041,7 @@
           "enumDescriptions": [
             "Highlighted when word wrap is off, wrapping when it is on.",
             "Proposed text in green. It doesn't take part in word wrap.",
-            "Proposed text wraps with the line, in the colour of inlay hints (the panel's colour button makes them green)."
+            "Proposed text wraps with the line, in the colour of inlay hints (View options → Proposed text in green makes it green)."
           ],
           "description": "How proposed new text is drawn in the editor. Toggling word wrap with Alt+Z doesn't change the word wrap setting, so choose explicitly if you do that."
         },
@@ -1034,7 +1085,7 @@
           ],
           "default": "both",
           "enumDescriptions": [
-            "In a change's hover once it is built, and in the Preview panel (Preview in PDF).",
+            "In a change's hover once it is built, and in the Preview panel (PDF preview).",
             "Only in the hover.",
             "Only in the Preview panel.",
             "Not at all: nothing is compiled."
@@ -1073,6 +1124,16 @@
           "light": "#2EA04326",
           "highContrast": null,
           "highContrastLight": null
+        }
+      },
+      {
+        "id": "stet.insertedText.border",
+        "description": "Border of text a change inserts. Set in high-contrast themes only, where proposed text must not rely on colour.",
+        "defaults": {
+          "dark": "#00000000",
+          "light": "#00000000",
+          "highContrast": "contrastActiveBorder",
+          "highContrastLight": "contrastActiveBorder"
         }
       },
       {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
-import { diffBlock, fitsInline, ghostText, groupDescription, itemLabel, moveNote, proposalMarkdown, roundLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
+import { archiveChoices, bulkQuestion, changeAt, filterIsEmpty, filterText, fitLabel, matchesFilter, diffBlock, dissolveQuestion, itemSpoken, fitsInline, ghostText, groupDescription, itemLabel, moveNote, proposalMarkdown, roundLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
 import { isManaged, managedCliPath } from "../src/runtime.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
@@ -137,11 +137,19 @@ describe("labels and text", () => {
   it("labels items by kind", () => {
     expect(itemLabel(item("S1", "C1", { oldText: "problem", newText: "task" }))).toBe("S1  “problem” → “task”");
     expect(itemLabel(item("S1", "C1", { oldText: "", newText: "inserted\n text" }))).toBe("S1  + “inserted text”");
+    // A paragraph split, joined, or its break moved past a sentence, said in words (test report 2026-11-20).
+    expect(itemLabel(item("S1", "C1", { oldText: " ", newText: "\n\n" }))).toBe("S1  “␣” → “¶”  · paragraph split");
+    const moved = itemLabel(item("S1", "C1", { oldText: " Beta two is a long sentence here.\n\n", newText: "\n\nBeta two is a long sentence here. " }));
+    expect(moved).toMatch(/^S1  “….*here\.¶” → “¶Beta two.*…”  · paragraph break moved$/);
+    expect(itemSpoken(item("S1", "C1", { oldText: "\n\n", newText: " " }))).toMatch(/^Change S1, paragraphs joined, /);
     expect(itemLabel(item("S1", "C1", { kind: "rename-file", oldFile: "a.tex", file: "b.tex" }))).toBe("S1  rename a.tex → b.tex");
   });
 
   it("makes ghost text single-line and bounded", () => {
     expect(ghostText("a\nb")).toBe("a ⏎ b");
+    // Whitespace alone (a paragraph split or joined) is shown, not an invisible space.
+    expect(ghostText("\n\n")).toBe("¶");
+    expect(ghostText(" ")).toBe("␣");
     expect(ghostText("x".repeat(100), 10)).toBe("xxxxxxxxx…");
   });
 
@@ -259,5 +267,100 @@ describe("moves (spec §6.4.7)", () => {
     expect(moveNote(m.item("8.3")!, (id) => (id === "8.2" ? { ...m.get(id)!, file: "appendix.tex" } : m.get(id)), (id) => (id === "8.1" ? 5 : null))!.text).toMatch(
       /^⇡ moved here from line 5 and appendix\.tex \(8\.1, 8\.2\)/,
     );
+  });
+});
+
+describe("test report 2026-11-20", () => {
+  const at = (l: number, c: number) => ({ line: l, character: c });
+  const loc = (id: string, l: number, a: number, b: number, l2 = l) => ({ id, range: { start: at(l, a), end: at(l2, b) } });
+
+  it("B8: a command at the cursor takes the change it is in, else the nearest on the line", () => {
+    const located = [loc("first", 3, 0, 10), loc("second", 3, 40, 50), loc("other", 5, 0, 5)];
+    expect(changeAt(located, at(3, 45))!.id).toBe("second");
+    expect(changeAt(located, at(3, 5))!.id).toBe("first");
+    expect(changeAt(located, at(3, 36))!.id).toBe("second"); // nearer the second than the first
+    expect(changeAt(located, at(3, 14))!.id).toBe("first");
+    expect(changeAt(located, at(4, 0))).toBeUndefined();
+    // A change over several lines: on its last line too, and inside it on a middle line.
+    expect(changeAt([loc("long", 7, 30, 12, 9)], at(9, 2))!.id).toBe("long");
+    expect(changeAt([loc("long", 7, 30, 12, 9)], at(8, 0))!.id).toBe("long");
+  });
+
+  it("D5: the archive dialog offers keeping the folder first, and says what deleting loses", () => {
+    expect(archiveChoices(0).order).toEqual(["Archive, keep folder", "Archive and delete folder"]);
+    const c = archiveChoices(3);
+    expect(c.order[0]).toBe(c.keep);
+    expect(c.del).toBe("Archive and delete folder, with 3 unsubmitted files");
+    expect(archiveChoices(1).del).toMatch(/1 unsubmitted file$/);
+  });
+
+  it("B4: labels show a revision and where a long change differs", () => {
+    const a = item("3.1", "C3", {
+      supersedes: "2.4",
+      oldText: "\\begin{equation} r = \\frac{\\ln(N_t) - \\ln(N_0)}{t} \\end{equation}",
+      newText: "\\begin{equation} r = \\frac{\\ln N_t - \\ln N_0}{t} \\end{equation}",
+    });
+    const label = itemLabel(a);
+    expect(label).toContain("revises 2.4");
+    expect(label).toContain("\\ln(N_t)");
+    expect(label).toContain("\\ln N_t");
+    expect(itemLabel(item("1.1", "C1", { oldText: " ", newText: "~" }))).toContain("“␣” → “~”");
+  });
+});
+
+describe("test report 2026-11-20: confirmations and screen readers", () => {
+  it("asks before deciding several changes at once, except a linked group's", () => {
+    const s = (count: number, changeset: boolean, linked: boolean) => ({ count, what: "C3 “Polish”", changeset, linked });
+    expect(bulkQuestion("Reject", s(5, true, false))).toBe("Reject all 5 changes of C3 “Polish”?");
+    expect(bulkQuestion("Accept", s(4, false, false))).toMatch(/^Accept all 4 changes/); // a related group
+    expect(bulkQuestion("Accept", s(4, false, true))).toBeNull(); // a linked group goes together anyway
+    expect(bulkQuestion("Reject", s(1, true, false))).toBeNull();
+    expect(dissolveQuestion({ id: "G2", kind: "linked", title: "Rename" })).toMatch(/can't be undone/);
+    expect(dissolveQuestion({ id: "G3", kind: "related", title: "Wording" })).toBeNull();
+  });
+
+  it("reads a change out in words", () => {
+    expect(itemSpoken(item("2.1", "C2", { oldText: "problem", newText: "task" }), 4)).toBe("Change 2.1, replace “problem” with “task”, in main.tex line 4, pending");
+    expect(itemSpoken(item("2.2", "C2", { oldText: "", newText: "very ", status: "needs_revision" }))).toBe("Change 2.2, insert “very”, in main.tex, needs revision");
+    expect(itemSpoken(item("2.3", "C2", { kind: "add-file", file: "a.tex" }))).toBe("Change 2.3, add file in a.tex, pending");
+  });
+});
+
+describe("test report 2026-11-20: filters and labels", () => {
+  it("filters what the panel shows by agent, file, status and words, keeping the tree around matches", () => {
+    const s = snap();
+    s.items.push(item("S6", "C1", { file: "intro.tex", oldText: "estimator", newText: "statistic", thread: [{ at: "", author: "user", text: "Why the change?" }] }));
+    const m = new TreeModel(s, "review", { file: "intro.tex" });
+    const [a] = m.children();
+    const [c1] = m.children(a);
+    expect(ids(m.children(c1))).toEqual(["S6"]); // G1 has no match: hidden
+    m.filter = { status: "needs_revision" };
+    expect(ids(m.children(m.children(m.children()[0])[0]))).toEqual(["G1"]);
+    expect(ids(m.children(m.children(m.children(m.children()[0])[0])[0]))).toEqual(["S5"]);
+    m.filter = { agent: "nobody" };
+    expect(m.children()).toEqual([]);
+    m.filter = null;
+    expect(ids(m.children(m.children(m.children()[0])[0]))).toEqual(["G1", "S6"]);
+    // Decisions still see the whole group, whatever is shown.
+    m.filter = { text: "statistic" };
+    expect(m.members(s.groups[0]!).map((i) => i.id)).toEqual(["S1", "S2", "S5"]);
+  });
+
+  it("matches words anywhere in a change, all of them", () => {
+    const it = item("3.2", "C3", { oldText: "the estimator", newText: "the statistic", note: "Consistent with Section 2", thread: [{ at: "", author: "agent", text: "As asked" }] });
+    expect(matchesFilter(it, { text: "STATISTIC" })).toBe(true);
+    expect(matchesFilter(it, { text: "section estimator" })).toBe(true);
+    expect(matchesFilter(it, { text: "asked" })).toBe(true);
+    expect(matchesFilter(it, { text: "estimator missing" })).toBe(false);
+    expect(matchesFilter(it, { text: "3.2", file: "main.tex" })).toBe(true);
+    expect(matchesFilter(it, { file: "other.tex" })).toBe(false);
+    expect(filterIsEmpty({ text: "  " })).toBe(true);
+    expect(filterText({ agent: "claude-1", file: "a.tex", status: "pending", text: "x" })).toBe("agent claude-1 · a.tex · waiting for you · “x”");
+  });
+
+  it("shortens long names at a word, so counts stay visible", () => {
+    expect(fitLabel("short", 28)).toBe("short");
+    expect(fitLabel("Polish the introduction and the related work section", 40)).toBe("Polish the introduction and the…");
+    expect(fitLabel("an-extremely-long-agent-name-without-spaces", 20)).toBe("an-extremely-long-a…");
   });
 });

@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
 import {
+  changeSummary,
+  inlineDiff,
+  paragraphChange,
+  foldPath,
+  isLive,
   archivedMessage,
   checkToolUse,
   describeFeedback,
@@ -60,7 +65,9 @@ Project (run in your project folder):
                                         create an agent workspace
   stet agent list
   stet agent refresh <name>             rewrite the agent's instructions, MCP and guard files
-  stet agent archive <name> [--remove]  retire an agent (withdraws its pending items)
+  stet agent archive <name> [--remove [--force]]
+                                        retire an agent (withdraws its pending items); --remove deletes
+                                        its folder and branch (--force: even with unsubmitted changes)
   stet agent notify <name> [now|batched|off] [--on <kinds>|all]
                                         when a watching agent is woken, and by what: accepted,
                                         rejected, revision, comment, note, document, save
@@ -72,8 +79,8 @@ Review:
   stet review [--agent <a>] [--status <s>] [--all]
                                         list items (default: pending)
   stet show <12.3|G3|G3.2|C12|N3>       show a change (round 12, change 3), group, part of a group, round or note
-  stet accept <12.3|G3|G3.2>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
-  stet reject <12.3|G3|G3.2>... [-m <reason>] [--all | --revise-rest | --only]
+  stet accept <12.3|G3|G3.2|C12>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
+  stet reject <12.3|G3|G3.2|C12>... [-m <reason>] [--all | --revise-rest | --only]
   stet undo <12.3>                      undo an accept (until committed) or a rejection: pending again
   stet preview <12.3> [--page <n> [--before]]
                                         PDF preview: images of the page region before and after the change
@@ -108,12 +115,10 @@ Internal (called by agents' tools):
 
 Global: --json for machine-readable output, --help.`;
 
-const { values: opt, positionals: pos } = parseArgs({
-  allowPositionals: true,
-  strict: true,
-  options: {
+const OPTIONS = {
     json: { type: "boolean" },
     help: { type: "boolean", short: "h" },
+    version: { type: "boolean", short: "v" },
     main: { type: "string" },
     kind: { type: "string" },
     path: { type: "string" },
@@ -141,8 +146,23 @@ const { values: opt, positionals: pos } = parseArgs({
     page: { type: "string" },
     before: { type: "boolean" },
     print: { type: "boolean" },
-  },
-});
+} as const;
+
+/** Exit codes, for scripts: 1 any other error, 2 a wrong command line, 3 an unknown id or name. */
+const EXIT = { error: 1, usage: 2, unknown: 3 } as const;
+
+/** The command line; a wrong option is a usage error, not a stack trace (test report B1). */
+function parseCommandLine() {
+  try {
+    return parseArgs({ allowPositionals: true, strict: true, options: OPTIONS });
+  } catch (e: any) {
+    if (!String(e?.code).startsWith("ERR_PARSE_ARGS")) throw e;
+    const msg = String(e.message).split("\n")[0]!.replace(/\. To specify a positional argument.*$/, "");
+    console.error(`error: ${msg}. Run \`stet --help\`.`);
+    process.exit(EXIT.usage);
+  }
+}
+const { values: opt, positionals: pos } = parseCommandLine();
 
 // ---------------------------------------------------------------------------
 // Output helpers
@@ -170,12 +190,31 @@ function out(human: () => string | void, data: unknown) {
   }
 }
 
-const statusColor = (s: ItemStatus) =>
-  s === "accepted" ? green(s) : s === "rejected" || s === "stale" ? red(s) : s === "needs_revision" ? yellow(s) : s === "pending" ? cyan(s) : dim(s);
+/** A status in words ("needs revision", not needs_revision), coloured. */
+const statusColor = (st: ItemStatus) => {
+  const s = st.replace(/_/g, " ");
+  return st === "accepted" ? green(s) : st === "rejected" || st === "stale" ? red(s) : st === "needs_revision" ? yellow(s) : st === "pending" ? cyan(s) : dim(s);
+};
+
+/** A stored time (UTC) in the local time zone, to the minute. */
+const localTime = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const sizeOf = (n: number) => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 function itemSummary(it: Item, line?: number): string {
   const where = `${it.file}${line ? `:${line}` : ""}`;
-  if (it.kind !== "modify") return `${bold(it.id)} ${statusColor(it.status)} ${it.kind} ${where}${it.oldFile ? ` (from ${it.oldFile})` : ""}`;
+  if (it.kind !== "modify") {
+    const text = it.kind === "delete-file" ? it.oldText : it.newText;
+    const size = it.kind === "binary" ? "" : dim(` (${sizeOf(Buffer.byteLength(text, "utf8"))})`);
+    // A rename that also changes the text says so (it showed as a plain rename).
+    const edited = it.kind === "rename-file" && it.oldText !== it.newText ? " and edited" : "";
+    return `${bold(it.id)} ${statusColor(it.status)} ${it.kind}${edited} ${where}${it.oldFile ? ` (from ${it.oldFile})` : ""}${size}`;
+  }
   if (it.move) {
     // Half of a move (spec §6.4.7): decided with its other half.
     const how = it.move.changed ? yellow(`${it.move.changed} word(s) changed on the way`) : "word for word";
@@ -184,8 +223,13 @@ function itemSummary(it: Item, line?: number): string {
       : `${green(`moved in: "${oneLine(it.newText, 40)}"`)} ${dim(`← ${moveFrom(it.move).join(", ")},`)} ${how}`;
     return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${move}`;
   }
-  const change = !it.oldText ? green(`+ "${oneLine(it.newText, 50)}"`) : !it.newText ? red(`- "${oneLine(it.oldText, 50)}"`) : `${red(`"${oneLine(it.oldText, 30)}"`)} → ${green(`"${oneLine(it.newText, 30)}"`)}`;
-  return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${change}`;
+  const [o, n] = changeSummary(it.oldText, it.newText, it.oldText && it.newText ? 30 : 50);
+  const change = !it.oldText ? green(`+ "${n}"`) : !it.newText ? red(`- "${o}"`) : `${red(`"${o}"`)} → ${green(`"${n}"`)}`;
+  // A revision says what it revises (the reviewer's request is in `stet show`).
+  const revises = it.supersedes ? dim(` (revises ${it.supersedes})`) : "";
+  // A paragraph split, joined, or its break moved past a sentence: said in words.
+  const breaks = paragraphChange(it.oldText, it.newText);
+  return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${breaks ? `${breaks}: ` : ""}${change}${revises}`;
 }
 
 function itemDiff(it: Item): string {
@@ -199,9 +243,22 @@ function itemDiff(it: Item): string {
   // Context up to the line boundary, without a cut-off partial word.
   const before = (it.context.before.split("\n").pop() ?? "").replace(/^\S*\s/, "…");
   const after = (it.context.after.split("\n")[0] ?? "").replace(/\s\S*$/, "…");
-  const del = it.oldText ? (color ? `\x1b[31;9m${it.oldText}\x1b[0m` : `[-${it.oldText}-]`) : "";
-  const ins = it.newText ? (color ? `\x1b[32;4m${it.newText}\x1b[0m` : `{+${it.newText}+}`) : "";
-  return dim(before) + del + ins + dim(after);
+  const del = (t: string) => (t ? (color ? `\x1b[31;9m${t}\x1b[0m` : `[-${t}-]`) : "");
+  const ins = (t: string) => (t ? (color ? `\x1b[32;4m${t}\x1b[0m` : `{+${t}+}`) : "");
+  if (paragraphChange(it.oldText, it.newText)) {
+    // Only the paragraph breaks changed: those, made visible, in the text (not all of it twice).
+    const shown = (t: string) => t.replace(/\n[ \t]*\n\s*/g, "¶").replace(/\n/g, "↵").replace(/[ \t]/g, "␣");
+    const d = inlineDiff(it.oldText, it.newText);
+    let out = "";
+    let pos = 0;
+    for (const { at, text } of d.inserted) {
+      const [a] = d.removed.find(([, b]) => b === at) ?? [at];
+      out += it.oldText.slice(pos, a) + del(shown(it.oldText.slice(a, at))) + ins(shown(text));
+      pos = at;
+    }
+    return dim(before) + out + it.oldText.slice(pos) + dim(after);
+  }
+  return dim(before) + del(it.oldText) + ins(it.newText) + dim(after);
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +275,24 @@ async function agentId(stet: Stet): Promise<string> {
   return (await stet.agentForCwd(process.cwd())).id;
 }
 
+const STATUSES: readonly ItemStatus[] = ["pending", "needs_revision", "accepted", "rejected", "withdrawn", "superseded", "stale"];
+
+/** `--status a,b`, checked: a typo matched nothing and said "Nothing to review" (test report B5). */
+function statusOption(v: string): ItemStatus[] {
+  const out = v.split(",").map((s) => s.trim()).filter(Boolean);
+  const bad = out.filter((s) => !STATUSES.includes(s as ItemStatus));
+  if (bad.length) throw new StetError(`Unknown status ${bad.map((b) => `'${b}'`).join(", ")} (use ${STATUSES.join(", ")}).`);
+  return out as ItemStatus[];
+}
+
+/** `--agent <name>`, checked against the agents there are (archived ones too). */
+async function agentOption(stet: Stet): Promise<string | undefined> {
+  if (!opt.agent) return undefined;
+  const all = await stet.listAgents();
+  if (!all.some((a) => a.id === opt.agent)) throw new StetError(`Unknown agent '${opt.agent}'${all.length ? ` (there are: ${all.map((a) => a.id).join(", ")})` : " (there are no agents yet)"}.`);
+  return opt.agent;
+}
+
 function need(v: string | undefined, what: string): string {
   if (!v) throw new StetError(`Missing ${what}.`);
   return v;
@@ -225,6 +300,16 @@ function need(v: string | undefined, what: string): string {
 
 /** A group (G3) or a part of one (G3.2). */
 const isGroupId = (s: string) => /^G\d+(\.\d+)?$/i.test(s);
+const isRoundId = (s: string) => /^C\d+$/i.test(s);
+
+/** A round's (C3) pending changes, for accepting or rejecting it whole (test report UX: "Unknown item 'C1'"). */
+async function roundItems(stet: Stet, id: string): Promise<string[]> {
+  const cs = (await stet.listChangesets()).find((c) => c.id === id.toUpperCase());
+  if (!cs) throw new StetError(`Unknown changeset ${id.toUpperCase()}.`);
+  const ids = (await stet.listItems({ changeset: cs.id })).filter((i) => isLive(i.status)).map((i) => i.id);
+  if (!ids.length) throw new StetError(`${cs.id} has no pending changes.`);
+  return ids;
+}
 
 /** How other tools should invoke this CLI: absolute node + script paths. */
 const SELF: CliCommand = {
@@ -340,6 +425,7 @@ function noteSummary(n: Note): string {
 
 async function main() {
   const [cmd, ...args] = pos;
+  if (opt.version || cmd === "version") return out(() => `stet ${VERSION}`, { version: VERSION });
   if (!cmd || opt.help || cmd === "help") return console.log(HELP);
   const cwd = process.cwd();
 
@@ -407,21 +493,33 @@ async function main() {
   }
 
   if (cmd === "init") {
+    // A second run only refreshes the setup: say so, instead of the first-time message (test report UX).
+    const already = await Stet.open(cwd).then(() => true, () => false);
     const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), cli: SELF });
     const cfg = await stet.config();
     const hooks = await hookStatus(stet.repo, stet.commonDir);
+    // Agents start from the last commit: edits not committed yet are not theirs to see.
+    const dirty = (await stet.repo.tryRun(["status", "--porcelain", "--untracked-files=no"])) ?? "";
     return out(
       () =>
-        `Stet is set up for ${stet.mainPath} (main branch '${cfg.mainBranch}').\n` +
+        (already ? `Stet was already set up for ${stet.mainPath} (main branch '${cfg.mainBranch}'); its setup is refreshed.\n` : `Stet is set up for ${stet.mainPath} (main branch '${cfg.mainBranch}').\n`) +
         (hooks.missing.length
           ? yellow(`! Git guard hooks not installed (${hooks.customHooksPath ? `core.hooksPath is ${hooks.dir}` : "disabled"}). See \`stet hooks install\`.`) + "\n"
-          : `Git guard hooks installed in ${hooks.dir}.\n`) +
-        `Next: stet agent new <name>, and once per machine: stet setup claude (and/or stet setup codex)`,
-      { mainPath: stet.mainPath, mainBranch: cfg.mainBranch, hooks },
+          : already ? "" : `Git guard hooks installed in ${hooks.dir}.\n`) +
+        (dirty ? yellow("! You have uncommitted edits. Agents start from your last commit: commit them first, or share them with `stet share`.") + "\n" : "") +
+        (already ? "" : `Next: stet agent new <name>. Optional, once per machine: stet setup claude (or codex) registers Stet with the agent tool for every folder; each workspace already has its own config.`),
+      { mainPath: stet.mainPath, mainBranch: cfg.mainBranch, hooks, alreadySetUp: already, uncommittedEdits: !!dirty },
     );
   }
 
-  const stet = await Stet.open(cwd);
+  // The reviewer's commands, refused in an agent's workspace: an agent without a sandbox could
+  // otherwise accept its own proposals (test report 2026-11-20).
+  const located = await Stet.locate(cwd);
+  const reviewerOnly = ["accept", "reject", "undo", "commit", "revise", "comment", "share", "group", "ungroup", "note", "hooks"].includes(cmd) || (cmd === "agent" && args[0] !== "list");
+  if (reviewerOnly && foldPath(located.toplevel) !== foldPath(located.mainPath)) {
+    throw new StetError(`\`stet ${cmd}\` is for the reviewer, and this is an agent's workspace (${located.toplevel}). Run it in your project folder, ${located.mainPath}.`);
+  }
+  const stet = await Stet.open(cwd, located);
 
   switch (cmd) {
     case "agent": {
@@ -440,7 +538,7 @@ async function main() {
             `Created agent ${bold(a.id)} on branch ${a.branch}.\n` +
             `Workspace: ${bold(a.worktree)}\n\n` +
             `Start the agent in that folder:\n${launch}\n\n` +
-            `It gets its instructions and the Stet tools automatically (run \`stet setup ${kind === "codex" ? "codex" : "claude"}\` once per machine).\n` +
+            `It gets its instructions and the Stet tools automatically, from files in that folder.\n` +
             `Review with \`stet review\`.`,
           a,
         );
@@ -460,7 +558,7 @@ async function main() {
         return out(() => (agents.length ? agents.map((a: Agent) => `${bold(a.id)} ${dim(a.state)} ${a.kind}  ${a.worktree}`).join("\n") : "No agents."), agents);
       }
       if (sub === "archive") {
-        const r = await stet.archiveAgent(need(name, "agent name"), { removeWorktree: !!opt.remove });
+        const r = await stet.archiveAgent(need(name, "agent name"), { removeWorktree: !!opt.remove, discardUnsubmitted: !!opt.force });
         return out(
           () =>
             `Archived ${name}.` +
@@ -506,17 +604,29 @@ async function main() {
     }
 
     case "review": {
-      const status: ItemStatus[] | undefined = opt.all ? undefined : opt.status ? (opt.status.split(",") as ItemStatus[]) : ["pending", "needs_revision"];
-      const items = await stet.listItems({ ...(opt.agent ? { agent: opt.agent } : {}), ...(status ? { status } : {}) });
+      const status: ItemStatus[] | undefined = opt.all ? undefined : opt.status ? statusOption(opt.status) : ["pending", "needs_revision"];
+      const agent = await agentOption(stet);
+      const items = await stet.listItems({ ...(agent ? { agent } : {}), ...(status ? { status } : {}) });
       const groups = await stet.listGroups();
       const changesets = await stet.listChangesets();
       if (opt.json) return out(() => {}, { items, groups: groups.filter((g) => g.items.some((i) => items.some((x) => x.id === i))) });
       const share = await stet.shareStatus().catch(() => null);
-      const shareHint = share?.unshared && share.mode === "manual" ? [dim("Agents don't see your latest saved edits yet: `stet share` shares them.")] : [];
+      // Only when there are agents to share with (test report UX: it showed before any agent existed).
+      const agents = (await stet.listAgents()).filter((a) => a.state === "active");
+      const shareHint = agents.length && share?.unshared && share.mode === "manual" ? [dim("Agents don't see your latest saved edits yet: `stet share` shares them.")] : [];
       const missing = await stet.missingFromBase().catch(() => []);
       if (missing.length) shareHint.push(yellow(missingText(missing)));
-      if (!items.length) return console.log(forTerminal(["Nothing to review.", ...shareHint].join("\n")));
+      // Accepted but not committed: easy to forget without a word here (test report UX).
+      const uncommitted = await stet.uncommittedAccepted();
+      if (uncommitted.length) shareHint.push(`${uncommitted.length} accepted change${uncommitted.length === 1 ? "" : "s"} not committed yet (${uncommitted.map((i) => i.id).join(", ")}): \`stet commit\` finishes the review.`);
+      if (!items.length) {
+        const next = !agents.length ? "Create a workspace for an agent: `stet agent new <name>`." : uncommitted.length ? "" : "When an agent submits changes, they show here.";
+        return console.log(forTerminal(["Nothing to review.", ...shareHint, ...(next ? [dim(next)] : [])].join("\n")));
+      }
       const lines: string[] = [];
+      const where = await stet.locateMany(items);
+      // Changes no longer found in your file (you edited around them): accepting them fails.
+      const lost = items.filter((i) => i.kind === "modify" && isLive(i.status) && !where.get(i.id)?.span);
       for (const cs of changesets) {
         const csItems = items.filter((i) => i.changeset === cs.id);
         if (!csItems.length) continue;
@@ -532,17 +642,19 @@ async function main() {
             if (!its.length) continue;
             if (u.head) lines.push(`      ${u.head}`);
             for (const i of its) {
-              const { line } = await stet.locateInWorkingCopy(i);
+              const line = where.get(i.id)?.line;
               lines.push(`${u.head ? "        " : "      "}${itemSummary(i, line)}`);
               shown.add(i.id);
             }
           }
         }
         for (const i of csItems.filter((x) => !shown.has(x.id))) {
-          const { line } = await stet.locateInWorkingCopy(i);
+          const line = where.get(i.id)?.line;
           lines.push(`    ${itemSummary(i, line)}`);
         }
       }
+      if (lost.length) shareHint.push(yellow(`! Not found in your file any more (you edited there): ${lost.map((i) => i.id).join(", ")}. Accept with your own text (\`stet accept <id> --text …\`), reject, or ask for a revision.`));
+      lines.push(dim("Next: stet show <id> · stet accept <id> · stet reject <id> -m <why>"));
       return console.log(forTerminal([...lines, ...shareHint].join("\n")));
     }
 
@@ -564,7 +676,7 @@ async function main() {
         const { group: g, part } = await stet.groupTarget(id);
         const items = (await Promise.all((part ?? g).items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
         if (part) return out(() => [`${bold(id)} part of ${g.id} (${g.title}): ${part.title}`, ...items.map((i) => itemSummary(i))].join("\n"), { group: g, part, items });
-        const lines = [`${bold(g.id)} ${g.kind} ${g.title} (${g.state})`, g.rationale ?? ""];
+        const lines = [`${bold(g.id)} ${g.kind} ${g.title} (${g.state})`, g.rationale ?? "", ...(await stet.partlyDecided(items)).map((w) => yellow("! ") + w)];
         if (g.parts) {
           for (const [k, p] of g.parts.entries()) lines.push(`${bold(partId(g.id, k))} ${p.title}`, ...items.filter((i) => p.items.includes(i.id)).map((i) => "  " + itemSummary(i)));
         } else lines.push(...items.map((i) => itemSummary(i)));
@@ -574,16 +686,29 @@ async function main() {
         const cs = (await stet.listChangesets()).find((x) => x.id === id);
         if (!cs) throw new StetError(`Unknown changeset ${id}.`);
         const items = await stet.listItems({ changeset: id });
-        return out(() => [`${bold(cs.id)} ${cs.title} (${cs.agent}, ${cs.submittedAt})`, cs.rationale, ...items.map((i) => itemSummary(i))].filter(Boolean).join("\n"), { changeset: cs, items });
+        return out(() => [`${bold(cs.id)} ${cs.title} (${cs.agent}, ${localTime(cs.submittedAt)})`, cs.rationale, ...items.map((i) => itemSummary(i))].filter(Boolean).join("\n"), { changeset: cs, items });
       }
       const it = await stet.getItem(id);
       if (!it) throw new StetError(`Unknown item ${id}.`);
       const { line } = await stet.locateInWorkingCopy(it);
       const moveItems = it.move ? await Promise.all([...moveFrom(it.move), ...moveTo(it.move)].map((id) => stet.getItem(id))) : [];
       const moved = it.move ? moveTexts(it.move, (id) => moveItems.find((m) => m?.id === id) ?? undefined) : null;
+      // A revision: what it revises, and what the reviewer asked for there (test report B4).
+      const prev = it.supersedes ? await stet.getItem(it.supersedes) : null;
+      const asked = prev ? [...prev.thread].reverse().find((t) => t.author === "user") : undefined;
+      // The text that went in (accepted with your wording) or would (your wording): test report B11.
+      const yours = it.status === "accepted" && it.resolution?.edited ? it.resolution.appliedText : it.draft;
       return out(() => {
         const lines = [itemSummary(it, line)];
         if (it.note) lines.push(`${dim("note:")} ${it.note}`);
+        if (prev) {
+          lines.push(`${dim("revises:")} ${prev.id} (${prev.status})${asked ? `, where you asked: ${asked.text}` : ""}`);
+          if (prev.kind === "modify") lines.push(`  ${dim("it proposed:")} ${itemDiff(prev)}`);
+        }
+        if (yours !== undefined && it.kind === "modify") {
+          lines.push(`${dim(it.status === "accepted" ? "accepted with your wording:" : "your wording (not accepted yet):")} ${itemDiff({ ...it, newText: yours })}`);
+          lines.push(`${dim("the agent proposed:")} ${itemDiff(it)}`);
+        }
         if (it.move) {
           lines.push(`${dim("move:")} ${moveFrom(it.move).join(", ")} remove the text, ${moveTo(it.move).join(", ")} insert it; accepting or rejecting one decides the whole move.`);
           if (it.move.changed && moved) {
@@ -593,14 +718,16 @@ async function main() {
         }
         if (it.groups.length) lines.push(`${dim("groups:")} ${it.groups.join(", ")}`);
         if (it.conflictsWith.length) lines.push(`${yellow("conflicts with:")} ${it.conflictsWith.join(", ")}`);
-        lines.push("", itemDiff(it));
-        if (it.thread.length) lines.push("", ...it.thread.map((t) => `${dim(t.at.slice(0, 16).replace("T", " "))} ${bold(t.author)}: ${t.text}`));
+        if (yours === undefined || it.kind !== "modify") lines.push("", itemDiff(it));
+        // Without colours, the markers need a word (test report UX).
+        if (!color && it.kind === "modify") lines.push(dim("([-…-] is removed, {+…+} is added)"));
+        if (it.thread.length) lines.push("", ...it.thread.map((t) => `${dim(localTime(t.at))} ${bold(t.author)}: ${t.text}`));
         return lines.join("\n");
       }, { ...it, line });
     }
 
     case "accept": {
-      if (!args.length) throw new StetError("Usage: stet accept <12.3|G3>...");
+      if (!args.length) throw new StetError("Usage: stet accept <12.3|G3|C12>...");
       const commit = opt["no-commit"] ? false : opt.commit ? true : undefined;
       const edited: Record<string, string> = {};
       const text = opt["text-file"] ? await readFile(opt["text-file"], "utf8") : opt.text;
@@ -608,7 +735,8 @@ async function main() {
         if (args.length !== 1 || isGroupId(args[0]!)) throw new StetError("--text/--text-file needs exactly one item id.");
         edited[args[0]!] = text;
       }
-      let ids = args.filter((a) => !isGroupId(a));
+      let ids = args.filter((a) => !isGroupId(a) && !isRoundId(a));
+      for (const r of args.filter(isRoundId)) ids.push(...(await roundItems(stet, r)));
       const results: AcceptResult[] = [];
       for (const g of args.filter(isGroupId)) results.push(await stet.acceptGroup(g, commit === undefined ? {} : { commit }));
       if (ids.length) results.push(await stet.accept(ids, { edited, overrideLinked: !!opt.force, ...(commit === undefined ? {} : { commit }) }));
@@ -628,17 +756,19 @@ async function main() {
     }
 
     case "reject": {
-      if (!args.length) throw new StetError("Usage: stet reject <12.3|G3>... [-m reason]");
+      if (!args.length) throw new StetError("Usage: stet reject <12.3|G3|C12>... [-m reason]");
       const mode = opt.all ? "all" : opt["revise-rest"] ? "revise-rest" : opt.only ? "only" : undefined;
       let ids: string[] = [];
       for (const a of args) {
-        if (!isGroupId(a)) ids.push(a);
+        if (isRoundId(a)) ids.push(...(await roundItems(stet, a)));
+        else if (!isGroupId(a)) ids.push(a);
         else ids.push(...(await stet.groupTarget(a)).pending);
       }
       ids = [...new Set(ids.map((i) => i.toUpperCase()))];
       try {
-        const rejected = await stet.reject(ids, { ...(opt.message ? { reason: opt.message } : {}), ...(mode ? { mode } : args.some(isGroupId) ? { mode: "all" as const } : {}) });
-        return out(() => `${red("Rejected")} ${rejected.map((i) => i.id).join(", ")}`, rejected);
+        const rejected = await stet.reject(ids, { ...(opt.message ? { reason: opt.message } : {}), ...(mode ? { mode } : args.some((a) => isGroupId(a) || isRoundId(a)) ? { mode: "all" as const } : {}) });
+        const warnings = await stet.partlyDecided(rejected);
+        return out(() => [`${red("Rejected")} ${rejected.map((i) => i.id).join(", ")}`, ...warnings.map((w) => yellow("! ") + w)].join("\n"), rejected);
       } catch (e) {
         if (e instanceof StetError && /is linked with/.test(e.message)) {
           throw new StetError(e.message + "\n  Use --all, --revise-rest or --only.");
@@ -711,7 +841,11 @@ async function main() {
     case "commit": {
       const r = await stet.commitAcceptedItems(opt.message ? { subject: opt.message } : {});
       return out(
-        () => (r.commit ? `Committed ${r.items.map((i) => i.id).join(", ")} as ${r.commit.slice(0, 7)}.` : "Nothing to commit: all accepted items are committed."),
+        () =>
+          r.commit
+            ? `Committed ${r.items.map((i) => i.id).join(", ")} as ${r.commit.slice(0, 7)}.` +
+              (r.yourEdits.length ? `\n${yellow("!")} Stet commits whole files: this includes your own edits in ${r.yourEdits.join(", ")}.` : "")
+            : "Nothing to commit: all accepted items are committed.",
         r,
       );
     }
@@ -754,7 +888,8 @@ async function main() {
     }
 
     case "notes": {
-      const notes = await stet.listNotes({ ...(opt.agent ? { agent: opt.agent } : {}), ...(opt.all ? {} : { state: "open" as const }) });
+      const noteAgent = await agentOption(stet);
+      const notes = await stet.listNotes({ ...(noteAgent ? { agent: noteAgent } : {}), ...(opt.all ? {} : { state: "open" as const }) });
       return out(() => (notes.length ? notes.map(noteSummary).join("\n") : "No open notes."), notes);
     }
 
@@ -845,7 +980,7 @@ async function main() {
 
     case "list": {
       const id = await agentId(stet);
-      const items = await stet.listItems({ agent: id, ...(opt.status ? { status: opt.status.split(",") as ItemStatus[] } : {}) });
+      const items = await stet.listItems({ agent: id, ...(opt.status ? { status: statusOption(opt.status) } : {}) });
       return out(() => (items.length ? items.map((i) => itemSummary(i)).join("\n") : "No items."), items);
     }
 
@@ -877,6 +1012,10 @@ main().catch((e) => {
   if (e instanceof StetError) {
     if (opt.json) console.log(JSON.stringify({ error: e.message }));
     else console.error(red("error: ") + forTerminal(e.message));
-  } else console.error(e);
-  process.exitCode = 1;
+    process.exitCode = /^(Usage: |Missing |Unknown status )/.test(e.message) ? EXIT.usage : /^Unknown (item|group|changeset|agent|note|command)\b/.test(e.message) ? EXIT.unknown : EXIT.error;
+  } else {
+    // Not Stet's own error: the message, and the stack only when asked for.
+    console.error(red("error: ") + (e?.message ?? String(e)) + (process.env.STET_DEBUG ? `\n${e?.stack ?? ""}` : "\n(set STET_DEBUG=1 for details)"));
+    process.exitCode = EXIT.error;
+  }
 });

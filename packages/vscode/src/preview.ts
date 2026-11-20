@@ -15,6 +15,10 @@ type Target = { project: Project; item: Item };
 const keyOf = (t: Target) => `${t.project.mainPath}|${t.item.id}|${t.item.baseCommit}|${t.item.range.start}|${t.item.newText.length}`;
 const html = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
+/** The zoom buttons, named for screen readers (not just − and +). */
+const ZOOM_BUTTONS =
+  `<button id="out" title="Zoom out" aria-label="Zoom out">−</button><button id="fit" title="Whole width" aria-label="Fit to the width">Fit</button><button id="in" title="Zoom in" aria-label="Zoom in">+</button>`;
+
 export class PreviewPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private current: Target | undefined;
@@ -151,19 +155,19 @@ export class PreviewPanel implements vscode.Disposable {
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
         (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
         `<div class="zoom">` +
-        `<span class="seg"><button id="show-after" class="on" title="With the change">After</button><button id="show-before" title="Without it"${r.pages.before ? "" : " disabled"}>Before</button></span>` +
-        `<button id="prev" title="Previous page">◀</button><span id="pageno" class="muted"></span><button id="next" title="Next page">▶</button>` +
-        `<button id="out" title="Zoom out">−</button><button id="fit" title="Whole width">Fit</button><button id="in" title="Zoom in">+</button><span id="level" class="muted"></span>` +
-        `<span class="muted hint">changes marked · Ctrl/Cmd + wheel zooms, drag moves</span></div>` +
-        `<div class="page tall"><div class="sheet"><img alt="page" draggable="false"></div></div>`;
+        `<span class="seg" role="group" aria-label="Version"><button id="show-after" class="on" aria-pressed="true" title="With the change">After</button><button id="show-before" aria-pressed="false" title="Without it"${r.pages.before ? "" : " disabled"}>Before</button></span>` +
+        `<button id="prev" title="Previous page" aria-label="Previous page">◀</button><span id="pageno" class="muted" aria-live="polite"></span><button id="next" title="Next page" aria-label="Next page">▶</button>` +
+        ZOOM_BUTTONS + `<span id="level" class="muted" aria-live="polite"></span>` +
+        `<span class="muted hint">changes marked · Ctrl/Cmd + wheel zooms, drag or arrow keys move</span></div>` +
+        `<div class="page tall" tabindex="0" role="region" aria-label="The page; arrow keys move it, + and − zoom"><div class="sheet"><img alt="The page with the change" draggable="false"></div></div>`;
     } else if (r.status === "ready") {
       body =
         (r.note ? `<p class="muted">${html(r.note)}</p>` : "") +
         (r.warning ? `<p class="warn">${html(r.warning.message)}</p>${extrasButton(r.warning.missing)}<details><summary>LaTeX log</summary><pre>${html(r.warning.log)}</pre></details>` : "") +
-        `<div class="zoom"><button id="out" title="Zoom out">−</button><button id="fit" title="Whole width">Fit</button><button id="in" title="Zoom in">+</button>` +
-        `<span id="level" class="muted"></span><span class="muted hint">Ctrl/Cmd + wheel zooms, drag moves, double-click zooms in</span></div>` +
-        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page"><img src="${img(r.after.file)}" alt="after" draggable="false"></div>` +
-        (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><div class="page"><img src="${img(r.before.file)}" alt="before" draggable="false"></div>` : "");
+        `<div class="zoom">` + ZOOM_BUTTONS +
+        `<span id="level" class="muted" aria-live="polite"></span><span class="muted hint">Ctrl/Cmd + wheel zooms, drag or arrow keys move, double-click zooms in</span></div>` +
+        `<h3>After <span class="muted">(page ${r.after.page})</span></h3><div class="page" tabindex="0" role="region" aria-label="After; arrow keys move it, + and − zoom"><img src="${img(r.after.file)}" alt="Page ${r.after.page} with the change" draggable="false"></div>` +
+        (r.before ? `<h3>Before <span class="muted">(page ${r.before.page})</span></h3><div class="page" tabindex="0" role="region" aria-label="Before; arrow keys move it, + and − zoom"><img src="${img(r.before.file)}" alt="Page ${r.before.page} without the change" draggable="false"></div>` : "");
     } else if (r.status === "no-spot") body = `<p class="muted">${html(r.message)}</p>`;
     else if (r.status === "failed") body = `<p class="warn">${html(r.message)}</p>${extrasButton(r.missing)}<pre>${html(r.log)}</pre>`;
     else {
@@ -174,7 +178,7 @@ export class PreviewPanel implements vscode.Disposable {
         (setup ? `<button id="setup">Set up PDF previews</button>` : "");
     }
     const nonce = Math.random().toString(36).slice(2);
-    w.html = `<!doctype html><html><head><meta charset="utf-8">
+    w.html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${w.cspSource}; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
 body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 0 12px; }
@@ -186,8 +190,11 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .sheet img { width: 100%; }
 .mark { position: absolute; pointer-events: none; border-radius: 2px; }
 .sheet.loading .mark { display: none; }
-.mark.after { background: rgba(40, 180, 70, .28); outline: 1px solid rgba(40, 160, 60, .7); }
-.mark.before { background: rgba(220, 50, 50, .22); outline: 1px solid rgba(200, 40, 40, .7); }
+.mark.after { background: var(--vscode-diffEditor-insertedTextBackground, rgba(40, 180, 70, .28)); outline: 1px solid var(--vscode-diffEditor-insertedTextBorder, rgba(40, 160, 60, .7)); }
+.mark.before { background: var(--vscode-diffEditor-removedTextBackground, rgba(220, 50, 50, .22)); outline: 1px solid var(--vscode-diffEditor-removedTextBorder, rgba(200, 40, 40, .7)); }
+/* High contrast: marks drawn as thick outlines, so they don't rely on colour. */
+body.vscode-high-contrast .mark, body.vscode-high-contrast-light .mark { outline: 2px dashed var(--vscode-contrastActiveBorder, currentColor); }
+.page:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
 .seg button.on { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 .zoom button:disabled { opacity: .4; cursor: default; }
 .zoom { position: sticky; top: 0; z-index: 1; padding: 4px 0; background: var(--vscode-editor-background); }
@@ -303,6 +310,21 @@ for (const f of frames) {
   f.querySelector("img").addEventListener("load", () => { fit(); place(); });
 }
 new ResizeObserver(() => { fit(); place(); }).observe(document.body);
+// The keyboard moves and zooms a page as the mouse does (test report 2026-11-20, accessibility).
+for (const f of frames) {
+  f.addEventListener("keydown", (e) => {
+    const step = 0.1;
+    const keys = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    if (keys[e.key]) {
+      fx = clamp(fx + keys[e.key][0], 0, 1);
+      fy = clamp(fy + keys[e.key][1], 0, 1);
+      place();
+    } else if (e.key === "+" || e.key === "=") zoomAt(f, 1.25, f.clientWidth / 2, f.clientHeight / 2);
+    else if (e.key === "-") zoomAt(f, 0.8, f.clientWidth / 2, f.clientHeight / 2);
+    else return;
+    e.preventDefault();
+  });
+}
 
 // The page viewer: one page of one version, the changed words marked, flip and turn pages.
 if (PAGES) {
@@ -335,7 +357,12 @@ if (PAGES) {
     document.getElementById("pageno").textContent = "page " + n + " of " + PAGES[s].count;
     document.getElementById("prev").disabled = n <= 1;
     document.getElementById("next").disabled = n >= PAGES[s].count;
-    for (const v of ["after", "before"]) document.getElementById("show-" + v).classList.toggle("on", v === s);
+    for (const v of ["after", "before"]) {
+      const btn = document.getElementById("show-" + v);
+      btn.classList.toggle("on", v === s);
+      btn.setAttribute("aria-pressed", String(v === s));
+    }
+    im.alt = "Page " + n + (s === "after" ? " with the change" : " without the change") + (marks.length ? ", " + marks.length + " changed place" + (marks.length > 1 ? "s" : "") + " marked" : "");
     if (first && marks.length) {
       // Open at the change: its first mark in the middle of the frame.
       const m = marks[0];

@@ -81,3 +81,26 @@ describe("submit on larger revisions", () => {
     expect(ms).toBeLessThan(20_000);
   });
 });
+
+describe("many changes in one long file (test report 2026-11-20, B3)", () => {
+  it("750 one-word changes in 3000 lines made of 16 words, and listing them", async () => {
+    const vocab = "alpha beta gamma delta method result theorem proof lemma paper study analysis data model system approach".split(" ");
+    const r = rng(7);
+    const lines = Array.from({ length: 3000 }, (_, i) => (i % 10 === 9 ? "" : Array.from({ length: 12 }, () => vocab[Math.floor(r() * vocab.length)]).join(" ") + ` line${i}.`));
+    const after = lines.map((l, i) => (i % 4 === 0 && l ? l.replace(" ", " very ") : l));
+    const { stet } = await setup({ "big.tex": lines.join("\n") + "\n" });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "big.tex", after.join("\n") + "\n");
+    let t0 = performance.now();
+    const { items } = await stet.submit("a", { title: "t" });
+    const submitMs = Math.round(performance.now() - t0);
+    t0 = performance.now();
+    const where = await stet.locateMany(items);
+    const listMs = Math.round(performance.now() - t0);
+    console.log(`750 changes in 3000 lines: submit ${submitMs} ms, located ${listMs} ms`);
+    expect(items).toHaveLength(after.filter((l, i) => l !== lines[i]).length);
+    expect([...where.values()].every((w) => w.span)).toBe(true);
+    expect(submitMs).toBeLessThan(15_000);
+    expect(listMs).toBeLessThan(10_000);
+  }, 120_000);
+});

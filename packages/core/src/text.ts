@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import { diffArrays } from "diff";
 
@@ -188,13 +189,123 @@ export function oneLine(s: string, max = 120): string {
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
+/** Whitespace shown: ¶ a paragraph break, ↵ a line break, ␣ a space, for text that is only whitespace. */
+function shownWs(s: string): string {
+  return s.replace(/\n[ \t]*\n\s*/g, "¶").replace(/\n/g, "↵").replace(/[ \t]/g, "␣");
+}
+
+const PARBREAK = /\n[ \t]*\n/;
+
+/** The words of `s` and the whitespace around them: `gaps[k]` comes before `words[k]`, the last one after all. */
+function wordsAndGaps(s: string): { words: string[]; gaps: string[] } {
+  const words: string[] = [];
+  const gaps = [""];
+  s.split(/(\s+)/).forEach((p, k) => {
+    if (k % 2) gaps[gaps.length - 1] += p;
+    else if (p) {
+      words.push(p);
+      gaps.push("");
+    }
+  });
+  return { words, gaps };
+}
+
+/** Where a side has a paragraph break the other hasn't (else where they differ in one): a gap index, or -1. */
+function breakAt(mine: string[], other: string[]): number {
+  const own = mine.findIndex((g, i) => PARBREAK.test(g) && !PARBREAK.test(other[i]!));
+  return own >= 0 ? own : mine.findIndex((g, i) => PARBREAK.test(g) !== PARBREAK.test(other[i]!));
+}
+
+/**
+ * A change of paragraph breaks only, the words kept: "paragraph split", "paragraphs joined", or
+ * "paragraph break moved" (one sentence now ends a paragraph, or starts the next); else null.
+ */
+export function paragraphChange(oldText: string, newText: string): string | null {
+  const [a, b] = [wordsAndGaps(oldText), wordsAndGaps(newText)];
+  if (a.words.length !== b.words.length || a.words.some((w, i) => w !== b.words[i])) return null;
+  let [added, removed] = [false, false];
+  a.gaps.forEach((g, i) => {
+    const [x, y] = [PARBREAK.test(g), PARBREAK.test(b.gaps[i]!)];
+    if (y && !x) added = true;
+    if (x && !y) removed = true;
+  });
+  return added && removed ? "paragraph break moved" : added ? "paragraph split" : removed ? "paragraphs joined" : null;
+}
+
+/** A side of a change of paragraph breaks, around its break: "…to fill a line.¶" for "¶Beta two is…". */
+function aroundBreak(s: { words: string[]; gaps: string[] }, at: number, max: number): string {
+  const shown = (from: number, to: number) => {
+    let t = "";
+    for (let k = from; k <= to; k++) {
+      if (k > from) t += k === at ? shownWs(s.gaps[k]!) : " ";
+      else if (k === at) t += shownWs(s.gaps[k]!);
+      if (k < s.words.length) t += printable(s.words[k]!);
+    }
+    return t;
+  };
+  // Words before and after the break, as many as fit, the ones before first.
+  let [from, to] = [at, at];
+  for (;;) {
+    const last = s.words.length - 1;
+    const grow = from > 0 && (to >= last || at - from <= to - at) ? [from - 1, to] : to < last ? [from, to + 1] : null;
+    if (!grow) break;
+    const t = shown(grow[0]!, grow[1]!);
+    if (t.length + 2 > max) break;
+    [from, to] = grow as [number, number];
+  }
+  return (from > 0 ? "…" : "") + shown(from, to) + (to < s.words.length - 1 ? "…" : "");
+}
+
+/**
+ * Old and new text of a change for a one-line summary, each at most `max` characters: what both
+ * share at the start and end is cut (marked …), so the summary shows where they differ. Cut to
+ * the same prefix, a formula's change looked like no change at all, and a long label hid what a
+ * change did (test report 2026-11-20, B4). Whitespace-only text is made visible.
+ */
+export function changeSummary(oldText: string, newText: string, max = 30): [string, string] {
+  const flat = (s: string) => (normalizeWs(s) ? printable(s).replace(/\s+/g, " ").trim() : shownWs(printable(s)));
+  let [a, b] = [flat(oldText), flat(newText)];
+  if (a === b) [a, b] = [shownWs(printable(oldText)), shownWs(printable(newText))];
+  if (a.length <= max && b.length <= max) return [a, b];
+  // Only paragraph breaks changed: each side around its break, which a cut would have hidden.
+  if (paragraphChange(oldText, newText)) {
+    const [x, y] = [wordsAndGaps(oldText), wordsAndGaps(newText)];
+    return [aroundBreak(x, breakAt(x.gaps, y.gaps), max), aroundBreak(y, breakAt(y.gaps, x.gaps), max)];
+  }
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+  // Keep a little of what they share, from a word's start, as context.
+  const ctx = 12;
+  let from = Math.max(0, pre - ctx);
+  if (from > 0) {
+    const sp = a.lastIndexOf(" ", pre - 1);
+    from = sp >= from - ctx && sp >= 0 && sp < pre ? sp + 1 : from;
+  }
+  const cut = (s: string) => {
+    const end = Math.min(s.length, s.length - suf + ctx);
+    let t = s.slice(from, end);
+    const lead = from > 0 ? "…" : "";
+    const tail = end < s.length ? "…" : "";
+    if (lead.length + t.length + tail.length > max) return lead + t.slice(0, max - lead.length - 1) + "…";
+    return lead + t + tail;
+  };
+  return [cut(a), cut(b)];
+}
+
 /** Quote for a POSIX shell: nothing inside is expanded (no `$`, backticks or globs). */
 export const shQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
+/**
+ * Not text Stet can change word by word: it has NUL bytes, or isn't UTF-8 (a Latin-1 file, say).
+ * Such files are proposed and applied whole, byte for byte; read as UTF-8 and written back, every
+ * character outside ASCII would have become U+FFFD, on every line (test report 2026-11-20, D1).
+ */
 export function isBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8000);
   for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
-  return false;
+  return !isUtf8(buf);
 }
 
 export function allIndexesOf(haystack: string, needle: string): number[] {

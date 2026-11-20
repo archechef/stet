@@ -12,7 +12,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StetError } from "./errors.js";
-import { filterOverrides, Repo, STET_IDENTITY, untrustedWorktreeConfig } from "./git.js";
+import { filterOverrides, gitRaw, Repo, STET_IDENTITY, untrustedWorktreeConfig } from "./git.js";
 import type { Agent } from "./model.js";
 import { replaceFile } from "./safefs.js";
 import { WORKSPACE_EXCLUDES } from "./workspace.js";
@@ -65,7 +65,14 @@ export class AgentFiles {
   /** Stage the whole workspace (Stet's own files excluded) on top of `tip`; returns the tree and changed paths. */
   private async stage(git: Repo, env: Record<string, string>, tip: string): Promise<{ tree: string; changed: string[] }> {
     await git.run(["read-tree", tip], { env });
-    await git.run(["add", "-A", "--", ".", ...WORKSPACE_EXCLUDES], { env });
+    // git refuses some paths outright (a folder named .GIT, say): say which, not git's error (test report B7).
+    const added = await gitRaw(["add", "-A", "--", ".", ...WORKSPACE_EXCLUDES], { cwd: git.cwd, config: git.config, env, allowFail: true });
+    if (added.code !== 0) {
+      const bad = [...added.stderr.matchAll(/invalid path '([^']+)'/g)].map((m) => m[1]!);
+      if (bad.length)
+        throw new StetError(`The path${bad.length > 1 ? "s" : ""} ${bad.map((b) => `'${b}'`).join(", ")} ${bad.length > 1 ? "are" : "is"} not allowed in a workspace (git refuses ${bad.length > 1 ? "them" : "it"}; a folder named .git in any spelling). Remove or rename ${bad.length > 1 ? "them" : "it"}, then try again.`);
+      throw new StetError(`Stet could not read the workspace's files: ${added.stderr.trim().split("\n").pop()}`);
+    }
     const tree = await git.run(["write-tree"], { env });
     const changed = (await git.run(["diff-index", "--cached", "--name-only", "-z", tip], { env })).split("\0").filter(Boolean);
     return { tree, changed };

@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+Fixes from the test report of 2026-11-20 (three testers, Stet 0.14.0).
+
+**Your files and decisions**
+- **Fix: accepting a change in a file that isn't UTF-8 (Latin-1, say) damaged the whole file.** Every character outside ASCII became �, on every line, for good. Such files are now proposed and accepted whole, byte for byte; a file you saved in another encoding since is left alone, with a message.
+- **Fix: undoing one part of a linked group you accepted whole undid only that part** (a `\label` renamed back, its `\ref`s not). Everything the accept took along is undone together. Undoing a rejection made with `--revise-rest` also takes back the revision requests it sent.
+- **A linked group decided differently in its parts now tells you** (a `\ref` accepted, its `\label` rejected), when you accept or reject, and in `stet show G1`. Only the agent was told before.
+- **Archiving an agent with its folder no longer deletes its unsubmitted work without asking.** `stet agent archive --remove` refuses while the agent has changes it didn't submit (`--force` deletes them anyway); in VS Code, *Archive, keep folder* is the first button (Enter), and the delete button says how many files it loses.
+- **A new file and the `\input` (or `\include`, `\includegraphics`) that reads it in are linked**, as are a deleted file and the `\input` taken out: the command alone stopped LaTeX.
+- **Fix: changes of spaces inside `verbatim`, `lstlisting`, `minted` and the like were dropped**, and the agent's next sync undid them silently. Spaces there are content now; elsewhere, reflowed text is still ignored.
+- **`stet commit` names the files where it also commits your own edits** (it commits whole files), in its output and in the commit message.
+- **Changes whose commit was dropped from your branch (`git reset --hard`) no longer count as committed.** Gone from your file, they are pending again (the agent is told); still in it, they are accepted but uncommitted again, so undo works.
+- **Two edits that rebuild one sentence together are one change** ("Plants are … and therefore" → "Because plants are …, they"): edits at most six words apart, one of which changes the sentence's punctuation or a word's capitals. Either alone left a broken sentence. Plain word swaps stay separate.
+- **A sentence that only changes paragraph is one change, not a move.** When the agent moved a paragraph break past a sentence (it ended one paragraph and now starts the next), the sentence showed as moved "word for word". It is now one change, *paragraph break moved*, and the editor and `stet show` mark just the breaks; splits and joins are named as such (`paragraph split`, `paragraphs joined`), with ¶ and ␣ for the breaks instead of invisible whitespace.
+- **Files larger than 20 MB are refused** at submit (`maxFileMB` in the config); `stet review` shows the size of new and deleted files.
+- **Reviewer commands are refused in an agent's workspace** (`stet accept` and the like): an agent without a sandbox could have accepted its own proposals.
+
+**Bugs**
+- **Much faster with many changes in one file:** 750 changes in a 3000-line file took 160 s to submit and 25 s to list; now under a second each. Accepting one of them took 4 s, now 0.1 s.
+- **The command line:** a wrong option gives a one-line error instead of a stack trace; `stet --version`; exit codes tell a wrong command line (2) and an unknown id (3) from other errors (1); `--status` and `--agent` with a typo are refused instead of finding nothing.
+- **An archived agent's name can be used again** once its folder and branch are gone, as the manual says for recreating a workspace.
+- **A revision says what it revises** (`revises 2.3`) in `stet review`, the panel and the hover, and `stet show` gives what you asked for there. `stet show` gives the wording you accepted (or saved) next to the agent's.
+- **Summaries show where a change differs**, not the same cut-off start on both sides, and make whitespace visible (`"␣" → "~"`, `¶` for a paragraph break).
+- MCP tools refuse calls without their required arguments; a path git won't take (`sub/.GIT/config`) gets a clear message; `stet doctor` accepts a git identity from `GIT_AUTHOR_*`/`GIT_COMMITTER_*`.
+- **VS Code:** a command from the palette acts on the change you picked last (in the panel, or at the cursor), and at the cursor on the change it is in or the nearest one on the line, not the line's first. `u` in History undoes the History item (it used the panel's selection). An agent's own window says where to review instead of "not set up".
+
+**Using it**
+- `stet accept C3` / `stet reject C3` decide a whole round. `stet review` mentions accepted changes not committed yet, marks changes no longer found in your file (with what to do), suggests next steps, and reminds you of `stet share` only when there are agents. `stet init` says when Stet is already set up, and warns about uncommitted edits. Statuses read as words, times in your time zone, and `stet show` explains `[-…-]{+…+}`.
+- **VS Code: undo your last decision.** `u` in the Review panel (or *Stet: Undo my last decision*) takes back your last accept or reject, with everything it decided; for 15 seconds after each decision the status bar shows an **Undo** button too.
+- **VS Code: filter and search the panel** (`/`, or the funnel in its title): by agent, file, waiting for you or for a revision, or words in a change, its note or its conversation. ✕ shows everything again; `j`/`k` move through what is shown.
+- **VS Code:** long round titles are shortened at a word in the panel, and a decided change's hover shows its whole conversation (a pending one its last three messages, with a note that there are more).
+- **VS Code:** *Accept all* and *Reject all* ask first whenever they decide more than one change (except a linked group, which goes together anyway); dissolving a linked group asks first. The counts include only changes waiting for you, not those waiting for the agent's revision.
+- **Accessibility:** changes and the status bar are read out in words by screen readers; inserted text has a border in high-contrast themes; the PDF preview names its buttons and pictures, marks the pressed version, announces the page, and moves and zooms from the keyboard.
+- **Docs:** a glossary in the command-line manual (with the panel's names), the README's example is real `stet review` output, and outdated names in the manuals and settings are fixed.
+
 ## 0.15.0 — 2026-11-20
 
 - **Fix: Stet could stop accepting anything ("Timed out waiting for the Stet lock").** A Stet process stopped just as it took the store's lock (a window reloaded, a command killed) left an empty lock behind that named no owner, and nobody took it over: every decision timed out while hovers and previews kept working. The lock is now written whole before it appears, and an empty or unreadable lock older than 30 seconds is taken over.

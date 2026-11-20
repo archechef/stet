@@ -452,6 +452,73 @@ exports.run = async function run() {
       check("✓ Accept in the review accepts with your (unsaved) wording", !!accepted && accepted.includes("the harder task of reviewing"), JSON.stringify({ status: item0().status, dirty: reviewDoc.isDirty }));
     }
 
+    // Test report 2026-11-20: keys act on the view they are pressed in (B8, B9), and the Review
+    // panel has no Undo (it never shows decided changes).
+    {
+      const pkg = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")).contributes;
+      const keys = pkg.keybindings;
+      const inReview = keys.filter((k) => k.when.includes("focusedView == stet.review"));
+      const inHistory = keys.filter((k) => k.when.includes("focusedView == stet.history"));
+      check(
+        "panel keys act on the panel's selection, History keys on History's",
+        inReview.every((k) => k.args === "panel" || ["stet.next", "stet.previous", "stet.undoLast", "stet.filter"].includes(k.command)) && inHistory.every((k) => k.args === "history"),
+        JSON.stringify(keys.filter((k) => !k.args).map((k) => k.key)),
+      );
+      const deadUndo = keys.some((k) => k.command === "stet.undo" && k.when.includes("stet.review")) || pkg.menus["view/item/context"].some((m) => m.command === "stet.undo" && m.when.includes("view == stet.review"));
+      check("no Undo in the Review panel, where nothing is decided", !deadUndo);
+      const agentWelcome = pkg.viewsWelcome.find((v) => v.when === "stet.agentWorkspace");
+      check("an agent's own window says where to review, not \"not set up\"", agentWelcome && agentWelcome.contents.includes("command:stet.openAgentProject") && pkg.viewsWelcome.some((v) => v.contents.startsWith("Stet is not set up") && v.when.includes("!stet.agentWorkspace")));
+
+      // From the palette (no argument), a command acts on the change at the cursor once the user
+      // moved there, even with another change selected in the panel.
+      const itemOf = (id) => JSON.parse(readFileSync(join(store, "items", `${id}.json`), "utf8"));
+      const target = fx.items.map(itemOf).find((i) => i.status === "pending" && i.kind === "modify" && i.oldText.trim().length >= 3);
+      if (target) {
+        await vscode.commands.executeCommand("stet.review.focus");
+        await vscode.commands.executeCommand("stet.next");
+        await sleep(300);
+        const tdoc = await vscode.workspace.openTextDocument(vscode.Uri.file(join(fx.repo, target.file)));
+        const ted = await vscode.window.showTextDocument(tdoc);
+        const k = tdoc.getText().indexOf(target.oldText.trim());
+        ted.selection = new vscode.Selection(tdoc.positionAt(k + 1), tdoc.positionAt(k + 1));
+        await sleep(300);
+        await vscode.commands.executeCommand("stet.showDiff");
+        const diffTab = await until("diff from the palette", async () => {
+          const t = vscode.window.tabGroups.activeTabGroup.activeTab;
+          return t && t.input instanceof vscode.TabInputTextDiff ? t.input : null;
+        }, 10000).catch(() => null);
+        const ids = diffTab ? new URLSearchParams(diffTab.modified.query).get("ids") || "" : "";
+        check("a palette command acts on the change at the cursor", ids.split(",").includes(target.id), JSON.stringify({ target: target.id, ids, k }));
+        await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+
+        // Undo right after deciding: `u` in the panel (Undo my last decision) takes the accept back.
+        const before = readFileSync(join(fx.repo, target.file), "utf8");
+        await vscode.commands.executeCommand("stet.accept", { path: fx.repo, id: target.id });
+        const acc = await until("accepted", async () => (itemOf(target.id).status === "accepted" ? true : null), 10000).catch(() => false);
+        const uKey = keys.find((k) => k.key === "u" && k.when.includes("stet.review"));
+        await vscode.commands.executeCommand(uKey.command);
+        const back = await until("undone", async () => (itemOf(target.id).status === "pending" ? true : null), 10000).catch(() => false);
+        check("u in the panel undoes the last decision", acc && back && readFileSync(join(fx.repo, target.file), "utf8") === before, JSON.stringify({ acc, back, status: itemOf(target.id).status }));
+      } else check("a palette command acts on the change at the cursor (skipped: no pending change left)", true);
+
+      // Filters: j moves only through the changes shown.
+      const pendingIn = (f) => fx.items.map(itemOf).filter((i) => i.status === "pending" && i.file === f);
+      const fileWith = ["math.tex", "wrap.tex", "main.tex"].find((f) => pendingIn(f).length);
+      if (fileWith) {
+        await vscode.commands.executeCommand("stet.filter", { file: fileWith });
+        await vscode.commands.executeCommand("stet.review.focus");
+        const seen = new Set();
+        for (let n = 0; n < 4; n++) {
+          await vscode.commands.executeCommand("stet.next");
+          await sleep(300);
+          const e = vscode.window.activeTextEditor;
+          if (e) seen.add(e.document.uri.path.split("/").pop());
+        }
+        await vscode.commands.executeCommand("stet.clearFilter");
+        check("a filter keeps j to the changes it shows", seen.size === 1 && seen.has(fileWith), JSON.stringify({ fileWith, seen: [...seen] }));
+      } else check("a filter keeps j to the changes it shows (skipped: nothing pending)", true);
+    }
+
     // View options switch settings from the panel.
     const stetConf = () => vscode.workspace.getConfiguration("stet");
     const inlineBefore = stetConf().get("inlineChanges");
@@ -464,7 +531,7 @@ exports.run = async function run() {
     check("view options switch settings", flipped === !inlineBefore && stetConf().get("inlineChanges") === inlineBefore && long === "hover", JSON.stringify({ inline: inlineBefore, flipped, long }));
 
     const allCommands = await vscode.commands.getCommands(true);
-    const wanted = ["stet.changeActions", "stet.acceptOnly", "stet.toggleHighlight", "stet.newTextStyle.wrapping", "stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover", "stet.reviewFile", "stet.clearDraft"];
+    const wanted = ["stet.changeActions", "stet.acceptOnly", "stet.toggleHighlight", "stet.newTextStyle.wrapping", "stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover", "stet.reviewFile", "stet.clearDraft", "stet.openAgentProject", "stet.undoLast", "stet.filter", "stet.clearFilter"];
     check("new commands are registered", wanted.every((c) => allCommands.includes(c)), JSON.stringify(wanted.filter((c) => !allCommands.includes(c))));
   } catch (e) {
     check("no exception", false, e && e.stack);

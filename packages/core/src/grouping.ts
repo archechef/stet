@@ -208,6 +208,30 @@ export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
     }
   }
 
+  // A file added or deleted with the \input, \include or \includegraphics that starts or stops
+  // reading it: the command alone stops LaTeX ("file not found"). Test report 2026-11-20, D6.
+  if (cfg.autoDetect.includes("input")) {
+    const edits = items.filter((i) => i.kind === "modify");
+    for (const f of items) {
+      const added = f.kind === "add-file" || (f.kind === "binary" && !f.oldBlob && !!f.newBlob);
+      const deleted = f.kind === "delete-file" || (f.kind === "binary" && !!f.oldBlob && !f.newBlob);
+      if (!added && !deleted) continue;
+      const users = edits.filter((it) => {
+        const [was, is] = [includedFiles(oldWin(it)), includedFiles(newWin(it))];
+        const [more, less] = added ? [is, was] : [was, is];
+        return [...more].some(([ref, n]) => n > (less.get(ref) ?? 0) && namesFile(ref, f.file));
+      });
+      if (!users.length) continue;
+      groups.push({
+        kind: "linked",
+        title: added ? `Add ${f.file} and read it in` : `Delete ${f.file} and stop reading it in`,
+        rationale: null,
+        source: "auto",
+        items: [f.id, ...users.map((u) => u.id)],
+      });
+    }
+  }
+
   if (cfg.autoDetect.includes("cite")) {
     const bibKeys = (t: string) => new Set([...t.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,/g)].map((m) => m[1]!));
     const bibItems = text.filter((it) => it.file.toLowerCase().endsWith(".bib"));
@@ -233,6 +257,28 @@ export function autoGroups(items: Item[], cfg: GroupingConfig): GroupDraft[] {
     }
   }
   return groups;
+}
+
+const INCLUDES = /\\(?:input|include|subfile|includegraphics|includepdf|includestandalone|lstinputlisting|verbatiminput|addbibresource|bibliography)\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]*)\}/g;
+
+/** The files a text reads in (\input{chapters/a}, \includegraphics[..]{fig/b}, \bibliography{x,y}), counted. */
+function includedFiles(text: string): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const m of text.matchAll(INCLUDES)) {
+    for (const p of m[1]!.split(",")) {
+      const ref = p.trim();
+      if (ref) out.set(ref, (out.get(ref) ?? 0) + 1);
+    }
+  }
+  return out;
+}
+
+/** Whether `ref` (as written in \input, without extension or with a graphics path left out) names `file`. */
+function namesFile(ref: string, file: string): boolean {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/^(\.\/)+/, "");
+  const [r, f] = [norm(ref), norm(file)];
+  const stem = f.replace(/\.[A-Za-z0-9]+$/, "");
+  return [f, stem].some((x) => x === r || x.endsWith("/" + r));
 }
 
 /** Merge linked groups that share items (transitively) and drop duplicate groups. */

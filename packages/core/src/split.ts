@@ -374,8 +374,43 @@ function splitLatex(oldText: string, newText: string, cfg: SplitConfig): Edit[] 
       }
     }
   }
-  return edits;
+  return shiftedBreaks(oldText, newText, edits);
 }
+
+/**
+ * A paragraph break that moves past a sentence ("… a line. Beta two …" ending one paragraph
+ * starts the next instead) is one change of the text where it stood: paragraphs are paired first,
+ * so the sentence came out deleted from one and inserted into the next, and showed as moved "word
+ * for word" (test report 2026-11-20). A deletion and an insertion next to each other are joined
+ * when together they keep the words, (almost) all of them in order, and a paragraph break moves.
+ */
+function shiftedBreaks(oldText: string, newText: string, edits: Edit[]): Edit[] {
+  const del = (e: Edit) => !e.halves && !!e.oldText.trim() && !e.newText.trim();
+  const ins = (e: Edit) => !e.halves && !!e.newText.trim() && !e.oldText.trim();
+  const out: Edit[] = [];
+  for (const e of edits) {
+    const last = out[out.length - 1];
+    if (last && ((del(last) && ins(e)) || (ins(last) && del(e))) && last.end <= e.start && last.newEnd <= e.newStart) {
+      const f = makeEdit(oldText, newText, last.start, e.end, last.newStart, e.newEnd);
+      const breaks = PARBREAK.test(f.oldText) || PARBREAK.test(f.newText);
+      const [a, b] = [words(f.oldText), words(f.newText)];
+      // Text between them (the word the diff slid past, "line."): then the same words exactly,
+      // so that a paragraph moved past another stays a move.
+      const between = !!oldText.slice(last.end, e.start).trim() || !!newText.slice(last.newEnd, e.newStart).trim();
+      const alike = between ? a.length === b.length && a.every((w, i) => w === b[i]) : wordSimilarity(a, b, SHIFTED_ALIKE) >= SHIFTED_ALIKE;
+      if (breaks && alike) {
+        out[out.length - 1] = f;
+        continue;
+      }
+    }
+    out.push(e);
+  }
+  return out;
+}
+
+const PARBREAK = /\n[ \t]*\n/;
+/** How alike the text on both sides of a moved paragraph break must be (a word recapitalised, say). */
+const SHIFTED_ALIKE = 0.8;
 
 const words = (s: string) => s.split(/\s+/).filter(Boolean);
 /** A line that starts a LaTeX structure: a paragraph may begin right after it, or end right before it. */
@@ -539,6 +574,8 @@ function unrelated(oldText: string, newText: string, e: Edit): Edit {
 const SENTENCE_REWRITE = 0.4;
 /** …or when it would come apart into this many pieces. */
 const SENTENCE_PIECES = 4;
+/** Edits of one sentence with at most this many words between them are one change. */
+const SENTENCE_NEAR = 6;
 
 type Same = (a: Token, b: Token) => boolean;
 
@@ -628,33 +665,103 @@ interface BlockPair {
  * place as replaced by a new neighbour and inserted again (bug report C42). A paragraph split in
  * two (or two merged) pairs with both.
  */
+/** Above this many paragraph pairs, `pairBlocks` pairs the obvious ones first (`anchorPairs`). */
+const PAIR_ALL_MAX = 2500;
+
+/**
+ * Pairs of paragraphs that are surely one paragraph edited: each the other's best match by the
+ * word triples they share, at least 90% alike, in order (the longest run of such pairs that keeps
+ * the order, as patience diff does with unique lines).
+ */
+function anchorPairs(ow: string[][], nw: string[][]): { o: number; n: number }[] {
+  const triples = (ws: string[]) => (ws.length < 3 ? [ws.join(" ")] : ws.slice(2).map((_, i) => `${ws[i]} ${ws[i + 1]} ${ws[i + 2]}`));
+  const where = new Map<string, number[]>();
+  nw.forEach((ws, j) => {
+    for (const t of new Set(triples(ws))) where.set(t, [...(where.get(t) ?? []), j]);
+  });
+  const best = (counts: Map<number, number>) => {
+    let [at, n] = [-1, 0];
+    for (const [j, c] of counts) if (c > n) [at, n] = [j, c];
+    return at;
+  };
+  const bestN = ow.map((ws) => {
+    const counts = new Map<number, number>();
+    for (const t of new Set(triples(ws))) for (const j of where.get(t) ?? []) counts.set(j, (counts.get(j) ?? 0) + 1);
+    return best(counts);
+  });
+  // The best old match of each new paragraph that was some old paragraph's best.
+  const wanted = new Set(bestN.filter((j) => j >= 0));
+  const oWhere = new Map<string, number[]>();
+  ow.forEach((ws, i) => {
+    for (const t of new Set(triples(ws))) oWhere.set(t, [...(oWhere.get(t) ?? []), i]);
+  });
+  const bestO = new Map<number, number>();
+  for (const j of wanted) {
+    const counts = new Map<number, number>();
+    for (const t of new Set(triples(nw[j]!))) for (const i of oWhere.get(t) ?? []) counts.set(i, (counts.get(i) ?? 0) + 1);
+    bestO.set(j, best(counts));
+  }
+  const cands = bestN.flatMap((j, i) => (j >= 0 && bestO.get(j) === i && wordSimilarity(ow[i]!, nw[j]!, 0.9) >= 0.9 ? [{ o: i, n: j }] : []));
+  // Longest run increasing in both (cands are in old order): patience sorting on `n`.
+  const tails: number[] = [];
+  const prev = new Array<number>(cands.length).fill(-1);
+  cands.forEach((c, x) => {
+    let [lo, hi] = [0, tails.length];
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cands[tails[mid]!]!.n < c.n) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) prev[x] = tails[lo - 1]!;
+    tails[lo] = x;
+  });
+  const out: { o: number; n: number }[] = [];
+  for (let x = tails.length ? tails[tails.length - 1]! : -1; x >= 0; x = prev[x]!) out.unshift(cands[x]!);
+  return out;
+}
+
 function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [number, number][]): BlockPair[] {
   const wordsOf = (toks: Token[], [a, b]: [number, number]) => toks.slice(a, b).filter((t) => !isBlank(t)).map((t) => t.text);
   const ow = ob.map((b) => wordsOf(ot, b));
   const nw = nb.map((b) => wordsOf(nt, b));
   const m = ob.length;
   const k = nb.length;
-  const score = Array.from({ length: m + 1 }, () => new Float64Array(k + 1));
-  const sim = Array.from({ length: m }, () => new Float64Array(k));
   // Most pairs share too few words to be alike: known from the counts, without diffing them.
   const shared = sharedWordsMatrix(ow, nw);
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= k; j++) {
-      const s = paragraphSimilarity(ow[i - 1]!, nw[j - 1]!, PAIR_MIN, shared[i - 1]![j - 1]!);
-      sim[i - 1]![j - 1] = s;
-      score[i]![j] = Math.max(score[i - 1]![j]!, score[i]![j - 1]!, s >= PAIR_MIN ? score[i - 1]![j - 1]! + s : 0);
+  // The most alike pairs in order, between old paragraphs [i0, i1) and new ones [j0, j1).
+  const pairIn = (i0: number, i1: number, j0: number, j1: number): BlockPair[] => {
+    const [h, w] = [i1 - i0, j1 - j0];
+    const score = Array.from({ length: h + 1 }, () => new Float64Array(w + 1));
+    const sim = Array.from({ length: h }, () => new Float64Array(w));
+    for (let i = 1; i <= h; i++) {
+      for (let j = 1; j <= w; j++) {
+        const s = paragraphSimilarity(ow[i0 + i - 1]!, nw[j0 + j - 1]!, PAIR_MIN, shared[i0 + i - 1]![j0 + j - 1]!);
+        sim[i - 1]![j - 1] = s;
+        score[i]![j] = Math.max(score[i - 1]![j]!, score[i]![j - 1]!, s >= PAIR_MIN ? score[i - 1]![j - 1]! + s : 0);
+      }
     }
-  }
+    const out: BlockPair[] = [];
+    for (let i = h, j = w; i > 0 && j > 0; ) {
+      const s = sim[i - 1]![j - 1]!;
+      if (s >= PAIR_MIN && score[i]![j] === score[i - 1]![j - 1]! + s) {
+        out.unshift({ o: [i0 + i - 1, i0 + i - 1], n: [j0 + j - 1, j0 + j - 1] });
+        i--;
+        j--;
+      } else if (score[i - 1]![j]! >= score[i]![j - 1]!) i--;
+      else j--;
+    }
+    return out;
+  };
+  // Many paragraphs each side (every paragraph of a long file edited): comparing every pair took
+  // minutes when they all shared their words (test report 2026-11-20, B3). Paragraphs that are
+  // plainly one paragraph edited are paired first, and only the stretches between are compared.
   const pairs: BlockPair[] = [];
-  for (let i = m, j = k; i > 0 && j > 0; ) {
-    const s = sim[i - 1]![j - 1]!;
-    if (s >= PAIR_MIN && score[i]![j] === score[i - 1]![j - 1]! + s) {
-      pairs.unshift({ o: [i - 1, i - 1], n: [j - 1, j - 1] });
-      i--;
-      j--;
-    } else if (score[i - 1]![j]! >= score[i]![j - 1]!) i--;
-    else j--;
+  let [i0, j0] = [0, 0];
+  for (const a of m * k > PAIR_ALL_MAX ? anchorPairs(ow, nw) : []) {
+    pairs.push(...pairIn(i0, a.o, j0, a.n), { o: [a.o, a.o], n: [a.n, a.n] });
+    [i0, j0] = [a.o + 1, a.n + 1];
   }
+  pairs.push(...pairIn(i0, m, j0, k));
   // Take in unpaired neighbours while that makes the pair more alike: a split or merged paragraph.
   const usedO = new Set(pairs.map((p) => p.o[0]));
   const usedN = new Set(pairs.map((p) => p.n[0]));
@@ -840,11 +947,37 @@ function slide(u: U[], ot: Token[], nt: Token[], same: Same): void {
   }
 }
 
+/** Environments whose spaces are content: reflowing them changes the output. */
+const VERBATIM = "verbatim\\*?|Verbatim\\*?|BVerbatim|LVerbatim|lstlisting|minted|alltt|comment|filecontents\\*?|verbatimtab|spverbatim|tcblisting|pycode|sageblock";
+const VERBATIM_BEGIN = new RegExp(`\\\\begin\\s*\\{(?:${VERBATIM})\\}`, "g");
+const VERBATIM_END = new RegExp(`\\\\end\\s*\\{(?:${VERBATIM})\\}`, "g");
+
+/** Whether each token is inside a verbatim-like environment (a segment may start or end inside one). */
+function inVerbatim(text: string): (t: Token) => boolean {
+  const spans: [number, number][] = [];
+  const begins = [...text.matchAll(VERBATIM_BEGIN)].map((m) => m.index! + m[0].length);
+  const ends = [...text.matchAll(VERBATIM_END)].map((m) => m.index!);
+  if (!begins.length && !ends.length) return () => false;
+  let from: number | null = ends.length && (!begins.length || ends[0]! < begins[0]!) ? 0 : null;
+  for (const [at, kind] of [...begins.map((b) => [b, 1] as const), ...ends.map((e) => [e, 0] as const)].sort((a, b) => a[0] - b[0])) {
+    if (kind === 1 && from === null) from = at;
+    else if (kind === 0 && from !== null) {
+      spans.push([from, at]);
+      from = null;
+    }
+  }
+  if (from !== null) spans.push([from, text.length]);
+  return (t) => spans.some(([a, b]) => t.start >= a && t.start < b);
+}
+
 export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): Edit[] {
   const ot = tokenize(oldSeg);
   const nt = tokenize(newSeg);
+  // Reflowing is ignored, except where spaces are content: the agent's edit of a listing's
+  // spaces was dropped, and the next sync reverted it (test report 2026-11-20, D7).
+  const [oVerb, nVerb] = [inVerbatim(oldSeg), inVerbatim(newSeg)];
   const same = (a: Token, b: Token) =>
-    a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws");
+    a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws" && !oVerb(a) && !nVerb(b));
   // Where a new unit of the alignment starts (see `alignTokens`): changes don't cross these.
   const hard = new Set<number>();
   const u = alignTokens(ot, nt, same, hard);
@@ -961,6 +1094,23 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     else coarse.push([r[0], r[1]]);
   }
 
+  // Whether an edit rebuilds its sentence: it changes its punctuation, or a word's capitals
+  // (a word put before the sentence's first one, a clause turned into a new sentence).
+  const restructures = ([a, b]: [number, number]): boolean => {
+    const olds: Token[] = [];
+    const news: Token[] = [];
+    for (let i = a; i < b; i++) {
+      const e = u[i]!;
+      if (e.o >= 0 && e.n < 0) olds.push(ot[e.o]!);
+      if (e.n >= 0 && e.o < 0) news.push(nt[e.n]!);
+    }
+    const punct = (ts: Token[]) => ts.filter((t) => t.type === "punct" && /^[,;:()—–-]+$/.test(t.text)).map((t) => t.text).sort().join("");
+    if (punct(olds) !== punct(news)) return true;
+    const words = (ts: Token[]) => ts.filter((t) => !isBlank(t) && t.type !== "punct").map((t) => t.text);
+    const [ow, nw] = [words(olds), words(news)];
+    return ow.some((w) => nw.some((x) => x !== w && x.toLowerCase() === w.toLowerCase()));
+  };
+
   // The same for single sentences: a sentence rewritten this much, or in this many pieces, is
   // one change. Its pieces rarely read right on their own (bug report C31).
   const sent = new Array<number>(u.length);
@@ -988,8 +1138,15 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig): 
     const last = sentences[sentences.length - 1];
     const sid = sent[r[0]]!;
     const ratio = (sChanged.get(sid) ?? 0) / Math.max(1, sTotals.get(sid) ?? 0);
+    // Edits a few words apart in one sentence that rebuild it are one change: "Plants are … and
+    // therefore" → "Because plants are …, they" came as two, and either alone broke the sentence
+    // (test report 2026-11-20, D6). Plain word swaps ("very" → "extremely" … "useful" →
+    // "helpful") stay apart: each reads right alone.
+    let between = 0;
+    if (last) for (let i = last[1]; i < r[0]; i++) if (oldTok(i) && !isBlank(oldTok(i)!) && oldTok(i)!.type !== "punct") between++;
+    const near = !!last && between <= SENTENCE_NEAR && (restructures(last) || restructures(r));
     const join =
-      last && sent[last[1] - 1] === sid && (ratio > SENTENCE_REWRITE || (pieces.get(sid) ?? 0) >= SENTENCE_PIECES) &&
+      last && sent[last[1] - 1] === sid && (ratio > SENTENCE_REWRITE || (pieces.get(sid) ?? 0) >= SENTENCE_PIECES || near) &&
       !isKey(last) && !isKey(r) && !structuralIn(last[1], r[0]) && !hardIn(last[1], r[0]);
     if (join) last[1] = r[1];
     else sentences.push([r[0], r[1]]);

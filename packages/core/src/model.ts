@@ -183,7 +183,8 @@ export interface Item {
   } | null;
   supersedes: string | null;
   conflictsWith: string[];
-  history: { at: string; status: ItemStatus; by: "user" | "agent" | "stet"; note?: string }[];
+  /** `decision`: the reviewer's accept or reject this came from, shared by everything it decided (undone together). */
+  history: { at: string; status: ItemStatus; by: "user" | "agent" | "stet"; note?: string; decision?: string }[];
   thread: ThreadEntry[];
   /** Part of a move (spec §6.4.7), on every item of it: they are accepted or rejected together. */
   move?: MoveInfo;
@@ -313,6 +314,8 @@ export interface StoreState {
   /** The user's saved files as of their last *Share my edits*, on top of main at `head`. */
   /** The last *Share my edits*; `at` (since 0.6.1) tells which accepted items it already holds. */
   shared?: { head: string; tree: string; at?: string } | null;
+  /** The main branch's commit at the last check for accepted changes whose commit was dropped (`git reset`). */
+  mainHead?: string;
 }
 
 // ---------------------------------------------------------------------------

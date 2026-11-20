@@ -23,7 +23,7 @@ interface JsonRpcRequest {
   params?: any;
 }
 
-interface ToolDef {
+export interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
@@ -36,6 +36,29 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
   additionalProperties: false,
 });
 const str = (description: string) => ({ type: "string", description });
+
+/**
+ * What is wrong with a tool call's arguments by its schema (required ones there and not empty,
+ * types of those given), or null. Without it, stet_withdraw with no ids reported "Withdrawn: ."
+ * (test report 2026-11-20, B6).
+ */
+export function argumentError(def: ToolDef, args: unknown): string | null {
+  const schema = def.inputSchema as { properties?: Record<string, { type?: string }>; required?: string[] };
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const fits = (t: string | undefined, v: unknown) =>
+    t === "array" ? Array.isArray(v) : t === "string" ? typeof v === "string" : t === "boolean" ? typeof v === "boolean" : t === "number" ? typeof v === "number" : true;
+  for (const k of schema.required ?? []) {
+    const t = schema.properties?.[k]?.type;
+    const v = a[k];
+    const empty = v === undefined || v === null || (typeof v === "string" && !v.trim()) || (Array.isArray(v) && !v.length);
+    if (empty || !fits(t, v)) return `${def.name} needs "${k}"${t === "array" ? ", a non-empty list" : t === "string" ? ", a non-empty string" : ""}.`;
+  }
+  for (const [k, v] of Object.entries(a)) {
+    const t = schema.properties?.[k]?.type;
+    if (v !== undefined && v !== null && !fits(t, v)) return `${def.name}: "${k}" must be ${t === "array" ? "a list" : `a ${t}`}.`;
+  }
+  return null;
+}
 const whereSchema = {
   type: "array",
   items: { type: "string" },
@@ -396,7 +419,10 @@ export class StetMcpServer {
       content: [{ type: "text" as const, text: data === undefined ? t : `${t}\n\n${"```json"}\n${JSON.stringify(data, null, 2)}\n${"```"}` }],
     });
     try {
-      if (!TOOLS.some((t) => t.name === name)) return { ...text(`Unknown tool ${name}.`), isError: true };
+      const def = TOOLS.find((t) => t.name === name);
+      if (!def) return { ...text(`Unknown tool ${name}.`), isError: true };
+      const bad = argumentError(def, args);
+      if (bad) return { ...text(bad), isError: true };
       const { stet, agent } = await this.context();
       switch (name) {
         case "stet_status": {

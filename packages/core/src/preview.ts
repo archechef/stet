@@ -230,7 +230,7 @@ export async function detectPreviewEnv(
           process.platform === "win32"
             ? "PDF previews compile agents' text in a container, so TeX can't read your files, and that isn't supported on Windows yet."
             : "PDF previews compile agents' text in a container, so TeX can't read your files, and Podman isn't installed.",
-        fix: (process.platform === "win32" ? "Use Stet in WSL2 for previews. " : "Install Podman (podman.io), then reload. ") + trusted,
+        fix: (process.platform === "win32" ? "Use Stet in WSL2 for previews. " : "Install Podman (podman.io), then try again (in VS Code: reload the window). ") + trusted,
       };
     }
     // Podman answers only while its service runs: on macOS, its Linux machine.
@@ -240,7 +240,7 @@ export async function detectPreviewEnv(
         status: "unavailable",
         isolation: "container",
         message: `PDF previews run in a Podman container, but Podman doesn't answer${process.platform === "darwin" ? " (its machine isn't running)" : ""}.`,
-        fix: process.platform === "darwin" ? "Start it with `podman machine start` (once: `podman machine init`), then reload." : `Check \`podman info\`: ${oneLineOf(info.stderr)}`,
+        fix: process.platform === "darwin" ? "Start it with `podman machine start` (once: `podman machine init`), then try again (in VS Code: reload the window)." : `Check \`podman info\`: ${oneLineOf(info.stderr)}`,
       };
     }
     // Where TeX comes from: the user's (mounted read-only) or the image's own.
@@ -293,7 +293,7 @@ export async function detectPreviewEnv(
 
   // A normal process: the user's explicit choice, with their own TeX and Poppler.
   if (!latexmk) {
-    return { status: "unavailable", isolation: "process", message: "PDF previews need a TeX distribution with latexmk, which isn't on the PATH.", fix: "Install TeX Live (tug.org/texlive) or MiKTeX, then reload." };
+    return { status: "unavailable", isolation: "process", message: "PDF previews need a TeX distribution with latexmk, which isn't on the PATH.", fix: "Install TeX Live (tug.org/texlive) or MiKTeX, then try again (in VS Code: reload the window)." };
   }
   const pdftoppm = await which("pdftoppm");
   if (!pdftoppm || !(await which("pdfinfo"))) {

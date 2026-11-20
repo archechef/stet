@@ -13,6 +13,8 @@ import {
   moveTo,
   numberInRound,
   oneLine,
+  changeSummary,
+  paragraphChange,
   partId,
   partIndexOf,
   roundOf,
@@ -74,6 +76,39 @@ const byId = (a: { id: string }, b: { id: string }) => compareItemIds(a.id, b.id
 /** Which changes a tree shows: the Review panel the open ones, the History view the decided ones. */
 export type TreeMode = "review" | "history";
 
+/** What the Review panel shows (test report 2026-11-20: filters by agent, file and status; search). */
+export interface PanelFilter {
+  agent?: string;
+  file?: string;
+  status?: "pending" | "needs_revision";
+  /** Words to find in a change: its id, file, old and new text, the agent's note, the conversation. */
+  text?: string;
+}
+
+export const filterIsEmpty = (f: PanelFilter | null | undefined): boolean => !f || (!f.agent && !f.file && !f.status && !f.text?.trim());
+
+export function matchesFilter(i: Item, f: PanelFilter): boolean {
+  if (f.agent && i.agent !== f.agent) return false;
+  if (f.file && i.file !== f.file && i.oldFile !== f.file) return false;
+  if (f.status && i.status !== f.status) return false;
+  const q = f.text?.trim().toLowerCase();
+  if (q) {
+    const hay = [i.id, i.file, i.oldText, i.newText, i.note ?? "", i.draft ?? "", ...i.thread.map((t) => t.text)].join("\n").toLowerCase();
+    if (!q.split(/\s+/).every((w) => hay.includes(w))) return false;
+  }
+  return true;
+}
+
+/** The filter in words, for the panel's message: "agent claude-1 · main.tex · “estimator”". */
+export function filterText(f: PanelFilter): string {
+  return [
+    ...(f.agent ? [`agent ${f.agent}`] : []),
+    ...(f.file ? [f.file] : []),
+    ...(f.status ? [f.status === "pending" ? "waiting for you" : "waiting for the agent"] : []),
+    ...(f.text?.trim() ? [`“${f.text.trim()}”`] : []),
+  ].join(" · ");
+}
+
 /**
  * Tree structure: agent → round (changeset) → group → (part →) item, ungrouped items directly
  * under the round. The same round can appear in both trees: its open changes under Review, its decided
@@ -86,9 +121,28 @@ export class TreeModel {
   constructor(
     readonly snap: Snapshot,
     readonly mode: TreeMode = "review",
+    /** Shown changes only (what decisions act on is not filtered). */
+    public filter: PanelFilter | null = null,
   ) {
     for (const i of snap.items) this.items.set(i.id, i);
     for (const g of snap.groups) this.groups.set(g.id, g);
+  }
+
+  /** Whether a node is shown under the filter: a change that matches it, or anything holding one. */
+  private keeps(node: Node): boolean {
+    const f = this.filter;
+    if (filterIsEmpty(f)) return true;
+    if (node.type === "item") return matchesFilter(node.item, f!);
+    if (node.type === "note") {
+      const q = f!.text?.trim().toLowerCase();
+      return !f!.status && (!f!.agent || node.note.agent === f!.agent) && (!f!.file || node.note.file === f!.file) && (!q || [node.note.body, node.note.text, ...node.note.thread.map((t) => t.text)].join("\n").toLowerCase().includes(q));
+    }
+    return this.allChildren(node).some((c) => this.keeps(c));
+  }
+
+  children(node?: Node): Node[] {
+    const all = this.allChildren(node);
+    return filterIsEmpty(this.filter) ? all : all.filter((c) => this.keeps(c));
   }
 
   visible(i: Item): boolean {
@@ -132,7 +186,7 @@ export class TreeModel {
     return this.groupsOf(cs).length > 0 || this.ungrouped(cs).length > 0;
   }
 
-  children(node?: Node): Node[] {
+  private allChildren(node?: Node): Node[] {
     if (!node) {
       return this.snap.agents
         .filter((a) => (this.mode === "review" && a.state === "active") || this.snap.items.some((i) => i.agent === a.id && this.visible(i)))
@@ -270,14 +324,30 @@ export function itemLabel(it: Item, get?: (id: string) => Item | undefined): str
         const k = get ? changedCount(moveChangesOf(it, get)) : it.move.changed;
         return `${n}  ⇡ moved in: “${oneLine(it.newText, 40)}”${k ? ` · ${k} word${k > 1 ? "s" : ""} changed` : ""}`;
       }
-      if (!it.oldText) return `${n}  + “${oneLine(it.newText, 50)}”`;
-      if (!it.newText) return `${n}  − “${oneLine(it.oldText, 50)}”`;
-      return `${n}  “${oneLine(it.oldText, 28)}” → “${oneLine(it.newText, 28)}”`;
+      {
+        const [o, nw] = changeSummary(it.oldText, it.newText, it.oldText && it.newText ? 28 : 50);
+        const breaks = paragraphChange(it.oldText, it.newText);
+        const revises = (breaks ? `  · ${breaks}` : "") + (it.supersedes ? `  · revises ${it.supersedes}` : "");
+        if (!it.oldText) return `${n}  + “${nw}”${revises}`;
+        if (!it.newText) return `${n}  − “${o}”${revises}`;
+        return `${n}  “${o}” → “${nw}”${revises}`;
+      }
   }
 }
 
 /** Label of a round (changeset): its number and the agent's title. */
-export const roundLabel = (cs: Changeset): string => `Round ${roundOf(cs.id)}: ${cs.title}`;
+/**
+ * A label cut to `max` characters at a word, with "…": long agent names and round titles pushed
+ * the counts and line numbers out of a narrow panel (test report 2026-11-20). Tooltips keep it whole.
+ */
+export function fitLabel(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:.-]+$/, "") + "…";
+}
+
+export const roundLabel = (cs: Changeset): string => `Round ${roundOf(cs.id)}: ${fitLabel(cs.title, 40)}`;
 
 export const STATUS_TEXT: Record<ItemStatus, string> = {
   pending: "pending",
@@ -338,6 +408,8 @@ export function moveNote(item: Item, get: (id: string) => Item | undefined, line
 
 /** Short text for ghost-text decorations (no newlines, bounded length). */
 export function ghostText(s: string, max = 80): string {
+  // Whitespace alone (a paragraph split or joined) would be invisible: shown as ¶ and ␣.
+  if (s && !s.trim()) return s.replace(/\r?\n[ \t]*\r?\n\s*/g, "¶").replace(/\r?\n/g, "↵").replace(/[ \t]/g, "␣");
   const t = s.replace(/\r?\n/g, " ⏎ ");
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
@@ -430,4 +502,61 @@ export const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export function nodeMajor(version: string): number | null {
   const m = /^v?(\d+)\./.exec(version.trim());
   return m ? Number(m[1]) : null;
+}
+
+type Pos = { line: number; character: number };
+
+/**
+ * Of changes located in a file, the one a command at `pos` means: the one the cursor is in, else
+ * the nearest on its line, not the line's first, which may be another change in the same
+ * paragraph (test report 2026-11-20, B8).
+ */
+export function changeAt<T extends { range: { start: Pos; end: Pos } }>(located: T[], pos: Pos): T | undefined {
+  const before = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && a.character <= b.character);
+  const inside = (r: { start: Pos; end: Pos }) => before(r.start, pos) && before(pos, r.end);
+  const gap = (r: { start: Pos; end: Pos }) =>
+    inside(r) ? 0 : 1 + Math.min(r.start.line === pos.line ? Math.abs(r.start.character - pos.character) : Infinity, r.end.line === pos.line ? Math.abs(r.end.character - pos.character) : Infinity);
+  return located.filter((l) => inside(l.range) || l.range.start.line === pos.line || l.range.end.line === pos.line).sort((a, b) => gap(a.range) - gap(b.range))[0];
+}
+
+/**
+ * The buttons of the archive dialog, the safe one first (Enter takes it): archiving can't be
+ * undone, and deleting the folder came first (test report 2026-11-20, D5). `unsubmitted`: files
+ * the agent changed and didn't submit, named on the delete button.
+ */
+export function archiveChoices(unsubmitted: number): { keep: string; del: string; order: string[] } {
+  const keep = "Archive, keep folder";
+  const del = unsubmitted ? `Archive and delete folder, with ${unsubmitted} unsubmitted file${unsubmitted === 1 ? "" : "s"}` : "Archive and delete folder";
+  return { keep, del, order: [keep, del] };
+}
+
+/**
+ * The question to ask before deciding several changes at once, or null to go ahead. A round
+ * always asks; a group or part asks unless it is linked (its changes must go together anyway).
+ * Shift+A asked for a round only, and Shift+R never did (test report 2026-11-20).
+ */
+export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what: string; changeset: boolean; linked: boolean }): string | null {
+  if (s.count < 2 || (s.linked && !s.changeset)) return null;
+  return `${verb} all ${s.count} changes of ${s.what}?`;
+}
+
+/** The question before dissolving a group, or null: a linked group's changes can then be decided apart, which can break the document. */
+export function dissolveQuestion(g: { id: string; kind: string; title: string }): string | null {
+  return g.kind === "linked" ? `Dissolve linked group ${g.id} “${g.title}”? Its changes can then be accepted one by one, which can break the document. This can't be undone.` : null;
+}
+
+/**
+ * A change as a screen reader reads it: what, where and its state in words, with no symbols or
+ * colour (decorations aren't read; test report 2026-11-20, accessibility).
+ */
+export function itemSpoken(it: Item, line?: number): string {
+  const where = `in ${it.file}${line && it.kind === "modify" ? ` line ${line}` : ""}`;
+  const state = it.status.replace(/_/g, " ");
+  if (it.kind !== "modify") return `Change ${it.id}, ${it.kind.replace("-", " ")} ${where}, ${state}`;
+  const [o, n] = changeSummary(it.oldText, it.newText, 60);
+  const breaks = paragraphChange(it.oldText, it.newText);
+  const what = breaks
+    ? `${breaks}, “${o}” to “${n}”`
+    : !it.oldText ? `insert “${n}”` : !it.newText ? `delete “${o}”` : `replace “${o}” with “${n}”`;
+  return `Change ${it.id}, ${what}, ${where}, ${state}${it.supersedes ? `, revises ${it.supersedes}` : ""}`;
 }

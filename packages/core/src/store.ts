@@ -298,7 +298,31 @@ export class Store {
     if (kind === "notes") await mkdir(this.dir(kind), { recursive: true });
     await writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
     this.cached(kind)?.set(v.id, structuredClone(v));
+    if (kind === "items") this.itemsView = null;
     await this.changedRecords();
+  }
+
+  private itemsView: { records: Map<string, unknown>; list: readonly Item[] } | null = null;
+
+  /**
+   * The items, shared and not copied: for lookups repeated many times in one locked operation,
+   * which must not change them. `items()` copies every record on every call: locating the other
+   * 750 changes of a file during an accept took 4 s (test report 2026-11-20, B3). Outside the
+   * lock, the same as `items()`.
+   */
+  async itemsReadOnly(): Promise<readonly Item[]> {
+    if (!this.cached("items")) {
+      const fresh = await this.items();
+      if (!this.cached("items")) return fresh;
+    }
+    const records = this.cached("items")!;
+    if (this.itemsView?.records !== records) this.itemsView = null;
+    if (!this.itemsView) {
+      const num = (x: Item) => Number(x.id.replace(/^\D+/, "")) || 0;
+      const list = ([...records.values()] as Item[]).sort((a, b) => num(a) - num(b) || a.id.localeCompare(b.id));
+      this.itemsView = { records, list };
+    }
+    return this.itemsView.list;
   }
 
   /** Whether the operation holding the lock wrote a record (see `signalChange`). */

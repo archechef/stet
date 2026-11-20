@@ -11,7 +11,7 @@ export interface SplitConfig {
 
 export interface GroupingConfig {
   autoRepeatMin: number;
-  autoDetect: ("repeat" | "label" | "cite" | "macro")[];
+  autoDetect: ("repeat" | "label" | "cite" | "macro" | "input")[];
   refCommands: string[];
   citeCommands: string[];
   /**
@@ -52,6 +52,8 @@ export interface StetConfig {
   files: { tex: string[]; bib: string[] };
   /** PDF previews of changes (spec §14). */
   preview: PreviewConfig;
+  /** The largest file an agent can propose, in MB: a 60 MB file went into the store whole (test report D10). */
+  maxFileMB: number;
 }
 
 export function defaultConfig(mainBranch: string): StetConfig {
@@ -70,7 +72,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
     },
     grouping: {
       autoRepeatMin: 3,
-      autoDetect: ["repeat", "label", "cite", "macro"],
+      autoDetect: ["repeat", "label", "cite", "macro", "input"],
       refCommands: ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref", "vref", "Vref"],
       citeCommands: ["cite", "citep", "citet", "citealp", "citeauthor", "citeyear", "parencite", "textcite", "autocite", "footcite"],
       moves: { enabled: true, minWords: 7, maxChangedWords: null },
@@ -80,6 +82,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
       bib: ["*.bib"],
     },
     preview: { ...DEFAULT_PREVIEW },
+    maxFileMB: 20,
   };
 }
 
@@ -127,6 +130,7 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (typeof cfg.worktreeRoot !== "string" || !cfg.worktreeRoot) bad("worktreeRoot");
   if (!["on-finish", "when-clean", "never"].includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}'`);
   if (!SHARE_MODES.includes(cfg.shareEdits)) bad(`shareEdits '${cfg.shareEdits}' (use ${SHARE_MODES.join(", ")})`);
+  if (typeof cfg.maxFileMB !== "number" || !(cfg.maxFileMB > 0)) bad("maxFileMB (a number of megabytes)");
   const pv = cfg.preview;
   if (typeof pv?.enabled !== "boolean") bad("preview.enabled (true or false)");
   // The root file becomes a TeX command-line argument: a plain relative .tex path only.

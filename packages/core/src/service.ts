@@ -1,5 +1,5 @@
 /** Stet service layer (spec §7, §12.1). All frontends go through this class. */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -208,6 +208,13 @@ function unlinkedRefusal(comps: string[][]): string {
   );
 }
 
+/** Text changes accepted from the same base as `item` in its file, from `all` items (see `anchorNear`). */
+function neighboursIn(all: readonly Item[], item: Item): Neighbour[] {
+  return all
+    .filter((i) => i.id !== item.id && i.status === "accepted" && i.resolution && i.kind === "modify" && i.file === item.file && i.baseCommit === item.baseCommit)
+    .map((i) => ({ range: { ...i.range }, oldText: i.oldText, text: i.resolution!.appliedText }));
+}
+
 export class Stet {
   private constructor(
     /** Path of the main worktree (the user's working copy). */
@@ -349,6 +356,8 @@ export class Stet {
       read: async (p) => {
         const buf = isSafeRepoPath(p) ? await readInside(this.mainPath, p) : null;
         if (!buf) return null;
+        // Changed in words, it would be written back as UTF-8: every other character lost.
+        if (isBinary(buf)) throw new StetError(`${p} is not UTF-8 text (any more), so Stet can't change it without damaging it. Save it as UTF-8, then try again.`);
         const raw = buf.toString("utf8");
         return { text: toLf(raw), eol: detectEol(raw) };
       },
@@ -362,10 +371,32 @@ export class Stet {
   private refText = async (item: Item) => (await this.textAt(item.baseCommit, item.oldFile ?? item.file))?.text;
 
   /** Text changes accepted from the same base as `item` in its file (see `anchorNear`). */
-  private neighbours = async (item: Item): Promise<Neighbour[]> =>
-    (await this.store.items())
-      .filter((i) => i.id !== item.id && i.status === "accepted" && i.resolution && i.kind === "modify" && i.file === item.file && i.baseCommit === item.baseCommit)
-      .map((i) => ({ range: i.range, oldText: i.oldText, text: i.resolution!.appliedText }));
+  private neighbours = async (item: Item): Promise<Neighbour[]> => neighboursIn(await this.store.itemsReadOnly(), item);
+
+  /**
+   * `locateInWorkingCopy` for many items, or `locateInText` with `text` (items of one file): the
+   * store and each file are read once. Item by item, every item read the whole store again:
+   * listing 750 changes took 25 s (test report 2026-11-20, B3).
+   */
+  async locateMany(items: Item[], text?: string): Promise<Map<string, { line: number; span: Span | null }>> {
+    const all = await this.store.items();
+    const files = new Map<string, Promise<TextFile | null>>();
+    const fileOf = (p: string) => {
+      if (!files.has(p)) files.set(p, this.workingView().read(p).catch(() => null));
+      return files.get(p)!;
+    };
+    const out = new Map<string, { line: number; span: Span | null }>();
+    for (const item of items) {
+      if (item.kind !== "modify") {
+        out.set(item.id, { line: 1, span: null });
+        continue;
+      }
+      const t = text ?? (await fileOf(item.file))?.text;
+      const span = t !== undefined ? anchorNear(item, t, await this.refText(item), neighboursIn(all, item)) : null;
+      out.set(item.id, { line: span && t !== undefined ? lineOf(t, span.start) : await this.itemLine(item), span });
+    }
+    return out;
+  }
 
   /** Where `item` is in `text` (its file's current text somewhere). */
   private async anchorItem(item: Item, text: string): Promise<Span | null> {
@@ -497,9 +528,9 @@ export class Stet {
     await rm(this.journalPath, { force: true });
   }
 
-  private setStatus(item: Item, status: ItemStatus, by: "user" | "agent" | "stet", note?: string) {
+  private setStatus(item: Item, status: ItemStatus, by: "user" | "agent" | "stet", note?: string, decision?: string) {
     item.status = status;
-    item.history.push({ at: now(), status, by, ...(note ? { note } : {}) });
+    item.history.push({ at: now(), status, by, ...(note ? { note } : {}), ...(decision ? { decision } : {}) });
   }
 
   private async itemLine(item: Item): Promise<number> {
@@ -555,6 +586,7 @@ export class Stet {
     await this.recoverInterrupted();
     const cfg = await this.config();
     const head = await this.mainHead(cfg);
+    await this.checkDroppedCommits(cfg, head);
     const pending = (await this.store.items()).filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
     const view = this.treeView(head);
     const stillOpen: Item[] = [];
@@ -636,6 +668,46 @@ export class Stet {
     s.base = { key, commit, ...(missing.length ? { missing } : {}) };
     await this.store.saveState(s);
     return commit;
+  }
+
+  /**
+   * Accepted items whose commit is no longer on the main branch (a `git reset --hard`, a rebase
+   * that dropped it). Stet kept saying "accepted and committed" while the text was gone, and
+   * refused to undo them (test report 2026-11-20, D9). An item whose change is still in the
+   * working copy is uncommitted again: it can be undone, and the next commit takes it. One whose
+   * change is gone is pending again, and the agent is told. Checked only when main moved other
+   * than forward.
+   */
+  private async checkDroppedCommits(cfg: StetConfig, head: string): Promise<void> {
+    const state = await this.store.state();
+    const last = state.mainHead;
+    if (last === head) return;
+    const forward = !!last && (await this.repo.tryRun(["merge-base", "--is-ancestor", last, head])) !== null;
+    if (!forward) {
+      const reach = new Map<string, boolean>();
+      const changed: Item[] = [];
+      const working = this.workingView();
+      for (const it of await this.store.items()) {
+        const c = it.status === "accepted" ? it.resolution?.committed?.replace(/^external:/, "") : undefined;
+        if (!c) continue;
+        if (!reach.has(c)) reach.set(c, (await this.repo.tryRun(["merge-base", "--is-ancestor", c, head])) !== null);
+        if (reach.get(c)) continue;
+        const f = it.kind === "modify" ? await working.read(it.file).catch(() => null) : null;
+        const kept = it.kind === "modify" ? !!f && this.holdsApplied(it, f.text) : (await this.wholeFileState(it, working).catch(() => "other")) === "done";
+        if (kept) {
+          it.resolution!.committed = null;
+          it.resolution!.headBlob = await this.repo.blobId(head, it.file);
+          await this.store.putItem(it);
+        } else {
+          await this.reopen(it, `its commit ${c.slice(0, 8)} is no longer on ${cfg.mainBranch} (git reset?), and your file doesn't have it`, "accepted");
+        }
+        changed.push(it);
+      }
+      if (changed.length) await this.updateGroups(changed);
+    }
+    const s = await this.store.state();
+    s.mainHead = head;
+    await this.store.saveState(s);
   }
 
   /** Whether `text` already holds an accepted item's applied text where the item was. */
@@ -780,9 +852,14 @@ export class Stet {
   async newAgent(id: string, opts: { kind?: AgentKind; path?: string } = {}): Promise<Agent> {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) throw new StetError(`Invalid agent id '${id}' (use letters, digits, '.', '_', '-').`);
     return this.store.withLock(async () => {
-      if (await this.store.getAgent(id)) throw new StetError(`Agent '${id}' already exists.`);
       const cfg = await this.config();
       const branch = cfg.agentBranchPrefix + id;
+      // An archived agent's name can be used again once its folder and branch are gone (the
+      // manual's way to recreate a workspace; test report B2). Its decided changes keep its name.
+      const old = await this.store.getAgent(id);
+      if (old?.state === "active") throw new StetError(`Agent '${id}' already exists.`);
+      if (old && ((await pathExists(old.worktree)) || (await this.repo.revParse(`refs/heads/${old.branch}`))))
+        throw new StetError(`Agent '${id}' is archived, but its folder or branch is still there. Delete them with \`stet agent archive ${id} --remove\`, or choose another name.`);
       if (await this.repo.revParse(`refs/heads/${branch}`)) throw new StetError(`Branch '${branch}' already exists.`);
       const base = await this.ensureBase();
       const root = resolve(this.mainPath, cfg.worktreeRoot.replace("{repo}", basename(this.mainPath)));
@@ -880,9 +957,22 @@ export class Stet {
    * The agent learns why on its next tool call (see `archivedMessage`); a kept folder gets the
    * same notice in place of its instructions.
    */
-  async archiveAgent(id: string, opts: { removeWorktree?: boolean } = {}): Promise<{ agent: Agent; withdrawn: string[]; worktreeRemoved: boolean }> {
+  async archiveAgent(
+    id: string,
+    opts: { removeWorktree?: boolean; discardUnsubmitted?: boolean } = {},
+  ): Promise<{ agent: Agent; withdrawn: string[]; worktreeRemoved: boolean }> {
     return this.store.withLock(async () => {
       const agent = await this.requireAgent(id);
+      // Deleting the folder loses what the agent didn't submit: only when asked for (test report D4).
+      if (opts.removeWorktree && !opts.discardUnsubmitted && (await pathExists(agent.worktree))) {
+        const unsubmitted = await this.unsubmittedFiles(agent).catch(() => [] as string[]);
+        if (unsubmitted.length) {
+          throw new StetError(
+            `${id} has changes it did not submit (${unsubmitted.slice(0, 5).join(", ")}${unsubmitted.length > 5 ? `, and ${unsubmitted.length - 5} more` : ""}); ` +
+              `deleting its folder would lose them. Archive it without deleting the folder, or delete them with it explicitly (--force).`,
+          );
+        }
+      }
       const withdrawn: string[] = [];
       for (const it of (await this.store.items()).filter((i) => i.agent === id && isLive(i.status))) {
         this.setStatus(it, "withdrawn", "user", "agent archived");
@@ -1001,6 +1091,12 @@ export class Stet {
       const oldPath = ch.status === "R" ? ch.oldPath! : ch.path;
       const oldBuf = ch.status === "A" ? null : await this.repo.readBlob(base, oldPath);
       const newBuf = ch.status === "D" ? null : await this.repo.readBlob(tip, ch.path);
+      if (newBuf && newBuf.length > cfg.maxFileMB * 1024 * 1024) {
+        throw new StetError(
+          `${ch.path} is ${(newBuf.length / 1024 / 1024).toFixed(1)} MB, more than the ${cfg.maxFileMB} MB Stet takes for a file ` +
+            `(the reviewer can raise "maxFileMB" in .git/stet/config.json). Leave it out (git checkout -- ${ch.path}, or delete it), then submit again.`,
+        );
+      }
       const binary = (oldBuf && isBinary(oldBuf)) || (newBuf && isBinary(newBuf));
       const oldText = oldBuf ? toLf(oldBuf.toString("utf8")) : "";
       const newText = newBuf ? toLf(newBuf.toString("utf8")) : "";
@@ -1670,7 +1766,7 @@ export class Stet {
   /** Current 1-based line of an item in the working copy (or its base line if it can't be located). */
   async locateInWorkingCopy(item: Item): Promise<{ line: number; span: Span | null }> {
     if (item.kind !== "modify") return { line: 1, span: null };
-    const f = await this.workingView().read(item.file);
+    const f = await this.workingView().read(item.file).catch(() => null); // not UTF-8 any more: not located
     const span = f ? await this.anchorItem(item, f.text) : null;
     return { line: span && f ? lineOf(f.text, span.start) : await this.itemLine(item), span };
   }
@@ -1690,7 +1786,7 @@ export class Stet {
    * Commit accepted-but-uncommitted items ("Finish review"). Commits their whole files,
    * so the user's own edits in those files are included.
    */
-  async commitAcceptedItems(opts: { subject?: string } = {}): Promise<{ commit: string | null; items: Item[] }> {
+  async commitAcceptedItems(opts: { subject?: string } = {}): Promise<{ commit: string | null; items: Item[]; yourEdits: string[] }> {
     return this.store.withLock(async () => {
       const cfg = await this.config();
       const onBranch = await this.projectBranch();
@@ -1698,12 +1794,44 @@ export class Stet {
         throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back first.`);
       await this.ensureBase(); // marks items the user already committed
       const items = (await this.uncommittedAccepted()).sort((a, b) => compareItemIds(a.id, b.id));
-      if (!items.length) return { commit: null, items };
+      if (!items.length) return { commit: null, items, yourEdits: [] };
       const paths = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
-      const commit = await this.commitAccepted(items, paths, opts.subject);
+      const yourEdits = await this.filesWithOtherEdits(items, paths, await this.mainHead(cfg));
+      const commit = await this.commitAccepted(items, paths, opts.subject, yourEdits);
       await this.ensureBase();
-      return { commit, items: commit ? items : [] };
+      return { commit, items: commit ? items : [], yourEdits: commit ? yourEdits : [] };
     });
+  }
+
+  /**
+   * Of `paths`, those whose working copy holds more than the accepted `items` applied to `head`:
+   * the user's own edits, which a commit of the whole file takes along (test report D8). A file
+   * where that can't be told (an item no longer found in `head`) counts as one.
+   */
+  private async filesWithOtherEdits(items: Item[], paths: string[], head: string): Promise<string[]> {
+    const overrides = new Map(items.map((i) => [i.id, i.resolution?.appliedText ?? i.newText]));
+    const sim = await applyItems(items, this.treeView(head), { refText: this.refText, overrides, neighbours: this.neighbours }).catch(() => null);
+    const unsure = new Set(sim ? sim.failed.flatMap((f) => [f.item.file, ...(f.item.oldFile ? [f.item.oldFile] : [])]) : paths);
+    const out: string[] = [];
+    for (const p of paths) {
+      if (unsure.has(p)) {
+        out.push(p);
+        continue;
+      }
+      const want = sim!.changes.has(p) ? sim!.changes.get(p)! : await this.treeView(head).read(p);
+      const blob = await this.workingView().blobId(p);
+      if (want === null || blob === null) {
+        if ((want === null) !== (blob === null)) out.push(p);
+        continue;
+      }
+      if ("blob" in want) {
+        if (want.blob !== blob) out.push(p);
+        continue;
+      }
+      const cur = await this.workingView().read(p).catch(() => null);
+      if (!cur || cur.text !== want.text) out.push(p);
+    }
+    return out;
   }
 
   private async requireItems(ids: string[]): Promise<Item[]> {
@@ -1780,6 +1908,30 @@ export class Stet {
       }
     }
     return [...out.values()];
+  }
+
+  /**
+   * Warnings for the linked groups of these items that are now decided differently: some members
+   * accepted, others rejected, withdrawn or stale (parts decided one at a time, or `--only`). The
+   * agent was told (group_partial, group_broken); the reviewer heard nothing, and a \ref could be
+   * committed without its \label (test report 2026-11-20, D3).
+   */
+  async partlyDecided(items: Item[]): Promise<string[]> {
+    const out: string[] = [];
+    for (const gid of new Set(items.flatMap((i) => i.groups))) {
+      const g = await this.store.getGroup(gid);
+      if (g?.kind !== "linked") continue;
+      const members = (await Promise.all(g.items.map((i) => this.store.getItem(i)))).filter((x): x is Item => !!x && x.status !== "superseded");
+      const yes = members.filter((m) => m.status === "accepted");
+      const no = members.filter((m) => m.status === "rejected" || m.status === "withdrawn" || m.status === "stale");
+      if (!yes.length || !no.length) continue;
+      out.push(
+        `${g.id} (${g.title}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
+          `${no.map((m) => m.id).join(", ")} ${no.every((m) => m.status === "rejected") ? "rejected" : "not"}. ` +
+          `Check that the document is still consistent (a \\ref to a label that no longer exists, say); \`stet undo\` takes a decision back.`,
+      );
+    }
+    return out;
   }
 
   /** A group (G3) or one of its parts (G3.2), with its pending items. */
@@ -1877,9 +2029,10 @@ export class Stet {
         res.applied.map((a) => ({ id: a.item.id, appliedText: appliedText(a), edited: editedOf(a) })),
       );
 
+      const decision = randomUUID();
       for (const a of res.applied) {
         const edited = editedOf(a);
-        this.setStatus(a.item, "accepted", "user");
+        this.setStatus(a.item, "accepted", "user", undefined, decision);
         delete a.item.acceptFailed;
         delete a.item.draft;
         a.item.resolution = { appliedText: appliedText(a), edited, committed: null, headBlob: headBlobs.get(a.item.file) ?? null };
@@ -1898,6 +2051,7 @@ export class Stet {
         else committed = await this.commitAccepted(res.applied.map((a) => a.item), [...res.changes.keys()]);
       }
       await this.updateGroups([...items, ...stale]);
+      if (!missing.length) warnings.push(...(await this.partlyDecided(items)));
       // The review base is rebuilt lazily, when an agent next needs it (status, sync, submit):
       // rebuilding it here made every accept several git calls slower.
       const accepted = res.applied.map((a) => a.item).sort((a, b) => compareItemIds(a.id, b.id));
@@ -1929,10 +2083,11 @@ export class Stet {
     };
   }
 
-  private async commitAccepted(items: Item[], paths: string[], subject?: string): Promise<string | null> {
+  private async commitAccepted(items: Item[], paths: string[], subject?: string, yourEdits: string[] = []): Promise<string | null> {
     const msg = await this.commitMessage(items, subject);
+    const body = yourEdits.length ? msg.body.replace(/\n\nStet-Applied:/, `\n\nAlso the reviewer's own edits in ${yourEdits.join(", ")}.\n\nStet-Applied:`) : msg.body;
     await this.repo.run(["add", "-A", "--", ...paths]);
-    const r = await this.repo.tryRun(["commit", "-q", "--only", "-m", `${msg.subject}\n\n${msg.body}`, "--", ...paths]);
+    const r = await this.repo.tryRun(["commit", "-q", "--only", "-m", `${msg.subject}\n\n${body}`, "--", ...paths]);
     if (r === null) return null;
     const head = (await this.repo.revParse("HEAD"))!;
     for (const it of items) {
@@ -1958,8 +2113,9 @@ export class Stet {
         );
       }
       const toReject = opts.mode === "all" ? [...items, ...rest] : items;
+      const decision = randomUUID();
       for (const it of toReject) {
-        this.setStatus(it, "rejected", "user", opts.reason);
+        this.setStatus(it, "rejected", "user", opts.reason, decision);
         delete it.draft;
         if (opts.reason) it.thread.push({ at: now(), author: "user", text: `Rejected: ${opts.reason}` });
         await this.store.putItem(it);
@@ -1975,7 +2131,7 @@ export class Stet {
       if (opts.mode === "revise-rest") {
         for (const r of rest) {
           const text = `Linked item ${items.map((i) => i.id).join(", ")} was rejected${opts.reason ? `: ${opts.reason}` : ""}. Please revise.`;
-          await this.requestRevisionLocked(r, text);
+          await this.requestRevisionLocked(r, text, decision);
         }
       }
       await this.updateGroups([...toReject, ...rest]);
@@ -1997,9 +2153,13 @@ export class Stet {
         throw new StetError(`${item!.id} is ${item!.status}: only accepted and rejected changes can be undone.`);
       const unit = await this.decidedWith(item!);
       if (item!.status === "rejected") {
+        // The revision requests this rejection sent to the rest of its linked group (reject
+        // --revise-rest) are taken back too, unless the agent has answered them meanwhile.
+        const revised = (await this.sameDecision(item!)).filter((i) => i.status === "needs_revision");
         for (const it of unit) await this.reopen(it, "rejection undone", "rejected");
-        await this.updateGroups(unit);
-        return { reopened: unit, restored: [] };
+        for (const it of revised) await this.reopen(it, "rejection of a linked change undone", "needs_revision");
+        await this.updateGroups([...unit, ...revised]);
+        return { reopened: [...unit, ...revised], restored: [] };
       }
 
       const committed = unit.find((i) => i.resolution?.committed);
@@ -2059,7 +2219,12 @@ export class Stet {
     });
   }
 
-  /** An item and those decided together with it (move partners, its linked unit) in the same state. */
+  /**
+   * An item and those decided together with it, in the same state: its move partners, its linked
+   * unit, and the rest of its linked group decided in the same accept or reject. Accepting G1
+   * whole and undoing one of its parts left a \label renamed without its \refs (test report
+   * 2026-11-20, D2).
+   */
   private async decidedWith(item: Item): Promise<Item[]> {
     const out = new Map<string, Item>([[item.id, item]]);
     const add = async (id: string) => {
@@ -2070,6 +2235,24 @@ export class Stet {
     for (const gid of item.groups) {
       const g = await this.store.getGroup(gid);
       if (g?.kind === "linked") for (const m of linkedUnit(g, item.id)) await add(m);
+    }
+    for (const it of await this.sameDecision(item)) if (it.status === item.status) await add(it.id);
+    return [...out.values()];
+  }
+
+  /** The other members of an item's linked groups whose last change of status came from the same decision. */
+  private async sameDecision(item: Item): Promise<Item[]> {
+    const decision = item.history[item.history.length - 1]?.decision;
+    if (!decision) return [];
+    const out = new Map<string, Item>();
+    for (const gid of item.groups) {
+      const g = await this.store.getGroup(gid);
+      if (g?.kind !== "linked") continue;
+      for (const id of g.items) {
+        if (id === item.id || out.has(id)) continue;
+        const it = await this.store.getItem(id);
+        if (it && it.history[it.history.length - 1]?.decision === decision) out.set(id, it);
+      }
     }
     return [...out.values()];
   }
@@ -2281,8 +2464,8 @@ export class Stet {
     });
   }
 
-  private async requestRevisionLocked(it: Item, text: string) {
-    this.setStatus(it, "needs_revision", "user");
+  private async requestRevisionLocked(it: Item, text: string, decision?: string) {
+    this.setStatus(it, "needs_revision", "user", undefined, decision);
     it.thread.push({ at: now(), author: "user", text });
     await this.store.putItem(it);
     await this.store.appendEvent({ type: "revision_requested", agent: it.agent, items: [it.id], data: { item: await this.describe(it), comment: text } });

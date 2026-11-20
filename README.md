@@ -9,13 +9,18 @@
 - Nothing touches your files until you accept it.
 
 ```
-claude-1                                       3 pending
-└─ Round 2: Polish the introduction            3 pending
-   ├─ 🔗 Rename sec:intro → sec:introduction    linked · 2
-   │  ├─ 1  “\label{sec:intro}” → “\label{sec:introduction}”   main.tex:3
-   │  └─ 3  “\ref{sec:intro}” → “\ref{sec:introduction}”       main.tex:12
-   └─ 2  “problem” → “task”                                     main.tex:4
+$ stet review
+claude-1 › Round 1 (C1) Polish the introduction — Clearer terms.
+  ⛓ G1 linked Rename label sec:intro → sec:introduction [auto]
+      G1.1 \label{sec:intro} → \label{sec:introduction}
+        1.1 pending main.tex:3  "\label{sec:intro}" → "\label{sec:introduction}"
+      G1.2 \ref{sec:intro} → \ref{sec:introduction}
+        1.3 pending main.tex:6  "\ref{sec:intro}" → "\ref{sec:introduction}"
+    1.2 pending main.tex:4  "problem" → "task"
+Next: stet show <id> · stet accept <id> · stet reject <id> -m <why>
 ```
+
+`1.2` is round 1, change 2; `C1` the whole round. ⛓ `G1` is a *linked* group, Stet found it itself (`[auto]`), and it comes in parts (`G1.1`, `G1.2`) that you can accept one at a time. The same review in VS Code is a tree in the Stet panel, with each change marked in your file.
 
 ## Features
 
@@ -59,7 +64,7 @@ Install it in VS Code: Extensions view → `…` → *Install from VSIX…*. Cow
 
 ### Command line
 
-Requirements: Node.js ≥ 20 and git ≥ 2.28.
+Requirements: Node.js ≥ 20 and git ≥ 2.28. Get this repository first (clone it, or unpack a release's source archive), then in its folder:
 
 ```bash
 npm install && npm run build
@@ -74,7 +79,7 @@ stet agent new claude-1               # prints the agent's workspace folder: ope
 stet review                           # what the agent proposed
 stet accept 2.1 2.2                   # round 2, changes 1 and 2; or a whole group: stet accept G1
 stet reject 2.3 -m "keep the original formula"
-stet commit -m "Polish the introduction"
+stet commit -m "Polish the introduction"   # commits the files whole, your own edits in them too
 ```
 
 → [Command-line manual](docs/cli.md)
