@@ -117,7 +117,7 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
 - **Share my edits with agents** (cloud): shown only when you have saved edits that agents don't see.
 - **Finish review** (commit): shown only when there is something to commit.
 - **View options** (gear): everything you may want to switch while you work, with a checkmark at the current choice:
-  - changes inline in the editor, actions above changes (CodeLens), going to the next change after deciding;
+  - changes inline in the editor, actions above changes (CodeLens), going to the next change after deciding, what the left side of a diff shows;
   - how new text is drawn (by word wrap, highlighted, or wrapping), and whether wrapping text is green too (see 4.2);
   - how long changes are shown, which of your edits agents see, and where PDF previews appear.
   
@@ -130,6 +130,7 @@ The **History** view (under Review in the Stet sidebar; click its title to open 
 
 - Clicking a change shows its diff: the old text against the text that was accepted (your edited version, if you edited it), in its original context.
 - Right-click for **Comment…** (the agent can still reply), **Diff**, **PDF preview** and **Go to change**, with the same names as everywhere (4.3). `d` shows the diff, `u` undoes.
+- **Where changes open:** going to a change (or a note, or a diff) uses the editor group that already has its file open, even when another one has the focus. Otherwise it opens in the active group, unless that shows the PDF preview: then in a group showing text, or beside it.
 - **Undo** (the ↶ button): the change is pending again, and the agent is told. Undoing an accept takes the change out of your file again, and changes the accept had made stale are pending again too. A change decided together with others (a linked group, a move) is undone with them. You can undo an accept until you **Finish review**; after that it is in git's history, and its diff still shows here.
 - A round that is partly decided appears in both views: its open changes under Review, the decided ones under History.
 
@@ -151,7 +152,7 @@ You can keep typing in the file while changes are pending. Stet finds each chang
 
 ### Reviewing a whole file
 
-**Review file** opens VS Code's diff editor: on the left your file, on the right the same file with every pending change in it applied. Real line breaks and word wrap, so long rewrites read like text; VS Code's *Inline View* (the diff's **…** menu) shows both in one column, like tracked changes.
+**Review file** opens VS Code's diff editor: on the left your text as it is (read-only, with what the changes remove in red), on the right the same file with every pending change in it applied. **View options → Diffs: your side shows the proposals too** (`stet.diffShowsProposals`) puts your file itself on the left instead: editable, with the proposals marked in it as in the editor. Real line breaks and word wrap, so long rewrites read like text; VS Code's *Inline View* (the diff's **…** menu) shows both in one column, like tracked changes.
 
 - **Open it from:** the button in the editor's title bar (shown when the file has pending changes), the editor's right-click menu, or a change's actions (hover, *More…*, Ctrl+., right-click in the panel, `f` in the panel).
 - **Edit the right side** to reword proposals. Saving keeps your wording for those changes (the panel marks them *your wording*); nothing is accepted. Edits outside the proposed changes are refused when you save: make those in your file itself.
@@ -178,7 +179,7 @@ An action that ends in "…" asks you something first (a reason, your wording, a
 |---|---|---|
 | **Accept** | `a` | Applies the change to your file. It is committed together with the rest of the review when you click **Finish review**. On a linked change it reads *Accept all n linked* (see below). |
 | **Reject…** | `r` | Asks for an optional reason. The agent gets the reason and won't propose the same change again. |
-| **Edit & accept…** | `e` | Lets you change the wording first, then accepts it. The agent sees your version and adapts to your style. Short changes (one line, up to 80 characters) are edited in an input box, whose "Edit in a tab" button (top right) moves to a tab if you need more room; longer ones open in a separate tab, where you then choose *Accept edited*. To reword several changes and decide later, use **Review file**. |
+| **Edit & accept…** | `e` | Lets you change the wording first, then accepts it. The agent sees your version and adapts to your style. Short changes (one line, up to 80 characters) are edited in an input box: Enter accepts, its save button saves your wording without accepting, and "Edit in a tab" moves to an editor if you need more room. Longer ones open in an editor of their own: **Ctrl+S saves your wording** (the change stays pending, the panel marks it *your wording*), and above the text, also in the title bar, are **Accept … with this wording**, **Agent's wording** and **More…**. The editor closes when the change is decided. To reword several changes and decide later, use **Review file**. |
 | **Revise…** | `v` | Tells the agent what to change. The change stays open until the agent resubmits it. |
 | **Comment…** | `c` | Sends a message about the change; the agent can reply. |
 | **Diff** | `d` | Your file and the file with this change, side by side: a review of just this change (and what accepting it takes along), editable, with the same actions (see *Reviewing a whole file*). Decided changes, and file additions, deletions and renames, get a read-only diff. |
@@ -302,6 +303,7 @@ Most of these can also be switched from the panel's **View options** (§4.1).
 |---|---|---|
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
+| `stet.diffShowsProposals` | `false` | In Diff and Review file, your file itself on the left (editable, with the proposals in it) instead of your text as it is, read-only. |
 | `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. With word wrap on, the new text wraps with the line. VS Code can't show line breaks inline (⏎ marks them); the panel under a long change shows its text in full. Stet sets VS Code's `editor.inlayHints.maximumLength` to no limit for LaTeX files; if your own settings cut or hide inline text, Stet says so once and offers to fix them for that language. |
 | `stet.longChanges` | `collapsed` | How changes too long for one line of grey text are shown: in full in a panel under the change that you open from the gutter (`collapsed`), the same panel open (`expanded`), or only in the hover (`hover`). |
 | `stet.newTextStyle` | `auto` | How new text is drawn: `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line, in the inlay-hint colour), or `auto` (by the word wrap setting). |

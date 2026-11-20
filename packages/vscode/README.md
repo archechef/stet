@@ -52,7 +52,7 @@ Each change is shown in your file: the old text struck through in red, the new t
 |---|---|---|
 | **Accept** | `a` | Applies the change to your file. Linked changes are accepted together (*Accept all 3 linked*). |
 | **Reject…** | `r` | With an optional reason. The agent won't propose it again. |
-| **Edit & accept…** | `e` | Change the wording, then accept it. The agent sees your version and adapts. |
+| **Edit & accept…** | `e` | Change the wording, then accept it, or save it and decide later (Ctrl+S in its editor). The agent sees your version and adapts. |
 | **Revise…** | `v` | Tell the agent what to change; it resubmits. |
 | **Comment…** | `c` | A message about the change; the agent can reply. |
 | **Diff** | `d` | Your file with and without the change, side by side; editable like Review file. |
@@ -93,11 +93,12 @@ Previews compile the agent's text in an isolated [Podman](https://podman.io) con
 
 ## View options
 
-The gear in the Stet panel holds everything you may want to switch while you work, with a checkmark at the current choice: changes inline, the actions above changes, moving to the next change after deciding, how new text is drawn with word wrap, how long changes are shown, which of your edits agents see, and where PDF previews appear. They are ordinary settings (`stet.*`), so the Settings editor shows the same values.
+The gear in the Stet panel holds everything you may want to switch while you work, with a checkmark at the current choice: changes inline, the actions above changes, moving to the next change after deciding, what the left side of a diff shows, how new text is drawn with word wrap, how long changes are shown, which of your edits agents see, and where PDF previews appear. They are ordinary settings (`stet.*`), so the Settings editor shows the same values.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `stet.inlineChanges` | `true` | Show changes in the editor. |
+| `stet.diffShowsProposals` | `false` | Diffs show your file itself on the left, with the proposals in it, instead of your text as it is. |
 | `stet.codeLens` | `true` | Actions above each change. |
 | `stet.autoAdvance` | `true` | After a decision, move on to the next change. |
 | `stet.newTextStyle` | `auto` | New text `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line), or by the word wrap setting. |

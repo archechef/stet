@@ -403,7 +403,13 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
 
 /** Read-only documents for `stet.showDiff`: `stet-diff:/<project>/<item>/<side>/<file>`. */
 export class DiffContent implements vscode.TextDocumentContentProvider {
+  private readonly emitter = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this.emitter.event;
   constructor(private resolveSide: (uri: vscode.Uri) => Promise<string>) {}
+  /** What `uri` shows has changed (VS Code reads it again). */
+  fire(uri: vscode.Uri): void {
+    this.emitter.fire(uri);
+  }
   provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
     return this.resolveSide(uri);
   }

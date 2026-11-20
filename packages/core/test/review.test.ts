@@ -85,6 +85,25 @@ describe("reviewing a whole file", () => {
     expect((await stet.getItem(formula!.id))!.draft).toBeUndefined();
   });
 
+  it("keeps the reviewer's wording for a change without accepting it", async () => {
+    const { setup, edit, read, PAPER } = await import("./helpers.js");
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    const [item] = (await stet.submit("a", { title: "t" })).items;
+    expect(await stet.setDraft(item!.id, "hard task")).toBe(true);
+    expect(await stet.setDraft(item!.id, "hard task")).toBe(false);
+    expect((await stet.getItem(item!.id))!).toMatchObject({ status: "pending", draft: "hard task" });
+    expect(read(repo, "main.tex")).toBe(PAPER);
+    // The agent's text again: no wording of the reviewer's.
+    await stet.setDraft(item!.id, item!.newText);
+    expect((await stet.getItem(item!.id))!.draft).toBeUndefined();
+    await stet.setDraft(item!.id, "hard task");
+    await stet.accept([item!.id]);
+    expect(read(repo, "main.tex")).toContain("the hard task of");
+    await expect(stet.setDraft(item!.id, "x")).rejects.toThrow(/accepted already/);
+  });
+
   it("reviews one change on its own: only it is applied, and only it can be edited", async () => {
     const { setup, edit, read, PAPER } = await import("./helpers.js");
     const { stet, repo } = await setup({ "main.tex": PAPER });

@@ -421,6 +421,29 @@
         "category": "Stet"
       },
       {
+        "command": "stet.editAccept",
+        "title": "Accept with this wording",
+        "category": "Stet",
+        "icon": "$(check)"
+      },
+      {
+        "command": "stet.editReset",
+        "title": "Agent's wording",
+        "category": "Stet",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "stet.editSave",
+        "title": "Save wording (stays pending)",
+        "category": "Stet"
+      },
+      {
+        "command": "stet.toggleDiffProposals",
+        "title": "Diffs: your side shows the proposals too",
+        "category": "Stet",
+        "toggled": "config.stet.diffShowsProposals"
+      },
+      {
         "command": "stet.clearDraft",
         "title": "Use agent's wording",
         "category": "Stet",
@@ -701,6 +724,18 @@
           "when": "false"
         },
         {
+          "command": "stet.editAccept",
+          "when": "resourceScheme == stet-edit"
+        },
+        {
+          "command": "stet.editReset",
+          "when": "resourceScheme == stet-edit"
+        },
+        {
+          "command": "stet.editSave",
+          "when": "false"
+        },
+        {
           "command": "stet.highlightOn",
           "when": "false"
         },
@@ -744,6 +779,10 @@
         {
           "command": "stet.toggleAutoAdvance",
           "group": "1_editor@3"
+        },
+        {
+          "command": "stet.toggleDiffProposals",
+          "group": "1_editor@4"
         },
         {
           "command": "stet.newTextStyle.auto",
@@ -807,6 +846,16 @@
           "command": "stet.reviewFile",
           "when": "resourceScheme == file && stet.fileHasChanges",
           "group": "navigation@1"
+        },
+        {
+          "command": "stet.editAccept",
+          "when": "resourceScheme == stet-edit",
+          "group": "navigation@1"
+        },
+        {
+          "command": "stet.editReset",
+          "when": "resourceScheme == stet-edit",
+          "group": "navigation@2"
         }
       ]
     },
@@ -904,6 +953,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show Accept / Reject / Edit / Comment actions above each proposed change."
+        },
+        "stet.diffShowsProposals": {
+          "type": "boolean",
+          "default": false,
+          "description": "In Diff and Review file, show your file itself on the left: editable, with the proposals marked in it as in the editor. Off: your text as it is, read-only, with what the proposals remove in red."
         },
         "stet.inlineChanges": {
           "type": "boolean",

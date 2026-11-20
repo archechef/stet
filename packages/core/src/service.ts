@@ -2211,6 +2211,25 @@ export class Stet {
     });
   }
 
+  /**
+   * The reviewer's wording for a pending change, without accepting it (accepting later uses it).
+   * The agent's own text drops the wording. Returns whether anything changed.
+   */
+  async setDraft(id: string, text: string): Promise<boolean> {
+    return this.store.withLock(async () => {
+      const it = await this.store.getItem(id.toUpperCase());
+      if (!it) throw new StetError(`Unknown change '${id}'.`);
+      if (it.kind !== "modify") throw new StetError(`${it.id} changes a whole file; it can only be accepted or rejected.`);
+      if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status} already; there is no wording to change.`);
+      const lf = toLf(text);
+      if (lf === (it.draft ?? it.newText)) return false;
+      if (lf === it.newText) delete it.draft;
+      else it.draft = lf;
+      await this.store.putItem(it);
+      return true;
+    });
+  }
+
   /** Drop the reviewer's wording for a change: the agent's text again. */
   async clearDraft(id: string): Promise<void> {
     await this.store.withLock(async () => {

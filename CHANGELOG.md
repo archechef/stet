@@ -3,6 +3,9 @@
 ## Unreleased
 
 - **Fix: PDF previews of long rewrites highlighted only their end.** A change of more than about 80 words was searched for on the page in too short a stretch, so only the edits near its end were marked. All of it is found now.
+- **Diffs show your text on the left, not your text with the proposals in it.** The left side of Diff and Review file is your text as it is, read-only, with what the changes remove in red. **View options → Diffs: your side shows the proposals too** brings back your file itself there (editable, marked as in the editor).
+- **Save your wording without accepting.** Editing a longer change opens an editor of its own instead of an untitled tab and a notification: Ctrl+S keeps your wording (the change stays pending), and Accept with this wording, Agent's wording and More… are above the text and in the title bar. The input box for short changes has a save button for the same.
+- **Going to a change uses the tab that has its file open,** in whichever editor group, instead of opening the file again in the focused one; and it no longer covers the PDF preview.
 - **PDF previews read maths alike in both versions.** pdftotext breaks lines around formulas into pieces in no stable order, and splits `p+i` or not depending on the line's spacing, so unchanged formulas were marked. Lines are rebuilt from where the words are, maths compares symbol by symbol, and a formula that only moved because the words around it changed isn't marked.
 
 ## 0.14.0 — 2026-11-20

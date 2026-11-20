@@ -286,6 +286,56 @@ exports.run = async function run() {
     );
     check("diff of a decided change shows the accepted text in context", diffAfter.getText().includes("the task of reviewing"), diffAfter.getText().slice(0, 100));
 
+    // Diffs: the left side is your text as it is (read-only), not your file with the proposals in it.
+    {
+      const itemOf = (id) => JSON.parse(readFileSync(join(store, "items", `${id}.json`), "utf8"));
+      const wrapId = fx.items.find((id) => itemOf(id).file === "wrap.tex" && itemOf(id).status === "pending");
+      await vscode.commands.executeCommand("stet.showDiff", { path: fx.repo, id: wrapId });
+      const tab = await until("diff tab", async () => {
+        const t = vscode.window.tabGroups.activeTabGroup.activeTab;
+        return t && t.input instanceof vscode.TabInputTextDiff ? t.input : null;
+      }, 10000).catch(() => null);
+      const left = tab && (await vscode.workspace.openTextDocument(tab.original));
+      check(
+        "a diff's left side is your text, read-only, without the proposals",
+        !!left && tab.original.scheme === "stet-diff" && left.getText() === readFileSync(join(fx.repo, "wrap.tex"), "utf8"),
+        tab ? `${tab.original.toString()} ${left && left.getText().slice(0, 60)}` : "no diff tab",
+      );
+      await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+
+      // Editing a longer change: an editor of its own; saving keeps your wording, the change stays pending.
+      await vscode.commands.executeCommand("stet.edit", { path: fx.repo, id: wrapId });
+      const editDoc = await until("edit editor", async () => vscode.workspace.textDocuments.find((d) => d.uri.scheme === "stet-edit" && d.uri.path.startsWith(`/${wrapId}/`)) || null, 10000).catch(() => null);
+      const editLenses = editDoc ? ((await vscode.commands.executeCommand("vscode.executeCodeLensProvider", editDoc.uri)) || []).map((l) => l.command && l.command.title) : [];
+      if (editDoc) {
+        const e = new vscode.WorkspaceEdit();
+        e.insert(editDoc.uri, editDoc.positionAt(editDoc.getText().length), " Reworded by me.");
+        await vscode.workspace.applyEdit(e);
+        await editDoc.save();
+      }
+      const drafted = itemOf(wrapId);
+      check(
+        "editing a change in its own editor: buttons above, Ctrl+S keeps your wording, still pending",
+        !!editDoc && editLenses.some((t) => t.startsWith(`${wrapId}: $(check) Accept`) && t.endsWith("with this wording")) && editLenses.includes("$(save) Save wording") && drafted.status === "pending" && (drafted.draft || "").endsWith("Reworded by me."),
+        JSON.stringify({ editLenses, status: drafted.status, draft: (drafted.draft || "").slice(-30) }),
+      );
+      if (editDoc) await vscode.commands.executeCommand("stet.editReset", editDoc.uri.toString());
+      check("Agent's wording drops yours", itemOf(wrapId).draft === undefined, JSON.stringify(itemOf(wrapId).draft));
+      await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+
+      // Going to a change uses the group that has its file open, not the focused one.
+      const wrapUri = vscode.Uri.file(join(fx.repo, "wrap.tex"));
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(wrapUri), { viewColumn: vscode.ViewColumn.One });
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ content: "other" }), { viewColumn: vscode.ViewColumn.Two });
+      await vscode.commands.executeCommand("stet.showItem", { path: fx.repo, id: wrapId });
+      const groupsWithWrap = vscode.window.tabGroups.all.filter((g) => g.tabs.some((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === wrapUri.toString())).map((g) => g.viewColumn);
+      // (The active group, not activeTextEditor: that one lags while the test window is in the background.)
+      const active = vscode.window.tabGroups.activeTabGroup;
+      const shown = active.viewColumn === 1 && active.activeTab && active.activeTab.input instanceof vscode.TabInputText && active.activeTab.input.uri.toString() === wrapUri.toString();
+      check("going to a change reuses the tab of its file", JSON.stringify(groupsWithWrap) === "[1]" && shown, JSON.stringify({ groupsWithWrap, active: active.viewColumn }));
+      await vscode.commands.executeCommand("workbench.action.closeEditorsInOtherGroups");
+    }
+
     // Pressing `a` twice in quick succession accepts two changes: the second waits until the
     // panel has moved on from the first.
     await vscode.commands.executeCommand("stet.review.focus");
