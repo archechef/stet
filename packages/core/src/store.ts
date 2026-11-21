@@ -20,6 +20,7 @@ import {
   upgradeItem,
 } from "./model.js";
 import { pathExists } from "./paths.js";
+import { type RecordKind, recordProblem } from "./records.js";
 
 /**
  * A held lock is refreshed every `heartbeat` ms. It counts as abandoned when its owner process is
@@ -72,12 +73,16 @@ const lockContext = new AsyncLocalStorage<Store>();
 /** The file in the store's folder rewritten after records change (see `Store.signalChange`). */
 export const CHANGED_FILE = "changed";
 
-type Kind = "agents" | "changesets" | "groups" | "items" | "notes";
+type Kind = RecordKind;
 
 /** A record as read from disk, in today's shape (see `upgradeItem`). */
 function upgrade<T>(kind: Kind, v: T): T {
   return kind === "items" && v ? (upgradeItem(v as unknown as Item) as T) : v;
 }
+
+/** A record Stet can't use: said where, so that it can be restored or removed. */
+const damaged = (file: string, why: string) =>
+  new StetError(`Stet's record ${file} is damaged (${why}). Restore it from a backup or delete it; \`stet doctor\` lists every damaged record.`);
 
 /** Item, group, changeset and agent ids: a name, never a path. */
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -85,7 +90,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export class Store {
   constructor(readonly root: string) {}
 
-  /** Record files that could not be parsed (skipped by listings; reported by `stet doctor`). */
+  /** Record files that could not be parsed or fail their check, with why (skipped by listings; reported by `stet doctor`). */
   readonly unreadable = new Set<string>();
 
   get lockPath() {
@@ -287,7 +292,17 @@ export class Store {
     if (!SAFE_ID.test(id)) return null;
     const c = this.cached(kind);
     if (c) return c.has(id) ? structuredClone(c.get(id) as T) : null;
-    return upgrade(kind, await readJson<T>(join(this.dir(kind), `${id}.json`)));
+    const file = join(this.dir(kind), `${id}.json`);
+    let v: T | null;
+    try {
+      v = await readJson<T>(file);
+    } catch (e: any) {
+      throw damaged(file, e.message);
+    }
+    if (v === null) return null;
+    const problem = recordProblem(kind, v);
+    if (problem) throw damaged(file, problem);
+    return upgrade(kind, v);
   }
 
   private async list<T>(kind: Kind): Promise<T[]> {
@@ -297,21 +312,25 @@ export class Store {
       let names: string[] = [];
       try {
         names = await readdir(this.dir(kind));
-      } catch {
-        /* nothing yet */
+      } catch (e: any) {
+        if (e.code !== "ENOENT") throw e; // no folder: none yet (stores made before notes existed)
       }
       // Read in parallel batches (bounded, so large stores don't run out of file handles).
       const files = names.filter((n) => n.endsWith(".json")).map((n) => join(this.dir(kind), n));
       for (let i = 0; i < files.length; i += 64) {
         const batch = await Promise.all(
-          files.slice(i, i + 64).map((f) =>
-            readJson<T>(f).catch(() => {
-              this.unreadable.add(f); // e.g. a damaged file: skip it rather than failing every listing
+          files.slice(i, i + 64).map(async (f) => {
+            // A damaged file is skipped rather than failing every listing.
+            const v = await readJson<T>(f).catch((e) => {
+              this.unreadable.add(`${f} (${e.message})`);
               return null;
-            }),
-          ),
+            });
+            const problem = v === null ? null : recordProblem(kind, v);
+            if (problem) this.unreadable.add(`${f} (${problem})`);
+            return problem ? null : v;
+          }),
         );
-        for (const v of batch) if (v && typeof (v as any).id === "string") records.set((v as any).id, upgrade(kind, v));
+        for (const v of batch) if (v) records.set((v as any).id, upgrade(kind, v));
       }
       if (lockContext.getStore() === this && this.session) this.session.set(kind, records);
     }
@@ -404,8 +423,9 @@ export class Store {
     let fh: Awaited<ReturnType<typeof open>>;
     try {
       fh = await open(join(this.root, "events.jsonl"), "r");
-    } catch {
-      return [];
+    } catch (e: any) {
+      if (e.code === "ENOENT") return [];
+      throw e;
     }
     try {
       const size = (await fh.stat()).size;

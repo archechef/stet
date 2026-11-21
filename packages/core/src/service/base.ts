@@ -6,7 +6,7 @@ import { anchor, anchorNear } from "../anchor.js";
 import { applyItems } from "../apply.js";
 import { type StetConfig, validateConfig } from "../config.js";
 import { StetError } from "../errors.js";
-import type { Item } from "../model.js";
+import { type Accepted, type Item, isAccepted, isUncommitted } from "../model.js";
 import type { Stet } from "../service.js";
 import { isSafeRepoPath } from "../text.js";
 import { now } from "./common.js";
@@ -22,26 +22,30 @@ export const acceptedAt = (it: Item) => [...it.history].reverse().find((h) => h.
 export class ReviewBase {
   constructor(private readonly stet: Stet) {}
 
-  /** Make sure refs/stet/base = main HEAD + accepted-but-uncommitted items. */
+  /**
+   * Make sure refs/stet/base = main HEAD + accepted-but-uncommitted items. This brings the store
+   * up to date with git first (accepted items the user has committed, commits dropped by a reset),
+   * so every query about agents, sharing or what to commit runs it, under the lock, and may write.
+   */
   async ensureBase(): Promise<string> {
     this.stet.store.assertLocked("updating the base");
     await this.stet.recoverInterrupted();
     const cfg = await this.stet.config();
     const head = await this.stet.mainHead(cfg);
     await this.checkDroppedCommits(cfg, head);
-    const pending = (await this.stet.store.items()).filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
+    const pending = (await this.stet.store.items()).filter(isUncommitted);
     const view = this.stet.treeView(head);
-    const stillOpen: Item[] = [];
+    const stillOpen: Accepted[] = [];
     const headBlobs = new Map<string, string | null>();
     for (const it of pending) {
-      const applied = it.resolution!.appliedText;
+      const applied = it.resolution.appliedText;
       if (it.kind !== "modify") {
         // Compare content, not just existence: a replaced binary exists before and after.
         const state = await this.stet.wholeFileState(it, view);
         if (state === "open") stillOpen.push(it);
         else {
-          it.resolution!.committed = head;
-          if (state !== "done") it.resolution!.committedWithEdits = true;
+          it.resolution.committed = head;
+          if (state !== "done") it.resolution.committedWithEdits = true;
           await this.stet.store.putItem(it);
         }
         continue;
@@ -50,11 +54,17 @@ export class ReviewBase {
       // copy only. Once the user commits the file, it holds the change, or what they made of it
       // since (edited, moved, removed). Looking for the old text instead re-applied changes the
       // user had edited: a pure insertion's empty old text is found anywhere.
-      if (await this.committedSinceAccept(it, head, headBlobs)) {
+      const since = await this.committedSinceAccept(it, head, headBlobs);
+      if (since.headBlob !== undefined) {
+        // Accepted before 0.6.1 and not committed since: HEAD's file from now on, so the next check needn't search the log.
+        it.resolution.headBlob = since.headBlob;
+        await this.stet.store.putItem(it);
+      }
+      if (since.committed) {
         const f = await view.read(it.file);
         const probe = { ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } };
-        it.resolution!.committed = head;
-        if (!f || !anchor(probe, f.text)) it.resolution!.committedWithEdits = true;
+        it.resolution.committed = head;
+        if (!f || !anchor(probe, f.text)) it.resolution.committedWithEdits = true;
         await this.stet.store.putItem(it);
       } else stillOpen.push(it);
     }
@@ -77,7 +87,7 @@ export class ReviewBase {
         }
         const f = await sview.read(it.file);
         // With its accepted neighbours: one right next to it changed its surroundings.
-        if (f && anchorNear({ ...it, newText: it.resolution!.appliedText }, f.text, await this.stet.refText(it), await this.stet.neighbours(it)))
+        if (f && anchorNear({ ...it, newText: it.resolution.appliedText }, f.text, await this.stet.refText(it), await this.stet.neighbours(it)))
           toApply.push(it);
         else if (!f || !this.holdsApplied(it, f.text)) missing.push({ id: it.id, reason: "it can't be located in your shared edits" });
       }
@@ -93,7 +103,7 @@ export class ReviewBase {
       const res = await applyItems(toApply, this.stet.treeView(from), {
         refText: this.stet.refText,
         neighbours: this.stet.neighbours,
-        overrides: new Map(toApply.map((i) => [i.id, i.resolution!.appliedText])),
+        overrides: new Map(toApply.map((i) => [i.id, i.resolution.appliedText])),
       });
       for (const f of res.failed) missing.push({ id: f.item.id, reason: f.reason });
       const what = [
@@ -132,17 +142,17 @@ export class ReviewBase {
       const changed: Item[] = [];
       const working = this.stet.workingView();
       for (const it of await this.stet.store.items()) {
-        const c = it.status === "accepted" ? it.resolution?.committed : undefined;
-        if (!c) continue;
+        if (!isAccepted(it) || !it.resolution.committed) continue;
+        const c = it.resolution.committed;
         if (!reach.has(c)) reach.set(c, (await this.stet.repo.tryRun(["merge-base", "--is-ancestor", c, head])) !== null);
         if (reach.get(c)) continue;
         const f = it.kind === "modify" ? await working.read(it.file).catch(() => null) : null;
         const kept =
           it.kind === "modify" ? !!f && this.holdsApplied(it, f.text) : (await this.stet.wholeFileState(it, working).catch(() => "other")) === "done";
         if (kept) {
-          it.resolution!.committed = null;
-          delete it.resolution!.committedWithEdits;
-          it.resolution!.headBlob = await this.stet.repo.blobId(head, it.file);
+          it.resolution.committed = null;
+          delete it.resolution.committedWithEdits;
+          it.resolution.headBlob = await this.stet.repo.blobId(head, it.file);
           await this.stet.store.putItem(it);
         } else {
           await this.stet.decisionOps.reopen(
@@ -161,15 +171,15 @@ export class ReviewBase {
   }
 
   /** Whether `text` already holds an accepted item's applied text where the item was. */
-  private holdsApplied(it: Item, text: string): boolean {
-    const applied = it.resolution!.appliedText;
+  private holdsApplied(it: Accepted, text: string): boolean {
+    const applied = it.resolution.appliedText;
     return !!anchor({ ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } }, text);
   }
 
   /**
    * Accepted changes agents don't get: the review base could not apply them on top of your
    * last commit or shared edits. Empty when everything works. Committing them (*Finish review*)
-   * or sharing your edits again passes them on.
+   * or sharing your edits again passes them on. Updates the review base first (`ensureBase`).
    */
   async missingFromBase(): Promise<{ item: Item; reason: string }[]> {
     return this.stet.store.withLock(async () => {
@@ -183,7 +193,7 @@ export class ReviewBase {
     const out: { item: Item; reason: string }[] = [];
     for (const m of (await this.stet.store.state()).base?.missing ?? []) {
       const it = await this.stet.store.getItem(m.id);
-      if (it?.status === "accepted" && it.resolution && !it.resolution.committed) out.push({ item: it, reason: m.reason });
+      if (it && isUncommitted(it)) out.push({ item: it, reason: m.reason });
     }
     return out;
   }
@@ -209,20 +219,19 @@ export class ReviewBase {
   /**
    * Whether the user has committed an accepted item's file since the accept (HEAD's file differs
    * from then). Items accepted before 0.6.1 don't record HEAD's file: for them, any commit since
-   * the accept that touched the file counts; otherwise HEAD's file is recorded now.
+   * the accept that touched the file counts; if there is none, `headBlob` is HEAD's file, for the
+   * caller to record. Reads only.
    */
-  private async committedSinceAccept(it: Item, head: string, blobs: Map<string, string | null>): Promise<boolean> {
+  private async committedSinceAccept(it: Accepted, head: string, blobs: Map<string, string | null>): Promise<{ committed: boolean; headBlob?: string | null }> {
     if (!blobs.has(it.file)) blobs.set(it.file, await this.stet.repo.blobId(head, it.file));
     const blob = blobs.get(it.file) ?? null;
-    const r = it.resolution!;
-    if (r.headBlob !== undefined) return blob !== r.headBlob;
+    const r = it.resolution;
+    if (r.headBlob !== undefined) return { committed: blob !== r.headBlob };
     // Commit times have whole seconds: only a later second counts, or a commit made just before
     // the accept (in the same second) would count as committing it.
     const last = Number(await this.stet.repo.tryRun(["log", "-1", "--format=%ct", head, "--", it.file]));
-    if (last > Math.floor(Date.parse(acceptedAt(it)) / 1000)) return true;
-    r.headBlob = blob;
-    await this.stet.store.putItem(it);
-    return false;
+    if (last > Math.floor(Date.parse(acceptedAt(it)) / 1000)) return { committed: true };
+    return { committed: false, headBlob: blob };
   }
 
   /**
@@ -275,7 +284,7 @@ export class ReviewBase {
     });
   }
 
-  /** Which edits agents see, and whether saved edits exist that they don't. */
+  /** Which edits agents see, and whether saved edits exist that they don't. Updates the review base first (`ensureBase`). */
   async shareStatus(): Promise<{ mode: StetConfig["shareEdits"]; unshared: boolean }> {
     return this.stet.store.withLock(async () => {
       const cfg = await this.stet.config();

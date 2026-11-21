@@ -13,6 +13,7 @@ import { foldPath, type Item, type ReviewDocument } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, type ChangeAction, changeActions, withIcon } from "./actions.js";
 import { announce } from "./announce.js";
+import { warn } from "./log.js";
 import { positionIn, projectOfQuery, projectQuery, type Ref, type TreeModel, toLf } from "./model.js";
 import type { Project } from "./project.js";
 
@@ -141,7 +142,8 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
       let after: string;
       try {
         after = (await this.build(doc.uri)).content;
-      } catch {
+      } catch (e) {
+        warn(`Updating ${doc.uri.path}`, e);
         continue;
       }
       if (after !== before) {

@@ -2,9 +2,8 @@
 import { captureContext, type Neighbour } from "../anchor.js";
 import { applyItems, conflicts, type FileView, locate } from "../apply.js";
 import { notFound, StetError } from "../errors.js";
-import { joinTitles } from "../grouping.js";
 import { DROPPED_STATUSES, type Group, type GroupKind, type Item, isLive, itemId, numberInRound, partId } from "../model.js";
-import { combineParts, settleParts } from "../parts.js";
+import { absorbLinked, settleParts } from "../parts.js";
 import type { Stet } from "../service.js";
 import { now } from "./common.js";
 
@@ -208,10 +207,7 @@ export class GroupOps {
       const warnings: string[] = [];
       if (kind === "linked") {
         for (const pg of (await this.stet.store.groups()).filter((g) => g.kind === "linked" && g.items.some((i) => group.items.includes(i)))) {
-          const merged = combineParts(pg, group);
-          if (merged) group.parts = merged;
-          for (const i of pg.items) if (!group.items.includes(i)) group.items.push(i);
-          group.title = joinTitles(pg.title, group.title);
+          absorbLinked(group, pg);
           await this.stet.store.deleteGroup(pg.id);
           for (const i of pg.items) {
             const it = await this.stet.store.getItem(i);

@@ -3,6 +3,7 @@
 import type { Item, Note } from "@stet/core";
 import * as vscode from "vscode";
 import { type Host, inlineMax, type Locator } from "./editor.js";
+import { warn } from "./log.js";
 import { fitsInline, itemDiff, LineIndex, proposalMarkdown, toLf } from "./model.js";
 import type { Project } from "./project.js";
 import { type Settings, setting } from "./settings.js";
@@ -187,7 +188,9 @@ export class Threads implements vscode.Disposable {
     let text: string;
     try {
       text = toLf(doc ? doc.getText() : new TextDecoder().decode(await vscode.workspace.fs.readFile(p.fileUri(note.file))));
-    } catch {
+    } catch (e) {
+      // A note on a file removed since is not located; anything else is noted.
+      if (!(e instanceof vscode.FileSystemError && e.code === "FileNotFound")) warn(`Reading ${note.file} for note ${note.id}`, e);
       return null;
     }
     const span = p.stet.locateNoteInText(note, text);

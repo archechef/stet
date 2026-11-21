@@ -371,6 +371,7 @@ Development setup, tests and packaging: [CONTRIBUTING.md](../CONTRIBUTING.md).
   - `comments.ts`: threads
   - `project.ts`: store access, live updates
   - `runtime.ts`: bundled CLI and runtime choice
+  - `log.ts`: the output channel, where handled failures are noted
   - `settings.ts`: the `stet.*` settings, their values and defaults (a test checks them against `package.json`)
   - `model.ts`: view model, free of `vscode`, unit-tested
 - **Build:** `npm run build` (the TypeScript type check plus esbuild bundles `dist/extension.js` and `dist/stet.mjs`).

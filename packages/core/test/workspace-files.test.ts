@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "no
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/doctor.js";
+import { Stet } from "../src/service.js";
 import { dirLink, edit, FAKE_CLI, git, outsideDir, PAPER, read, setup } from "./helpers.js";
 
 describe("instructions, MCP config and guard settings", () => {
@@ -134,5 +135,24 @@ describe("the guard hook and its settings (security audit 2026-09)", () => {
     expect((await stet.listItems()).length).toBe(1);
     const checks = await doctor(repo);
     expect(checks.some((c) => c.name === "store" && c.status === "error" && /S99\.json/.test(c.message))).toBe(true);
+  });
+
+  it("skips a record that lacks a field or has one of the wrong type, and says which (code quality report 6a517ae, record validation)", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const [it] = (await stet.submit("a", { title: "t" })).items;
+    const file = join(stet.store.root, "items", `${it!.id}.json`);
+    const good = readFileSync(file, "utf8");
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(good), range: { start: 0, end: "12" } }));
+    const fresh = await Stet.open(repo);
+    expect(await fresh.listItems()).toEqual([]);
+    await expect(fresh.store.getItem(it!.id)).rejects.toThrow(/is damaged \(range\.end: not a whole number\)/);
+    const checks = await doctor(repo);
+    expect(checks).toContainEqual(
+      expect.objectContaining({ name: "store", status: "error", message: expect.stringContaining("range.end: not a whole number") }),
+    );
+    writeFileSync(file, good);
+    expect((await (await Stet.open(repo)).listItems()).map((i) => i.id)).toEqual([it!.id]);
   });
 });

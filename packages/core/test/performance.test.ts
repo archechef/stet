@@ -4,10 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { anchor, captureContext } from "../src/anchor.js";
-import type { Item } from "../src/model.js";
 import { LARGE_SUBMIT } from "../src/service.js";
 import { Store } from "../src/store.js";
-import { edit, PAPER, read, setup, write } from "./helpers.js";
+import { edit, makeItem, PAPER, read, setup, write } from "./helpers.js";
 
 /** Deterministic pseudo-random numbers (so a failure can be reproduced). */
 function rng(seed: number) {
@@ -63,7 +62,7 @@ describe("store cache during an operation", () => {
     try {
       const store = new Store(root);
       await store.init("master");
-      const item = { id: "S1", status: "pending", groups: [] } as unknown as Item;
+      const item = makeItem("a", "b", { id: "S1" });
       await store.withLock(async () => {
         await store.putItem(item);
         const [a] = await store.items();

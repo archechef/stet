@@ -254,12 +254,23 @@ export const movesOut = (it: Pick<Item, "id" | "move">): boolean => !!it.move &&
 /** The other items of an item's move (empty if it is none). */
 export const moveOthers = (it: Pick<Item, "id" | "move">): string[] => (it.move ? [...moveFrom(it.move), ...moveTo(it.move)].filter((i) => i !== it.id) : []);
 
+/** What an accept recorded: the text it applied, and its commit once there is one. */
+export type Resolution = NonNullable<Item["resolution"]>;
+
+/** An item as stored once accepted: with its resolution. */
+export type Accepted<T extends Pick<Item, "status" | "resolution"> = Item> = T & { status: "accepted"; resolution: Resolution };
+
+/** Whether an item is accepted (and so has a resolution). */
+export const isAccepted = <T extends Pick<Item, "status" | "resolution">>(it: T): it is Accepted<T> => it.status === "accepted" && !!it.resolution;
+
+/** Whether an item is accepted and its accept not committed yet: in the working copy only. */
+export const isUncommitted = <T extends Pick<Item, "status" | "resolution">>(it: T): it is Accepted<T> => isAccepted(it) && !it.resolution.committed;
+
 /**
  * Whether Stet can undo the decision on a change: a rejection, a revision request, or an accept
  * not committed yet. A committed accept is in git's history; it is reverted with git.
  */
-export const canUndo = (it: Pick<Item, "status" | "resolution">): boolean =>
-  it.status === "rejected" || it.status === "needs_revision" || (it.status === "accepted" && !!it.resolution && !it.resolution.committed);
+export const canUndo = (it: Pick<Item, "status" | "resolution">): boolean => it.status === "rejected" || it.status === "needs_revision" || isUncommitted(it);
 
 /** Items and groups by id, from the store or from a snapshot of it. */
 export interface Lookup {

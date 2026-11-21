@@ -6,6 +6,7 @@ import { type AcceptFailure, applyItems, conflicts, type FileView, locate } from
 import { itemEffect } from "../effects.js";
 import { notFound, StetError } from "../errors.js";
 import {
+  type Accepted,
   canUndo,
   compareItemIds,
   DROPPED_STATUSES,
@@ -13,7 +14,9 @@ import {
   type GroupPart,
   type Item,
   type ItemStatus,
+  isAccepted,
   isLive,
+  isUncommitted,
   linkedRest,
   linkedUnit,
   moveFrom,
@@ -30,13 +33,14 @@ export class Decisions {
   constructor(private readonly stet: Stet) {}
 
   /** Accepted items whose changes are in the working copy but not yet committed. */
-  async uncommittedAccepted(): Promise<Item[]> {
-    return (await this.stet.store.items()).filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
+  async uncommittedAccepted(): Promise<Accepted[]> {
+    return (await this.stet.store.items()).filter(isUncommitted);
   }
 
   /**
    * What Finish review would commit, without committing: the accepted items, and the files that
-   * also hold edits of the user's (committed along, whole files). For its question.
+   * also hold edits of the user's (committed along, whole files). For its question. Updates the
+   * review base first (`ensureBase`), which records items the user has committed by hand.
    */
   async commitPreview(): Promise<{ items: Item[]; yourEdits: string[] }> {
     return this.stet.store.withLock(async () => {
@@ -370,7 +374,7 @@ export class Decisions {
         if (dirtyBefore.size) warnings.push(`Not committed: ${[...dirtyBefore].join(", ")} had uncommitted edits of yours.`);
         else
           committed = await this.commitAccepted(
-            res.applied.map((a) => a.item),
+            res.applied.map((a) => a.item).filter(isAccepted), // all of them, accepted just now
             [...res.changes.keys()],
           );
       }
@@ -410,7 +414,7 @@ export class Decisions {
     };
   }
 
-  private async commitAccepted(items: Item[], paths: string[], subject?: string, yourEdits: string[] = []): Promise<string | null> {
+  private async commitAccepted(items: Accepted[], paths: string[], subject?: string, yourEdits: string[] = []): Promise<string | null> {
     const msg = await this.commitMessage(items, subject);
     const body = yourEdits.length
       ? msg.body.replace(/\n\nStet-Applied:/, `\n\nAlso the reviewer's own edits in ${yourEdits.join(", ")}.\n\nStet-Applied:`)
@@ -420,7 +424,7 @@ export class Decisions {
     if (r === null) return null;
     const head = (await this.stet.repo.revParse("HEAD"))!;
     for (const it of items) {
-      it.resolution!.committed = head;
+      it.resolution.committed = head;
       await this.stet.store.putItem(it);
     }
     return head;
@@ -519,8 +523,8 @@ export class Decisions {
         await this.stet.groupOps.updateGroups([...reopened.values()]);
         return { reopened: [...reopened.values()], restored: [] };
       }
-      const units = new Map<string, Item>();
-      for (const item of accepted) if (!units.has(item.id)) for (const it of await this.decidedWith(item)) units.set(it.id, it);
+      const units = new Map<string, Accepted>();
+      for (const item of accepted) if (!units.has(item.id)) for (const it of (await this.decidedWith(item)).filter(isAccepted)) units.set(it.id, it);
       const unit = [...units.values()];
       const result = await this.undoAccepted(unit);
       if (reopened.size) await this.stet.groupOps.updateGroups([...reopened.values()]);
@@ -529,12 +533,13 @@ export class Decisions {
   }
 
   /** Take accepted changes (whole units, see `decidedWith`) out of the working copy. */
-  private async undoAccepted(unit: Item[]): Promise<UndoResult> {
+  private async undoAccepted(unit: Accepted[]): Promise<UndoResult> {
     this.stet.store.assertLocked("undoing an accept");
-    const committed = unit.find((i) => i.resolution?.committed);
-    if (committed) {
-      const c = committed.resolution!.committed!;
-      throw new StetError(`${committed.id} is committed already (${c.slice(0, 8)}): Stet can't undo it any more. Revert it with git if you need to.`);
+    const committed = unit.find((i) => i.resolution.committed);
+    if (committed?.resolution.committed) {
+      throw new StetError(
+        `${committed.id} is committed already (${committed.resolution.committed.slice(0, 8)}): Stet can't undo it any more. Revert it with git if you need to.`,
+      );
     }
     const cfg = await this.stet.config();
     const onBranch = await this.stet.projectBranch();
@@ -547,18 +552,16 @@ export class Decisions {
     // known for what it is, and another accepted change's same words are never taken for this
     // one's.
     const unitIds = new Set(unit.map((i) => i.id));
-    const acceptedOthers = (await this.stet.store.items()).filter(
-      (o) => o.kind === "modify" && o.status === "accepted" && o.resolution && !o.resolution.committed && !unitIds.has(o.id),
-    );
+    const acceptedOthers = (await this.stet.store.items()).filter((o): o is Accepted => o.kind === "modify" && isUncommitted(o) && !unitIds.has(o.id));
     const refs = new Map<string, string>();
     const inverse: Item[] = [];
     for (const it of unit) {
-      const applied = it.resolution!.appliedText;
+      const applied = it.resolution.appliedText;
       if (it.kind === "modify") {
         const ref = (await this.stet.refText(it)) ?? "";
-        const sameText = (o: Item) => o.kind === "modify" && o.id !== it.id && o.file === it.file && o.baseCommit === it.baseCommit && !!o.resolution;
+        const sameText = (o: Item) => o.kind === "modify" && o.id !== it.id && o.file === it.file && o.baseCommit === it.baseCommit;
         const made = [it, ...unit.filter(sameText), ...acceptedOthers.filter(sameText)]
-          .map((o) => ({ id: o.id, range: o.range, oldText: o.oldText, text: o.resolution!.appliedText }))
+          .map((o) => ({ id: o.id, range: o.range, oldText: o.oldText, text: o.resolution.appliedText }))
           .sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
         let after = "";
         let pos = 0;

@@ -14,6 +14,7 @@ import {
   type Item,
   type ItemStatus,
   inlineDiff,
+  isAccepted,
   isLiveItem,
   itemEffect,
   lineDiff,
@@ -813,7 +814,7 @@ export function itemSpoken(it: Item, line?: number, unread = 0): string {
   const state = [STATUS_TEXT[it.status], ...extra].join(", ");
   if (it.kind !== "modify") return `Change ${it.id}, ${it.kind.replace("-", " ")} ${where}, ${state}`;
   // What it says: your wording if you have one, or the text it was accepted with.
-  const text = it.status === "accepted" && it.resolution ? it.resolution.appliedText : isLiveItem(it) ? (it.draft ?? it.newText) : it.newText;
+  const text = isAccepted(it) ? it.resolution.appliedText : isLiveItem(it) ? (it.draft ?? it.newText) : it.newText;
   const [o, n] = changeSummary(it.oldText, text, 60);
   const breaks = paragraphChange(it.oldText, text);
   const what = breaks

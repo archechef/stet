@@ -319,3 +319,17 @@ export function combineParts(
   if (!a.parts?.length && !b.parts?.length) return undefined;
   return [...partsOrWhole(a), ...partsOrWhole(b)];
 }
+
+/**
+ * Fold an earlier linked group into `into`, which shares members with it: its items, parts and
+ * title. Taking `prior`'s id off its items and removing it is the caller's, which writes them.
+ */
+export function absorbLinked(
+  into: { title: string; items: string[]; parts?: PartDraft[] | undefined },
+  prior: { title: string; items: string[]; parts?: PartDraft[] | undefined },
+): void {
+  const parts = combineParts(prior, into);
+  if (parts) into.parts = parts;
+  for (const i of prior.items) if (!into.items.includes(i)) into.items.push(i);
+  into.title = joinTitles(prior.title, into.title);
+}

@@ -3,7 +3,7 @@
  * `stet show` renders it for the terminal, VS Code's hover as Markdown.
  */
 import { itemEffect } from "./effects.js";
-import { type Item, moveFrom, moveOthers, movesOut, moveTo } from "./model.js";
+import { type Item, isAccepted, moveFrom, moveOthers, movesOut, moveTo } from "./model.js";
 import { type MoveChange, moveChanges, moveTexts } from "./moves.js";
 import { lineDiff } from "./text.js";
 
@@ -44,7 +44,7 @@ export interface ItemDescription {
 export function describeItem(item: Item, get: (id: string) => Item | undefined): ItemDescription {
   const prev = item.supersedes ? get(item.supersedes) : undefined;
   const asked = prev ? [...prev.thread].reverse().find((t) => t.author === "user") : undefined;
-  const yours = item.status === "accepted" && item.resolution?.edited ? item.resolution.appliedText : item.draft;
+  const yours = isAccepted(item) && item.resolution.edited ? item.resolution.appliedText : item.draft;
   let move: ItemDescription["move"] = null;
   if (item.move) {
     const texts = moveTexts(item.move, get);

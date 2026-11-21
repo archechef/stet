@@ -247,6 +247,7 @@ export class Agents {
     return a;
   }
 
+  /** Where an agent stands: what it has submitted, what waits for it, whether it should sync. Updates the review base first (`ensureBase`). */
   async agentStatus(agentId: string): Promise<AgentStatus> {
     return this.stet.store.withLock(async () => {
       const agent = await this.requireAgent(agentId);

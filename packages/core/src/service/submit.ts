@@ -3,22 +3,12 @@ import { captureContext, chainInsertions } from "../anchor.js";
 import { applyItems, overlaps } from "../apply.js";
 import type { StetConfig } from "../config.js";
 import { StetError } from "../errors.js";
-import {
-  autoGroups,
-  type GroupDraft,
-  type GroupHint,
-  type HintUnit,
-  joinTitles,
-  type NoteHint,
-  normalizeGroups,
-  parseWhere,
-  unitMatches,
-} from "../grouping.js";
+import { autoGroups, type GroupDraft, type GroupHint, type HintUnit, type NoteHint, normalizeGroups, parseWhere, unitMatches } from "../grouping.js";
 import { archivedMessage } from "../instructions.js";
 import { type Agent, type Changeset, compareItemIds, type Group, type Item, isLive, itemId } from "../model.js";
 import { detectMoves, detectRewritten, separateMoved } from "../moves.js";
 import { describeNote } from "../notes.js";
-import { combineParts, type PartDraft } from "../parts.js";
+import { absorbLinked, type PartDraft } from "../parts.js";
 import type { Stet, SubmitResult, SyncResult } from "../service.js";
 import { type Edit, splitText } from "../split.js";
 import { detectEol, isBinary, isSafeRepoPath, lineRange, normalizeWs, sha256, textWithBadBytes, toLf } from "../text.js";
@@ -39,6 +29,14 @@ export interface Candidate extends Edit {
 
   /** For changes merged from an agent's atomic group: its title and rationale, kept as the item's note. */
   note?: string;
+}
+
+/**
+ * One text change of `file` in place of several: the base text from `start` to `end` becoming the
+ * tip's text from `newStart` to `newEnd`, with everything between the changes it replaces.
+ */
+export function mergedEdit(file: string, baseText: string, tipText: string, at: { start: number; end: number; newStart: number; newEnd: number }): Candidate {
+  return { file, kind: "modify", ...at, oldText: baseText.slice(at.start, at.end), newText: tipText.slice(at.newStart, at.newEnd) };
 }
 
 /** Submit: an agent's linked group made related, and what stayed linked. */
@@ -204,16 +202,7 @@ export class Submission {
       const newEnd = last.newEnd + (e.range.end - last.end);
       const tipText = (await this.stet.textAt(tip, e.file))!.text;
       const baseText = (await this.stet.textAt(base, e.file))!.text;
-      const merged: Candidate = {
-        file: e.file,
-        kind: "modify",
-        start: e.range.start,
-        end: e.range.end,
-        newStart,
-        newEnd,
-        oldText: baseText.slice(e.range.start, e.range.end),
-        newText: tipText.slice(newStart, newEnd),
-      };
+      const merged = mergedEdit(e.file, baseText, tipText, { ...e.range, newStart, newEnd });
       cands = [...cands.filter((c) => !inside.includes(c)), merged];
     }
 
@@ -299,18 +288,9 @@ export class Submission {
         continue;
       }
       const tipText = (await this.stet.textAt(tip, first.file))!.text;
-      const merged: Candidate = {
-        file: first.file,
-        kind: "modify",
-        start: first.start,
-        end: last.end,
-        newStart: first.newStart,
-        newEnd: last.newEnd,
-        oldText: baseText.slice(first.start, last.end),
-        newText: tipText.slice(first.newStart, last.newEnd),
-      };
-      fresh.splice(0, fresh.length, ...fresh.filter((c) => !members.includes(c)), merged);
+      const merged = mergedEdit(first.file, baseText, tipText, { start: first.start, end: last.end, newStart: first.newStart, newEnd: last.newEnd });
       merged.note = h.rationale ? `${h.title}: ${h.rationale}` : h.title;
+      fresh.splice(0, fresh.length, ...fresh.filter((c) => !members.includes(c)), merged);
     }
 
     // A reworded sentence with a piece that repeats an earlier rejection: keep that sentence's
@@ -335,16 +315,7 @@ export class Submission {
         if (run.length < 2 || !run.some(repeats) || run.some((c) => this.stet.isKeyEdit(cfg, c) || c.note)) continue;
         const first = run[0]!;
         const last = run[run.length - 1]!;
-        const merged: Candidate = {
-          file,
-          kind: "modify",
-          start: first.start,
-          end: last.end,
-          newStart: first.newStart,
-          newEnd: last.newEnd,
-          oldText: baseText.slice(first.start, last.end),
-          newText: tipText.slice(first.newStart, last.newEnd),
-        };
+        const merged = mergedEdit(file, baseText, tipText, { start: first.start, end: last.end, newStart: first.newStart, newEnd: last.newEnd });
         fresh.splice(fresh.indexOf(first), 1, merged);
         for (const c of run.slice(1)) fresh.splice(fresh.indexOf(c), 1);
         result.warnings.push(
@@ -563,11 +534,8 @@ export class Submission {
     const merged = new Set<Group>();
     for (const g of groups.filter((g) => g.kind === "linked")) {
       for (const pg of priorGroups.filter((pg) => pg.items.some((i) => g.items.includes(i)))) {
-        const parts = combineParts(pg, g);
-        if (parts) g.parts = parts;
+        absorbLinked(g, pg);
         merged.add(g);
-        for (const i of pg.items) if (!g.items.includes(i)) g.items.push(i);
-        g.title = joinTitles(pg.title, g.title);
         for (const i of pg.items) {
           const it = byId.get(i) ?? (await rec.getItem(i));
           if (it) {

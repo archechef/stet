@@ -10,6 +10,7 @@ import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import { installHooks } from "./hooks.js";
 import { DOCUMENT_LANGUAGES, detectLanguage, type LanguageProfile, languageCounts, profileFor } from "./lang/index.js";
 import {
+  type Accepted,
   type Agent,
   type Changeset,
   FEEDBACK_TYPES,
@@ -18,6 +19,7 @@ import {
   type Item,
   type ItemBrief,
   type ItemStatus,
+  isAccepted,
   isLive,
   type Lookup,
   type MoveInfo,
@@ -119,10 +121,9 @@ interface AcceptJournal {
 /** Text changes accepted from the same base as `item` in its file, from `all` items (see `anchorNear`). */
 function neighboursIn(all: readonly Item[], item: Item): Neighbour[] {
   return all
-    .filter(
-      (i) => i.id !== item.id && i.status === "accepted" && i.resolution && i.kind === "modify" && i.file === item.file && i.baseCommit === item.baseCommit,
-    )
-    .map((i) => ({ range: { ...i.range }, oldText: i.oldText, text: i.resolution!.appliedText }));
+    .filter(isAccepted)
+    .filter((i) => i.id !== item.id && i.kind === "modify" && i.file === item.file && i.baseCommit === item.baseCommit)
+    .map((i) => ({ range: { ...i.range }, oldText: i.oldText, text: i.resolution.appliedText }));
 }
 
 /**
@@ -489,8 +490,14 @@ export class Stet {
     let j: AcceptJournal;
     try {
       j = JSON.parse(await readFile(this.journalPath, "utf8"));
-    } catch {
-      return;
+    } catch (e: any) {
+      if (e.code === "ENOENT") return;
+      // Skipped, it stayed in place and the accept it records was neither finished nor undone:
+      // the files it wrote may hold part of it.
+      throw new StetError(
+        `An accept was interrupted, and Stet can't read its record (${this.journalPath}: ${e.message}), so it can't finish or undo it. ` +
+          "Check your files with `git diff` (some may hold part of that accept), then delete that file.",
+      );
     }
     if (j.filesDone && j.undo) {
       for (const r of j.items) {
@@ -544,7 +551,7 @@ export class Stet {
    * For an accepted whole-file item: is its effect in `view` ("done"), is the file still in its
    * state before the change ("open"), or is something else there ("other")?
    */
-  async wholeFileState(it: Item, view: FileView): Promise<"done" | "open" | "other"> {
+  async wholeFileState(it: Accepted, view: FileView): Promise<"done" | "open" | "other"> {
     const blob = await view.blobId(it.file);
     const text = async (p: string) => (await view.read(p))?.text ?? null;
     switch (it.kind) {
@@ -557,10 +564,10 @@ export class Stet {
       case "delete-file":
         return blob === null ? "done" : "open";
       case "add-file":
-        return (await text(it.file)) === it.resolution!.appliedText ? "done" : blob === null ? "open" : "other";
+        return (await text(it.file)) === it.resolution.appliedText ? "done" : blob === null ? "open" : "other";
       case "rename-file": {
         const oldGone = (await view.blobId(it.oldFile!)) === null;
-        if (oldGone && (await text(it.file)) === it.resolution!.appliedText) return "done";
+        if (oldGone && (await text(it.file)) === it.resolution.appliedText) return "done";
         return blob === null && !oldGone ? "open" : "other";
       }
       default:

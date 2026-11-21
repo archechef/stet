@@ -1,6 +1,7 @@
 /** Stet for VS Code (spec §12.2): review panel, in-editor review, threads and setup without a command line. */
 
 import { closeSync, openSync, readSync } from "node:fs";
+import { join } from "node:path";
 import {
   type CliCommand,
   doctor,
@@ -27,6 +28,7 @@ import { Threads } from "./comments.js";
 import type { El } from "./common.js";
 import { DiffContent, EditorIntegration, esc, type Host, inlineProblems, Locator } from "./editor.js";
 import { EDIT_SCHEME, EditFiles } from "./edits.js";
+import { clearOutput, errorText, output, warn } from "./log.js";
 import {
   behindAgents,
   CANCELLED,
@@ -106,7 +108,7 @@ export class StetExtension implements Host, vscode.Disposable {
   /** Decided changes, by round (the Review panel shows only open ones). */
   private readonly history: vscode.TreeView<El>;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  readonly output = vscode.window.createOutputChannel("Stet");
+  readonly output = output();
   readonly locator: Locator;
 
   /** PDF previews: built in the background, shown when ready. */
@@ -232,18 +234,20 @@ export class StetExtension implements Host, vscode.Disposable {
     const found = new Map<string, Stet>();
     this.agentOf = null;
     for (const f of vscode.workspace.workspaceFolders ?? []) {
+      const loc = await Stet.locate(f.uri.fsPath).catch(() => null); // not a git repository
+      if (!loc) continue;
+      // Agent workspaces are for the agent; review happens in the project window. The panel
+      // says so, rather than "not set up".
+      if (loc.agentWorkspace) {
+        this.agentOf ??= loc.mainPath;
+        continue;
+      }
       try {
-        const loc = await Stet.locate(f.uri.fsPath);
-        // Agent workspaces are for the agent; review happens in the project window. The panel
-        // says so, rather than "not set up".
-        if (loc.agentWorkspace) {
-          this.agentOf ??= loc.mainPath;
-          continue;
-        }
         const stet = await Stet.open(f.uri.fsPath, loc);
         found.set(foldPath(stet.mainPath), stet);
-      } catch {
-        /* not a git repo, or Stet not set up */
+      } catch (e) {
+        // Not set up is no failure: the panel offers setup.
+        if (await pathExists(join(loc.commonDir, "stet", "state.json"))) warn(`Opening ${loc.mainPath}`, e);
       }
     }
     for (const [key, p] of this.projects) {
@@ -258,9 +262,9 @@ export class StetExtension implements Host, vscode.Disposable {
       this.projects.set(key, p);
       p.onDidChange(() => this.onProjectChanged());
       p.startWatching();
-      await this.ensureRuntime(p).catch((e) => this.output.appendLine(`Runtime setup for ${p.mainPath}: ${e?.message ?? e}`));
+      await this.ensureRuntime(p).catch((e) => warn(`Runtime setup for ${p.mainPath}`, e));
       await this.applyShareMode(p, false);
-      await p.refresh().catch((e) => this.output.appendLine(`Loading ${p.mainPath}: ${e?.message ?? e}`));
+      await p.refresh().catch((e) => warn(`Loading ${p.mainPath}`, e));
       void this.previews.checkPreviews(p);
     }
     await this.onProjectChanged();
@@ -580,7 +584,7 @@ export class StetExtension implements Host, vscode.Disposable {
       void vscode.window.showErrorMessage(noLinks(e?.message ?? String(e)));
       return undefined;
     } finally {
-      await p?.refresh().catch(() => undefined);
+      await p?.refresh().catch((e) => warn(`Loading ${p.mainPath}`, e));
     }
   }
 
@@ -592,7 +596,7 @@ export class StetExtension implements Host, vscode.Disposable {
     if (!folder) return;
     const checks = await doctor(folder);
     const icon = { ok: "✓", warn: "!", error: "✗", info: "·" };
-    this.output.clear();
+    clearOutput();
     this.output.appendLine(`Stet doctor — ${folder}\n`);
     for (const c of checks) this.output.appendLine(`${icon[c.status]} ${c.name}: ${c.message}${c.fix ? `\n    fix: ${c.fix}` : ""}`);
     this.output.show(true);
@@ -658,7 +662,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   const ext = new StetExtension(ctx);
   const editor = new EditorIntegration(ext, ext.locator);
   const threads = new Threads(ext, ext.locator, () => ext.allProjects());
-  const reg = (id: string, fn: (...a: any[]) => unknown) => ctx.subscriptions.push(vscode.commands.registerCommand(id, fn));
+  // A command that fails says why, and the failure is kept in the output channel. Unhandled, VS
+  // Code showed only "running the command failed" from the Command Palette, and nothing from menus.
+  const reg = (id: string, fn: (...a: any[]) => unknown) =>
+    ctx.subscriptions.push(
+      vscode.commands.registerCommand(id, async (...a: any[]) => {
+        try {
+          return await fn(...a);
+        } catch (e) {
+          warn(`Command ${id}`, e);
+          void vscode.window.showErrorMessage(noLinks(errorText(e)));
+          return undefined;
+        }
+      }),
+    );
   // Decisions and moves run one after another. Pressing `a` again before the panel has moved on
   // would otherwise act on the old selection, i.e. the change just accepted.
   let queue: Promise<unknown> = Promise.resolve();

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { parseWhere } from "../src/grouping.js";
 import type { Item } from "../src/model.js";
-import { settleParts } from "../src/parts.js";
+import { absorbLinked, settleParts } from "../src/parts.js";
+import { mergedEdit } from "../src/service/submit.js";
 import { edit, makeItem as item, PAPER, read, setup, write } from "./helpers.js";
 
 const one = (...items: Item[]) => items.map((i) => ({ title: i.id, items: [i.id] }));
@@ -108,6 +109,50 @@ The adversary $\\mathcal{A}$ is efficient. See Section~\\ref{sec:intro}.
 Assume $\\mathcal{A}$ wins. By Section~\\ref{sec:intro}, this is a contradiction.
 \\end{document}
 `;
+
+describe("absorbLinked and mergedEdit (code quality report 6a517ae, merge candidates)", () => {
+  it("folds an earlier linked group's items, parts and title into the new one", () => {
+    const into = {
+      title: "Rename b",
+      items: ["2.1", "2.2"],
+      parts: [
+        { title: "Label", items: ["2.1"] },
+        { title: "Refs", items: ["2.2"] },
+      ],
+    };
+    absorbLinked(into, { title: "Rename a", items: ["1.1", "2.1"] });
+    expect(into.items).toEqual(["2.1", "2.2", "1.1"]);
+    expect(into.parts).toEqual([
+      { title: "Rename a", items: ["1.1", "2.1"] },
+      { title: "Label", items: ["2.1"] },
+      { title: "Refs", items: ["2.2"] },
+    ]);
+    expect(into.title).toContain("Rename a");
+    expect(into.title).toContain("Rename b");
+  });
+
+  it("leaves a group without parts without parts", () => {
+    const into: { title: string; items: string[]; parts?: { title: string; items: string[] }[] } = { title: "B", items: ["2.1"] };
+    absorbLinked(into, { title: "A", items: ["1.1"] });
+    expect(into.parts).toBeUndefined();
+    expect(into.items).toEqual(["2.1", "1.1"]);
+  });
+
+  it("makes one change of the text between the first and last", () => {
+    const base = "One two three four.";
+    const tip = "One 2 three 4.";
+    expect(mergedEdit("a.tex", base, tip, { start: 4, end: 18, newStart: 4, newEnd: 13 })).toEqual({
+      file: "a.tex",
+      kind: "modify",
+      start: 4,
+      end: 18,
+      newStart: 4,
+      newEnd: 13,
+      oldText: "two three four",
+      newText: "2 three 4",
+    });
+  });
+});
 
 describe("parts in review", () => {
   it("splits a label rename into parts that are accepted one at a time", async () => {

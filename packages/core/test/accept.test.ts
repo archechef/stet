@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { doctor } from "../src/doctor.js";
 import { effectOf } from "../src/effects.js";
 import { StetError } from "../src/errors.js";
 import { edit, PAPER, read, setup, write } from "./helpers.js";
@@ -84,6 +85,16 @@ describe("all-or-nothing accept (Codex review 2026-09, F4)", () => {
 });
 
 describe("recovery after an interrupted accept (Codex review 2026-09)", () => {
+  it("stops at a record of an interrupted accept it can't read, and doctor says so (code quality report 6a517ae, swallowed errors)", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    await stet.newAgent("a");
+    writeFileSync(join(stet.store.root, "txn.json"), '{"items": [');
+    await expect(stet.agentStatus("a")).rejects.toThrow(/An accept was interrupted, and Stet can't read its record/);
+    expect(existsSync(join(stet.store.root, "txn.json"))).toBe(true);
+    const checks = await doctor(repo);
+    expect(checks).toContainEqual(expect.objectContaining({ name: "review base", status: "error", message: expect.stringContaining("can't read its record") }));
+  });
+
   it("recovery never overwrites a file the user edited after the interruption", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");

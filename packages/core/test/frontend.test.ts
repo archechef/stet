@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { describeItem, firstLines, SHOWN_LINES } from "../src/describe.js";
-import { canUndo, type Group, type Item, linkedRest, parseId, pendingInRound } from "../src/model.js";
+import { canUndo, type Group, type Item, isAccepted, isUncommitted, linkedRest, parseId, pendingInRound } from "../src/model.js";
 import { Stet } from "../src/service.js";
 import { edit, git, makeItem, PAPER, read, setup, write } from "./helpers.js";
 
@@ -154,6 +154,19 @@ describe("rules both front ends share (code quality report 6a517ae, refactoring 
     expect(canUndo(makeItem("a", "b", { status: "accepted", resolution: r("abc") }))).toBe(false);
     expect(canUndo(makeItem("a", "b", { status: "pending" }))).toBe(false);
     expect(canUndo(makeItem("a", "b", { status: "stale" }))).toBe(false);
+  });
+
+  it("tells accepted items, with their resolution, and those not committed yet (code quality report 6a517ae, Item types)", () => {
+    const r = (committed: string | null) => ({ appliedText: "x", edited: false, committed });
+    const open = makeItem("a", "b", { status: "accepted", resolution: r(null) });
+    const done = makeItem("a", "b", { status: "accepted", resolution: r("abc") });
+    expect([isAccepted(open), isUncommitted(open)]).toEqual([true, true]);
+    expect([isAccepted(done), isUncommitted(done)]).toEqual([true, false]);
+    // A pending item has no resolution; an accepted one without (a damaged record) counts as not accepted.
+    expect(isAccepted(makeItem("a", "b"))).toBe(false);
+    expect(isAccepted(makeItem("a", "b", { status: "accepted", resolution: null }))).toBe(false);
+    const all = [open, done, makeItem("a", "b")];
+    expect(all.filter(isUncommitted).map((i) => i.resolution.appliedText)).toEqual(["x"]);
   });
 
   it("decides a change with the rest of its linked part and of its move, and the move's linked groups", () => {

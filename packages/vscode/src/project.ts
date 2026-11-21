@@ -1,8 +1,9 @@
 /** One Stet-enabled repository open in VS Code: service access, snapshot and live updates. */
 import { type FSWatcher, watch } from "node:fs";
 import { relative, resolve } from "node:path";
-import { CHANGED_FILE, foldPath, isSafeRepoPath, type Stet } from "@stet/core";
+import { CHANGED_FILE, foldPath, isSafeRepoPath, isUncommitted, type Stet } from "@stet/core";
 import * as vscode from "vscode";
+import { warn } from "./log.js";
 import { type Snapshot, shownAgentText } from "./model.js";
 
 export class Project implements vscode.Disposable {
@@ -60,8 +61,8 @@ export class Project implements vscode.Disposable {
         const f = String(file ?? "");
         if (!f || signals.some((s) => f.startsWith(s))) this.scheduleRefresh();
       });
-    } catch {
-      /* fall back to refresh on focus and after our own actions */
+    } catch (e) {
+      warn(`Watching ${this.storeRoot} (the panel updates on focus and after Stet's own actions instead)`, e);
     }
   }
 
@@ -94,7 +95,7 @@ export class Project implements vscode.Disposable {
       this.stet.listNotes(),
     ]);
     const shown = shownAgentText({ changesets, groups, items, notes });
-    const uncommitted = shown.items.filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
+    const uncommitted = shown.items.filter(isUncommitted);
     this.snapshot = { ...this.snapshot, agents, ...shown, uncommitted };
     this.changed.fire();
     this.scheduleChecks();
@@ -133,8 +134,8 @@ export class Project implements vscode.Disposable {
     const syncNeeded = new Set<string>();
     try {
       for (const s of await this.stet.agentStatuses()) if (s.syncNeeded) syncNeeded.add(s.agent.id);
-    } catch {
-      /* e.g. the main branch is missing; doctor explains */
+    } catch (e) {
+      warn(`Agents of ${this.name}`, e); // e.g. the main branch is missing; doctor explains
     }
     const before = this.snapshot.syncNeeded;
     if (syncNeeded.size !== before.size || [...syncNeeded].some((a) => !before.has(a))) {
@@ -150,8 +151,8 @@ export class Project implements vscode.Disposable {
       // Only with sharing by button: "saved" shares by itself, "committed" never.
       const st = await this.stet.shareStatus();
       unshared = st.unshared && st.mode === "manual";
-    } catch {
-      /* e.g. the main branch is missing; doctor explains */
+    } catch (e) {
+      warn(`Sharing of ${this.name}`, e);
     }
     if (unshared !== this.snapshot.unshared) {
       this.snapshot = { ...this.snapshot, unshared };
@@ -164,8 +165,8 @@ export class Project implements vscode.Disposable {
     let missing: Snapshot["missing"] = [];
     try {
       missing = (await this.stet.missingFromBase()).map((m) => ({ id: m.item.id, reason: m.reason }));
-    } catch {
-      /* e.g. the main branch is missing; doctor explains */
+    } catch (e) {
+      warn(`Review base of ${this.name}`, e);
     }
     const key = (m: Snapshot["missing"]) => m.map((x) => `${x.id}:${x.reason}`).join("|");
     if (key(missing) !== key(this.snapshot.missing)) {

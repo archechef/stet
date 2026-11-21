@@ -248,7 +248,12 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   }
 
   // Only when something is wrong: accepted changes agents don't get.
-  const missing = await stet.missingFromBase().catch(() => []);
+  let missing: Awaited<ReturnType<typeof stet.missingFromBase>> = [];
+  try {
+    missing = await stet.missingFromBase();
+  } catch (e: any) {
+    add({ name: "review base", status: "error", message: `can't be updated: ${e.message}` });
+  }
   if (missing.length)
     add({
       name: "review base",
