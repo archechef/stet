@@ -86,7 +86,7 @@ exports.run = async function run() {
           .map((l) => l.command?.title)
           .find((t) => t?.startsWith(`${fx.items[0]}:`)) || "";
       const g = JSON.parse(stetCli("group", fx.items[0], fx.items[1], "--kind", "linked", "-t", "Test", "--reason", "integration test")).group.id;
-      const linked = await until("linked lens", async () => ((await lens0()).includes("linked") ? true : null), 10000).catch(() => false);
+      const linked = await until("linked lens", async () => ((await lens0()).includes(`Accept all of ${g}`) ? true : null), 10000).catch(() => false);
       stetCli("ungroup", g);
       const unlinked = await until("lens after ungroup", async () => ((await lens0()) === `${fx.items[0]}: $(check) Accept` ? true : null), 10000).catch(
         () => false,
@@ -280,29 +280,36 @@ exports.run = async function run() {
     const wrapUri = vscode.Uri.file(join(fx.repo, "wrap.tex"));
     const wrapEd = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(wrapUri));
     await editorCfg.update("wordWrapColumn", 80, vscode.ConfigurationTarget.Global);
-    const screenLines = async () => {
+    // Screen rows of the paragraph: scrolled down one row at a time from the top, until its line
+    // is out of view. (Moving the cursor by wrapped line can't count them: a row of proposed text
+    // alone has no position for the cursor.)
+    const rowsOfLine0 = async () => {
       const ed = await vscode.window.showTextDocument(wrapEd.document, { preserveFocus: false, preview: false });
       ed.selection = new vscode.Selection(0, 0, 0, 0);
-      let n = 1;
-      for (; n < 40; n++) {
-        await vscode.commands.executeCommand("cursorMove", { to: "down", by: "wrappedLine" });
-        if (ed.selection.active.line !== 0) break;
+      ed.revealRange(new vscode.Range(0, 0, 0, 0), vscode.TextEditorRevealType.AtTop);
+      await sleep(200);
+      let n = 0;
+      while (n < 40 && (ed.visibleRanges[0]?.start.line ?? 1) < 1) {
+        await vscode.commands.executeCommand("editorScroll", { to: "down", by: "wrappedLine", value: 1 });
+        await sleep(30);
+        n++;
       }
       return n;
     };
     await until("hint in wrap.tex", async () => ((await hintLabels(wrapUri)).some((l) => l.length > 100) ? true : null), 5000).catch(() => null);
     await sleep(500);
-    const withLong = await screenLines();
+    const rowsWith = await rowsOfLine0();
+    const hintLens = (await hintLabels(wrapUri)).map((l) => l.length);
     await vscode.workspace.getConfiguration("stet").update("inlineChanges", false, vscode.ConfigurationTarget.Global);
     await sleep(500);
-    const withoutLong = await screenLines();
+    const rowsWithout = await rowsOfLine0();
     await vscode.workspace.getConfiguration("stet").update("inlineChanges", true, vscode.ConfigurationTarget.Global);
     const maxLen = vscode.workspace.getConfiguration("editor", { uri: wrapUri, languageId: wrapEd.document.languageId }).get("inlayHints.maximumLength");
     if (vscode.window.state.focused)
       check(
         "a long proposal wraps over several screen lines",
-        withLong - withoutLong >= 2,
-        JSON.stringify({ withLong, withoutLong, lang: wrapEd.document.languageId, maxLen }),
+        rowsWith - rowsWithout >= 2,
+        JSON.stringify({ rowsWith, rowsWithout, hintLens, lang: wrapEd.document.languageId, maxLen }),
       );
     else check("a long proposal wraps over several screen lines (skipped: window not focused)", true);
 

@@ -32,10 +32,13 @@ writeFileSync(
 \end{align}
 `,
 );
-// One long paragraph line: a long proposal in it must wrap across screen lines.
+// One long paragraph line: a long proposal in it must wrap across screen lines. Short lines after
+// it fill the screen, so the rows the proposal takes push lines out of view (suite.cjs counts them).
 writeFileSync(
   join(repo, "wrap.tex"),
-  "This paragraph is one long line of text, as LaTeX paragraphs often are when an editor wraps them only on screen, and it goes on for a while so that it needs several lines. It ends here.\n",
+  "This paragraph is one long line of text, as LaTeX paragraphs often are when an editor wraps them only on screen, and it goes on for a while so that it needs several lines. It ends here.\n" +
+    Array.from({ length: 120 }, (_, i) => `\n% Line ${i + 1}.`).join("") +
+    "\n",
 );
 git(repo, "add", "-A");
 git(repo, "commit", "-qm", "init");
