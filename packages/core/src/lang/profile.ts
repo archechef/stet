@@ -14,7 +14,7 @@ import type { Edit } from "../split.js";
 import type { Token } from "../tokenizer.js";
 
 /** Which files a profile is for: patterns of the config's `files.<key>`. */
-export type FilesKey = "tex" | "bib";
+export type FilesKey = "tex" | "bib" | "typ";
 
 export interface LanguageProfile {
   /** "latex", "bibtex", "plain". */
@@ -35,7 +35,10 @@ export interface LanguageProfile {
   buildFiles?: string[];
   /** The output a build makes of a source file (main.tex → main.pdf), offered at setup too. */
   outputOf?: (source: string) => string | null;
-  /** Examples in this language for agents (their instructions, the MCP tools' descriptions). */
+  /**
+   * Examples in this language for agents (their instructions, the MCP tools' descriptions). A
+   * profile with these is a language a project can be written in (`language` in the config).
+   */
   agentTerms?: AgentTerms;
   /** Token-level splitting into sentences and paragraphs (spec §6.2). */
   syntax?: SyntaxRules;
@@ -87,6 +90,8 @@ export interface SyntaxRules {
   isStructureOnly(text: string): boolean;
   /** The environment `text` is, whole (`\begin{proof} … \end{proof}` → "proof"), else null. */
   environmentOf(text: string): string | null;
+  /** What a move's title calls a whole block of `environmentOf`'s name: "proof environment" (the default). */
+  describeBlock?(name: string): string;
   /** Does `text` open or close an environment (rather than being a heading)? */
   isEnvironmentBound(text: string): boolean;
   /** How a line changes the nesting a run can't be cut inside: one count per kind (environments, braces, …). */

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Typst projects.** Stet reviews Typst as it does LaTeX: changes are split by words and sentences, with maths, labels and references (`<a>`, `@a`, `#ref(<a>)`) kept whole; a renamed label or citation key is linked with its uses, a `#let` with the code that uses it, a new chapter or figure with the `#include` or `#image` that reads it in; moved paragraphs and blocks are moves. `@key` is a citation when the bibliography (a .bib file) has the key, else a reference. `stet init` and *Set up project* tell a Typst project by its files, and agents get Typst examples. No PDF previews for Typst yet (Typst writes no SyncTeX data). Also for LaTeX: a .bib entry whose key alone changed is one change, linked with the renamed `\cite`s.
+
 Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code focus).
 
 **Your files and decisions**

@@ -4,7 +4,7 @@
 
 Status: **v0.6** (M1 done; M2 live-tested with the Claude desktop app, CLI/Codex runs pending; M3 implemented; security audit and code review fixes; see §16 notes) · 2026-09-26
 
-Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
+Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX or Typst project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
 
 ---
 
@@ -212,7 +212,7 @@ A group is `resolved` once all its members are in final states, and `broken` whe
 Input: the tree diff `refs/stet/base..stet/<agent>` for the newly submitted commits.
 
 ### 6.0 Language profiles
-Everything Stet knows about a document language is in its **profile** (`packages/core/src/lang/`): `latex.ts` and `latex-preview.ts`, `bibtex.ts`, and `plain.ts` for any other text. The rest of Stet works on text, paragraphs, sentences and changes, and asks the file's profile for the rest. A profile has optional sections, and without one Stet falls back to what works for any text:
+Everything Stet knows about a document language is in its **profile** (`packages/core/src/lang/`): `latex.ts` and `latex-preview.ts`, `typst.ts`, `bibtex.ts`, and `plain.ts` for any other text. The rest of Stet works on text, paragraphs, sentences and changes, and asks the file's profile for the rest. A profile has optional sections, and without one Stet falls back to what works for any text:
 
 | Section | What it holds (LaTeX) | Used by | Without it |
 |---|---|---|---|
@@ -225,21 +225,23 @@ Everything Stet knows about a document language is in its **profile** (`packages
 | `typesetter` | latexmk in TeX Live (or the image's), SyncTeX, the log's errors and missing files, the words the source typesets | PDF previews (§14), `stet doctor` | no previews |
 | `agentTerms` | examples for agents (`\label` with its references, an undefined macro) | the agents' instructions, the MCP tools' descriptions | generic examples |
 
-A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`); keys are matched by kind across languages (a `.bib` entry defines the citation key a `\cite` uses). The config keeps its shape: `files.tex` and the `preview` settings are the LaTeX profile's.
+A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`, `files.typ`); keys are matched by kind across languages (a `.bib` entry defines the citation key a `\cite` or a Typst `@key` uses). The config keeps its shape: `files.tex` and the `preview` settings are the LaTeX profile's. The project's own language (`language`: `latex` or `typst`) is detected from its files when Stet is set up; the agents' instructions, the MCP tools' examples and PDF previews follow it.
 
-#### Typst (planned)
-Specified, before it is built, by `packages/core/test/typst.test.ts`, which mirrors the LaTeX tests and is skipped until a profile with id `typst` is registered. It covers tokens, splitting, references and citations, parts, files read in, prose (raw text, rebuilt sentences, moved paragraph breaks), and six realistic revisions, each reviewed in every way it allows: polishing a paper, restructuring, moving a proof into an appendix, maths, a figure with a table, and scripting (`#let` data, `#for`, `#if`). `scenarios.test.ts` and `moves.test.ts` run in both languages (`DOC_LANGS` in `test/helpers.ts`). The decisions:
+#### Typst
+`lang/typst.ts`. Specified by `packages/core/test/typst.test.ts`, written before the profile and mirroring the LaTeX tests. It covers tokens, splitting, references and citations, parts, files read in, prose (raw text, rebuilt sentences, moved paragraph breaks), and six realistic revisions, each reviewed in every way it allows: polishing a paper, restructuring, moving a proof into an appendix, maths, a figure with a table, and scripting (`#let` data, `#for`, `#if`). `scenarios.test.ts` and `moves.test.ts` run in both languages (`DOC_LANGS` in `test/helpers.ts`). The decisions:
 
-- **Files:** `files.typ` (default `*.typ`); code blocks fenced as `typst`. Tokens: `#name` is a command, `[ ]`, `{ }` and `( )` nest, `$…$` is maths (inline or display), `//` and `/* */` are comments, raw text (backticks) keeps its spaces, and `\#`, `\$`, `\@` are plain characters. Headings (`=`, `==`, …) and list items are structure lines.
-- **References and citations:** `<key>` defines a label; `@key` and `#ref(<key>)` use it. `@key` and `#cite(<key>)` are citations when the bibliography defines the key, so whether `@key` is a reference or a citation follows from what the project defines, not from its syntax. Bibliographies are BibTeX (`.bib`, the existing profile) for now. Hayagriva (`.yml`) is to come later as a profile of its own whose entries define citation keys: nothing may assume that citation keys come only from `.bib` files.
+- **Files:** `files.typ` (default `*.typ`); code blocks fenced as `typst`. The tokenizer follows Typst's three modes (markup, code, maths): `#name` is a command; `[ ]` nest everywhere, `( )` and `{ }` in code; `$…$` is maths (inline or display); `//` and `/* */` are comments; raw text (backticks) and strings are words only, and raw text keeps its spaces; `\#`, `\$`, `\@` are plain characters. A label `<a>` and a reference `@a` are one token each. Headings (`=`, `==`, …), list and term markers, statements (`#let`, `#set`, …) and block calls (`#figure`, `#table`, …) are structure lines; a line of closing brackets (`] <thm:main>`) is one too. In code, `,` and `;` end a unit as a sentence's full stop does: table cells and arguments are changes of their own.
+- **References and citations:** `<key>` after markup defines a label (not a label passed to a function); `@key` and `#ref(<key>)` use it, and `#ref(<key>)` is taken whole like `\ref{key}`. `@key` and `#cite(<key>)` are citations when the bibliography defines the key, so whether `@key` is a reference or a citation follows from what the project defines, not from its syntax. Bibliographies are BibTeX (`.bib`, the existing profile) for now. Hayagriva (`.yml`) is to come later as a profile of its own whose entries define citation keys: nothing may assume that citation keys come only from `.bib` files. (Renaming an entry's key, and nothing else, is one change of the .bib file now, so it links with the renamed citations: for LaTeX too.)
 - **Definitions and parts:** `#let` defines a name (with or without parameters), used as `#name` or by name in maths, and is joined with its uses in parts. `#import`, `#set` and `#show` are global. A label and its references stay in separate parts, as with `\label`.
-- **Includes:** `#include "…"`, `#image("…")` and `#bibliography("…")` read files in.
+- **Includes:** `#include "…"`, `#import "…"` (a local file), `#image("…")`, `#bibliography("…")` and the data loaders (`read`, `json`, `csv`, `yaml`, …) read files in.
 - **Project language:** detected at setup from the files (`.typ` and no `.tex` → Typst, otherwise LaTeX) and kept in the config as `language`. `documentProfile(cfg)` follows it, and so do the agents' instructions ("for a Typst project", with Typst examples).
 - **No PDF previews yet:** Typst has no SyncTeX to find a change on the page. The preview status is *unavailable* with a message saying so.
+- **Moves:** a whole block (`#figure(…)[…] <a>`, `#block[…]`, a display formula) moved is named by what it is: "(figure, unchanged)".
 
 ### 6.1 Per file
 - **Files of `files.tex`** (default `*.tex`, `*.sty`, `*.cls`, `*.ltx`, `*.dtx`): the LaTeX profile's splitting (§6.2).
-- **Files of `files.bib`** (default `*.bib`): one item per changed entry (`@type{key, …}`). New and removed entries are separate items.
+- **Files of `files.typ`** (default `*.typ`): the Typst profile's splitting, by the same steps (§6.2).
+- **Files of `files.bib`** (default `*.bib`): one item per changed entry (`@type{key, …}`). New and removed entries are separate items; an entry whose key alone changed, in its place, is one item.
 - **Other text files:** one item per line hunk.
 - **Binary, new, deleted and renamed files:** one item per file.
 
@@ -643,7 +645,8 @@ reaches the real document until a human accepts it.
     "refCommands": ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref"],
     "citeCommands": ["cite", "citep", "citet", "parencite", "textcite", "autocite"]
   },
-  "files": { "tex": ["**/*.tex", "**/*.sty", "**/*.cls"], "bib": ["**/*.bib"] },
+  "files": { "tex": ["**/*.tex", "**/*.sty", "**/*.cls"], "bib": ["**/*.bib"], "typ": ["**/*.typ"] },
+  "language": "latex",
   "remote": { "name": "origin", "autoPull": false, "autoPush": false },
   "preview": { "rootFile": "main.tex", "engine": "latexmk -pdf", "enabled": true },
   "guardHooks": true

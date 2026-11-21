@@ -2,7 +2,7 @@
 
 *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-**Stet lets AI agents propose changes to your LaTeX project while you stay in control.**
+**Stet lets AI agents propose changes to your LaTeX or Typst project while you stay in control.**
 - The agents (Claude, Codex, …) work in their own copy of the project.
 - Their edits reach you as small, reviewable changes.
 - You accept, reject, edit or discuss each one, from VS Code or the command line.
@@ -25,7 +25,7 @@ Next: stet show <id> · stet accept <id> · stet reject <id> -m <why>
 ## Features
 
 - **Reviewable changes:**
-  - Agent edits are split into word- and sentence-level changes that understand LaTeX: math, labels and citations stay intact, and re-wrapped lines are ignored.
+  - Agent edits are split into word- and sentence-level changes that understand LaTeX and Typst: math, labels and citations stay intact, and re-wrapped lines are ignored. (PDF previews of changes are LaTeX only for now.)
   - Changes that belong together are grouped. *Linked* groups, such as a macro and its uses, are all-or-nothing; large ones come in parts you can accept one at a time, as long as each part alone still compiles.
 - **A real conversation:**
   - Rejections with a reason, revision requests, comments and edited wording all go back to the agent automatically, through MCP tools. No copy-paste.
@@ -55,7 +55,7 @@ npm run package:vscode        # → packages/vscode/stet-vscode.vsix
 
 Install it in VS Code: Extensions view → `…` → *Install from VSIX…*. Coworkers only need the `.vsix` file, not Node.js or this repository.
 
-1. Open your LaTeX project folder in VS Code, then open the **Stet** view in the activity bar and click **Set up project**.
+1. Open your LaTeX or Typst project folder in VS Code, then open the **Stet** view in the activity bar and click **Set up project**.
 2. Click **New agent workspace**, pick Claude or Codex, and open the workspace folder in that agent.
 3. Ask the agent to improve the paper. Its proposals appear in the Stet panel and inline in your `.tex` files. Keys: `a` accept, `r` reject, `e` edit, `v` revise, `c` comment, `j`/`k` next/previous.
 4. Click **Finish review** to commit everything you accepted in one commit.
@@ -71,7 +71,7 @@ npm install && npm run build
 cd packages/cli && npm link           # puts `stet` on your PATH
 ```
 
-In your LaTeX project (a git repository with at least one commit):
+In your LaTeX or Typst project (a git repository with at least one commit):
 
 ```bash
 stet init                             # set up Stet (and git hooks)

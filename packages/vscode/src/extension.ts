@@ -7,7 +7,7 @@ import { closeSync, openSync, readSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { buildIgnores, doctor, documentProfile, foldPath, gitIdentity, matchesAny, profileByName, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
+import { buildIgnores, doctor, DOCUMENT_LANGUAGES, foldPath, gitIdentity, matchesAny, profileByName, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
 import { acceptAction, acceptQuestion, changeActions, withIcon, type ChangeAction } from "./actions.js";
 import { esc, inlineProblems, itemMarkdown, usesHints, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { inProject, Threads } from "./comments.js";
@@ -1805,7 +1805,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
 
   async setup(): Promise<void> {
     const folders = vscode.workspace.workspaceFolders ?? [];
-    if (!folders.length) return void vscode.window.showInformationMessage(`Open the folder of your ${documentProfile().name} project first.`);
+    if (!folders.length) return void vscode.window.showInformationMessage(`Open the folder of your ${DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ")} project first.`);
     const folder =
       folders.length === 1
         ? folders[0]!
@@ -1834,11 +1834,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }
       const files = (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*"), "**/{.git,node_modules}/**", 5000)).map((u) => vscode.workspace.asRelativePath(u, false));
       // A folder without any document file is likely the wrong one (test report v0.16.0).
-      const doc = documentProfile();
-      if (doc.defaultFiles && !files.some((f) => matchesAny(f, doc.defaultFiles!))) {
+      const names = DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ");
+      if (!files.some((f) => DOCUMENT_LANGUAGES.some((p) => matchesAny(f, p.defaultFiles ?? [])))) {
         const go = await vscode.window.showWarningMessage(
-          `${folder.name} has no ${doc.name} files.`,
-          { modal: true, detail: `Stet reviews changes to a ${doc.name} project. Set it up for this folder anyway?` },
+          `${folder.name} has no ${names} files.`,
+          { modal: true, detail: `Stet reviews changes to a ${names} project. Set it up for this folder anyway?` },
           "Set up anyway",
         );
         if (go !== "Set up anyway") return;
@@ -1856,14 +1856,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
             modal: true,
             detail:
               (isRepo ? "Stet reviews changes against your last commit. Commit the current files now?" : "Stet uses git to keep the agents' proposals apart from your files. Create a repository here and commit the current files as a starting point?") +
-              (ignores.length ? `\n\n“${ignoring}” first writes a .gitignore for what LaTeX builds (${ignores.slice(0, 4).join(", ")}${ignores.length > 4 ? ", …" : ""}), so it isn't committed.` : ""),
+              (ignores.length ? `\n\n“${ignoring}” first writes a .gitignore for the build files (${ignores.slice(0, 4).join(", ")}${ignores.length > 4 ? ", …" : ""}), so it isn't committed.` : ""),
           },
           ...(ignores.length ? [ignoring, commit] : [commit]),
         );
         if (!ok) return;
         if (!isRepo) await repo.run(["init"]);
         if (identity) await this.setIdentity(repo, identity);
-        if (ok === ignoring) await writeFile(join(dir, ".gitignore"), `# Built by LaTeX (written by Stet's setup)\n${ignores.join("\n")}\n`, { flag: "wx" });
+        if (ok === ignoring) await writeFile(join(dir, ".gitignore"), `# Build files (written by Stet's setup)\n${ignores.join("\n")}\n`, { flag: "wx" });
         await repo.run(["add", "-A"]);
         try {
           await repo.run(["commit", "-m", "Initial commit"]);

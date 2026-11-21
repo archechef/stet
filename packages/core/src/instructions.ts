@@ -1,12 +1,12 @@
 /** Agent instructions (spec §10.3). Shared by the MCP server and the workspace files. */
 import type { Agent } from "./model.js";
-import { documentProfile } from "./lang/index.js";
+import { documentProfile, type LanguageProfile } from "./lang/index.js";
 
-/** The document's language, and examples in it (LaTeX's unless another profile has previews). */
-const doc = () => {
-  const p = documentProfile();
-  return { name: p.name, terms: p.agentTerms ?? { location: 'main.txt:12 "suggestion"', linked: "a definition and its uses", undefinedUse: "an undefined name", reference: "a name with its uses", dependencies: "a definition and its uses, the same symbol renamed" } };
-};
+/** The document's language, and examples in it (the project's, LaTeX by default). */
+const docOf = (p: LanguageProfile = documentProfile()) => ({
+  name: p.name,
+  terms: p.agentTerms ?? { location: 'main.txt:12 "suggestion"', linked: "a definition and its uses", undefinedUse: "an undefined name", reference: "a name with its uses", dependencies: "a definition and its uses, the same symbol renamed" },
+});
 
 /** What an agent (and its instruction files) are told once the reviewer archived its workspace. */
 export function archivedMessage(agent: Agent): string {
@@ -25,8 +25,12 @@ export function archivedMessage(agent: Agent): string {
 
 export const STET_MARKER = "<!-- stet:instructions -->";
 
-/** `watch`: the shell command that runs `stet watch` here (absolute paths, so it needs no PATH setup). */
-export function agentInstructions(agentId: string, watch = "stet watch"): string {
+/**
+ * `watch`: the shell command that runs `stet watch` here (absolute paths, so it needs no PATH
+ * setup). `profile`: the project's language (`documentProfile(cfg)`).
+ */
+export function agentInstructions(agentId: string, watch = "stet watch", profile?: LanguageProfile): string {
+  const doc = () => docOf(profile);
   return `${STET_MARKER}
 # You are working under Stet review (agent: ${agentId})
 
@@ -125,8 +129,8 @@ here reaches the real document until a human accepts it.
 `;
 }
 
-/** Short protocol summary sent as MCP server instructions. */
-export const MCP_INSTRUCTIONS = `Stet manages human review of your edits to a ${doc().name} project.
+/** Short protocol summary sent as MCP server instructions, for a project in `profile`'s language. */
+export const mcpInstructions = (profile?: LanguageProfile) => `Stet manages human review of your edits to a ${docOf(profile).name} project.
 You work in a proposal workspace (a git worktree); the human's files are never
 touched directly. Edit files normally, then call stet_submit with a title and
 rationale (and groups: linked for edits that must be accepted together,
@@ -140,3 +144,6 @@ stale items. To wait for the reviewer without polling, run \`stet watch\` in
 the background (the exact command is in your instructions file): it prints a
 line whenever something arrives, from .stet/inbox in the workspace. Never
 reflow text or touch files outside the workspace.`;
+
+/** The summary for a LaTeX project. */
+export const MCP_INSTRUCTIONS = mcpInstructions();

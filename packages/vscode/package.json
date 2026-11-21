@@ -1,7 +1,7 @@
 {
   "name": "stet-vscode",
   "displayName": "Stet",
-  "description": "Review AI-proposed changes to LaTeX projects: accept, reject, edit or comment on each change.",
+  "description": "Review AI-proposed changes to LaTeX and Typst projects: accept, reject, edit or comment on each change.",
   "version": "0.16.0",
   "publisher": "archechef",
   "license": "MIT",
@@ -21,6 +21,7 @@
   "keywords": [
     "latex",
     "tex",
+    "typst",
     "overleaf",
     "review",
     "proofreading",
@@ -40,6 +41,7 @@
   },
   "activationEvents": [
     "workspaceContains:**/*.tex",
+    "workspaceContains:**/*.typ",
     "onStartupFinished"
   ],
   "scripts": {
@@ -93,7 +95,7 @@
       },
       {
         "view": "stet.review",
-        "contents": "Open the folder of your LaTeX project to use Stet.\n[Open Folder](command:vscode.openFolder)",
+        "contents": "Open the folder of your LaTeX or Typst project to use Stet.\n[Open Folder](command:vscode.openFolder)",
         "when": "workspaceFolderCount == 0"
       },
       {
@@ -1141,6 +1143,9 @@
         "editor.inlayHints.maximumLength": 0
       },
       "[bibtex]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[typst]": {
         "editor.inlayHints.maximumLength": 0
       }
     },

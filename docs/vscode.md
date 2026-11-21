@@ -1,6 +1,6 @@
 # Stet for VS Code — user guide
 
-The Stet extension lets you review AI-proposed changes to a LaTeX project entirely from VS Code. AI agents (Claude, Codex, …) work in their own *agent workspace* folder and never touch your files. Each change they propose appears in VS Code, and it reaches your document only when you accept it.
+The Stet extension lets you review AI-proposed changes to a LaTeX or Typst project entirely from VS Code. AI agents (Claude, Codex, …) work in their own *agent workspace* folder and never touch your files. Each change they propose appears in VS Code, and it reaches your document only when you accept it.
 
 You don't need the command line or Node.js for any of this.
 
@@ -29,7 +29,7 @@ npm run package:vscode      # → packages/vscode/stet-vscode.vsix
 
 ## 2. Setting up a project
 
-1. Open the folder of your LaTeX project in VS Code.
+1. Open the folder of your LaTeX or Typst project in VS Code.
 2. Click the **Stet** icon in the activity bar. It looks like a page with a tick.
 3. Click **Set up project**.
    - If the folder is not a git repository yet, Stet offers, in one question, to create one and commit your current files as a starting point. If LaTeX's build files are there (`.aux`, `.log`, the PDF of your `.tex` files) and there is no `.gitignore`, **Commit, ignoring build files** writes a `.gitignore` for them first, so they aren't committed.
@@ -335,7 +335,7 @@ Most of these can also be switched from the panel's **View options** (§4.1).
 | `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
 | `stet.navigationOrder` | `panel` | The order `j`/`k` go through changes: `panel` (as the panel lists them, by agent, round and group) or `document` (by file and line). |
 | `stet.diffShowsProposals` | `false` | In Diff and Review file, your file itself on the left (editable, with the proposals in it) instead of your text as it is, read-only. |
-| `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. With word wrap on, the new text wraps with the line. VS Code can't show line breaks inline (⏎ marks them); the panel under a long change shows its text in full. Stet sets VS Code's `editor.inlayHints.maximumLength` to no limit for LaTeX files; if your own settings cut or hide inline text, Stet says so once and offers to fix them for that language. |
+| `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. With word wrap on, the new text wraps with the line. VS Code can't show line breaks inline (⏎ marks them); the panel under a long change shows its text in full. Stet sets VS Code's `editor.inlayHints.maximumLength` to no limit for LaTeX and Typst files; if your own settings cut or hide inline text, Stet says so once and offers to fix them for that language. |
 | `stet.longChanges` | `collapsed` | How changes too long for one line of grey text are shown: in full in a panel under the change that you open from the gutter (`collapsed`), the same panel open (`expanded`), or only in the hover (`hover`). |
 | `stet.newTextStyle` | `auto` | How new text is drawn: `highlighted` (green, doesn't wrap), `wrapping` (wraps with the line, in the inlay-hint colour), or `auto` (by the word wrap setting). |
 | `stet.runtime` | `auto` | What runs the Stet server for the agents. `auto`: Node.js ≥ 20 if installed, otherwise VS Code's own runtime. `node` or `vscode` to force one. |

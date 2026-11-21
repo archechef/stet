@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
 import {
   changeSummary,
-  documentProfile,
+  DOCUMENT_LANGUAGES,
   inlineDiff,
   paragraphChange,
   profileByName,
@@ -58,7 +58,7 @@ import {
   type Note,
 } from "@stet/core";
 
-const HELP = `stet — review AI-proposed changes to ${documentProfile().name} projects
+const HELP = `stet — review AI-proposed changes to ${DOCUMENT_LANGUAGES.map((p) => p.name).join(" and ")} projects
 
 Project (run in your project folder):
   stet init [--main <branch>]           set up Stet in this repository

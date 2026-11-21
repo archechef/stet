@@ -1,7 +1,7 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
 import { DEFAULT_PREVIEW, type PreviewConfig } from "./preview.js";
-import { documentProfile, PROFILES, type FilePatterns } from "./lang/index.js";
+import { DOCUMENT_LANGUAGES, documentProfile, PROFILES, type FilePatterns } from "./lang/index.js";
 
 export { matchesAny } from "./lang/index.js";
 
@@ -52,7 +52,13 @@ export interface StetConfig {
   shareEdits: ShareMode;
   split: SplitConfig;
   grouping: GroupingConfig;
-  files: { tex: string[]; bib: string[] };
+  /** Which files each language profile is for: `tex`, `bib`, `typ` (spec §6.1). */
+  files: FilePatterns;
+  /**
+   * The language the project is written in ("latex", "typst"): detected from its files at setup.
+   * Agents' examples and PDF previews follow it (spec §6.0).
+   */
+  language: string;
   /** PDF previews of changes (spec §14). */
   preview: PreviewConfig;
   /** The largest file an agent can propose, in MB: a 60 MB file went into the store whole (test report D10). */
@@ -82,6 +88,7 @@ export function defaultConfig(mainBranch: string): StetConfig {
     },
     // Which files each language profile is for (spec §6.1).
     files: Object.fromEntries(PROFILES.flatMap((p) => (p.files ? [[p.files, [...(p.defaultFiles ?? [])]]] : []))) as FilePatterns,
+    language: "latex",
     preview: { ...DEFAULT_PREVIEW },
     maxFileMB: 20,
   };
@@ -132,10 +139,11 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (!["on-finish", "when-clean", "never"].includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}'`);
   if (!SHARE_MODES.includes(cfg.shareEdits)) bad(`shareEdits '${cfg.shareEdits}' (use ${SHARE_MODES.join(", ")})`);
   if (typeof cfg.maxFileMB !== "number" || !(cfg.maxFileMB > 0)) bad("maxFileMB (a number of megabytes)");
+  if (!DOCUMENT_LANGUAGES.some((p) => p.id === cfg.language)) bad(`language '${cfg.language}' (${DOCUMENT_LANGUAGES.map((p) => p.id).join(" or ")})`);
   const pv = cfg.preview;
   if (typeof pv?.enabled !== "boolean") bad("preview.enabled (true or false)");
   // The root file becomes a command-line argument of the typesetter: a plain relative path of its own source files only.
-  const ts = documentProfile().typesetter;
+  const ts = documentProfile(cfg).typesetter;
   if (pv.rootFile !== null && (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+$/.test(pv.rootFile) || !ts?.source.test(pv.rootFile) || pv.rootFile.startsWith("/")))
     bad(`preview.rootFile '${pv.rootFile}' (one of the document's ${ts?.sourceName ?? "source files"} relative to the project, or null)`);
   if (!["auto", "pdflatex", "xelatex", "lualatex"].includes(pv.engine)) bad(`preview.engine '${pv.engine}' (auto, pdflatex, xelatex or lualatex)`);

@@ -52,7 +52,7 @@ import { detectMoves, detectRewritten, separateMoved } from "./moves.js";
 import { describeNote, type DeliveredNote } from "./notes.js";
 import { combineParts, imbalance, settleParts, type PartDraft, type ProfileOf } from "./parts.js";
 import { splitText, type Edit } from "./split.js";
-import { documentProfile, profileFor, type LanguageProfile } from "./lang/index.js";
+import { detectLanguage, documentProfile, profileFor, type LanguageProfile } from "./lang/index.js";
 import { Store, writeJsonAtomic } from "./store.js";
 import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
 import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewChange, type PreviewEnv, type PreviewRequest, type PreviewResult } from "./preview.js";
@@ -217,6 +217,13 @@ function neighboursIn(all: readonly Item[], item: Item): Neighbour[] {
     .map((i) => ({ range: { ...i.range }, oldText: i.oldText, text: i.resolution!.appliedText }));
 }
 
+/** Why a project in this language has no PDF previews. */
+function noPreviews(doc: LanguageProfile): string {
+  return doc.id === "typst"
+    ? "Stet has no PDF previews for Typst yet: Typst writes no SyncTeX data, which previews need to find a change on the page."
+    : `Stet has no PDF previews for ${doc.name}.`;
+}
+
 export class Stet {
   private constructor(
     /** Path of the main worktree (the user's working copy). */
@@ -259,10 +266,17 @@ export class Stet {
     if (!(await repo.revParse(`refs/heads/${branch}`)))
       throw new StetError(`Branch '${branch}' has no commits yet. Commit your document first, then run \`stet init\`.`);
     const store = new Store(join(commonDir, "stet"));
+    const fresh = !(await pathExists(join(store.root, "config.json")));
     await store.init(branch);
     const stet = new Stet(mainPath, repo, store);
     await store.withLock(async () => {
-      const cfg = await store.config();
+      let cfg = await store.config();
+      // The project's language, from its files: once, when Stet is first set up here.
+      if (fresh) {
+        const paths = ((await repo.tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${branch}`])) ?? "").split("\0").filter(Boolean);
+        const language = detectLanguage(paths, cfg.files);
+        if (language !== cfg.language) await store.saveConfig((cfg = { ...cfg, language }));
+      }
       if (opts.cli) await store.saveConfig({ ...cfg, cli: opts.cli });
       if (cfg.guardHooks) await installHooks(repo, commonDir, cfg);
       await stet.ensureBase();
@@ -900,7 +914,7 @@ export class Stet {
     const cfg = await this.config();
     if (!cfg.cli) return null;
     const gitDir = await this.checkWorktree(agent.worktree);
-    return writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, gitDir, cli: cfg.cli });
+    return writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, gitDir, cli: cfg.cli, profile: documentProfile(cfg) });
   }
 
   /**
@@ -1966,7 +1980,7 @@ export class Stet {
       out.push(
         `${g.id} (${g.title}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
           `${no.map((m) => m.id).join(", ")} ${no.every((m) => m.status === "rejected") ? "rejected" : "not"}. ` +
-          `Check that the document is still consistent (a \\ref to a label that no longer exists, say). Undo takes a decision back.`,
+          `Check that the document is still consistent (a reference to a label that no longer exists, say). Undo takes a decision back.`,
       );
     }
     return out;
@@ -2373,23 +2387,24 @@ export class Stet {
   // -------------------------------------------------------------------------
   // PDF previews (§14)
 
-  private previews: { env: PreviewEnv; builder: PreviewBuilder } | null = null;
+  /** No builder for a language without previews. */
+  private previews: { env: PreviewEnv; builder: PreviewBuilder | null } | null = null;
 
   /** What PDF previews can use here, and what is missing. Never installs or downloads anything. */
   async previewStatus(recheck = false): Promise<PreviewEnv> {
     if (!this.previews || recheck) {
       const cfg = (await this.config()).preview;
-      const doc = documentProfile();
-      const env = doc.typesetter ? await detectPreviewEnv(cfg, doc.typesetter) : { status: "unavailable" as const, isolation: null, message: "No language here has PDF previews." };
-      this.previews = { env, builder: new PreviewBuilder(this.repo, join(this.store.root, "previews"), cfg, env, doc) };
+      const doc = documentProfile(await this.config());
+      const env = doc.typesetter ? await detectPreviewEnv(cfg, doc.typesetter) : { status: "unavailable" as const, isolation: null, message: noPreviews(doc) };
+      this.previews = { env, builder: doc.typesetter ? new PreviewBuilder(this.repo, join(this.store.root, "previews"), cfg, env, doc) : null };
     }
     return this.previews.env;
   }
 
   /** Build the container image previews run in. It downloads packages: call it only on the user's request. */
   async setupPreview(opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string; status: PreviewEnv }> {
-    const doc = documentProfile();
-    const r = doc.typesetter ? await setupPreviewImage((await this.config()).preview, doc.typesetter, opts) : { ok: false, log: "No language here has PDF previews." };
+    const doc = documentProfile(await this.config());
+    const r = doc.typesetter ? await setupPreviewImage((await this.config()).preview, doc.typesetter, opts) : { ok: false, log: noPreviews(doc) };
     if (r.ok && opts.extras) {
       // From now on the image with the extra fonts.
       await this.store.withLock(async () => {
@@ -2413,7 +2428,8 @@ export class Stet {
     await this.previewStatus();
     const cfg = await this.config();
     // Changes to the text of the document's own source files (the typesetter's: .tex files).
-    const doc = documentProfile();
+    const doc = documentProfile(cfg);
+    if (!doc.typesetter) return { status: "no-spot", message: noPreviews(doc) };
     const isTex = (i: Item) => i.kind === "modify" && this.profile(cfg, i.file) === doc && !!doc.typesetter?.source.test(i.file);
     if (!isTex(item)) return { status: "no-spot", message: `Only changes to the text of ${doc.typesetter?.sourceName ?? "the document's source files"} have a PDF preview.` };
     const change = async (i: Item): Promise<PreviewChange | null> => {
@@ -2448,7 +2464,7 @@ export class Stet {
     for (const t of tries) {
       const req = t === tries[0] ? first : await request(t.others, t.tag);
       if (!req) continue;
-      const r = await this.previews!.builder.preview(req);
+      const r = await this.previews!.builder!.preview(req);
       if (r.status !== "ready" && (r.status !== "failed" || r.cause !== "change")) return r; // the base itself, or no spot
       const note = t.others.length ? t.note(t.others) : "";
       if (!best || errors(r) < errors(best.r)) best = { r, note };
@@ -2552,7 +2568,7 @@ export class Stet {
   /** Another page of a built preview (the page viewer scrolled on), or null. */
   async previewPage(base: string, key: string, version: "after" | "before", n: number): Promise<{ file: string; width: number; height: number } | null> {
     await this.previewStatus();
-    return this.previews!.builder.page(base, key, version, n);
+    return this.previews!.builder?.page(base, key, version, n) ?? null;
   }
 
   /** Choose which kinds of news wake an agent (see `NotifyTrigger`). Returns false if unchanged. */

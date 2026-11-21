@@ -28,7 +28,7 @@ export interface MovePair {
 }
 
 /** What moves need of a language: its structure lines, environments, and how sentences end. */
-export type MoveRules = Pick<SyntaxRules, "isStructureOnly" | "environmentOf" | "isEnvironmentBound" | "structureLine" | "sentenceEnd">;
+export type MoveRules = Pick<SyntaxRules, "isStructureOnly" | "environmentOf" | "describeBlock" | "isEnvironmentBound" | "structureLine" | "sentenceEnd">;
 
 /** Text without a syntax of its own: sentences only. */
 const PROSE: MoveRules = {
@@ -154,7 +154,7 @@ function sentences(words: string[], abbreviations: Set<string>, r: MoveRules): n
 /** Is `text` (an item's old or new text, inside the item's context) a whole paragraph or environment? */
 function wholeBlock(it: Item, text: string, r: MoveRules): string | null {
   const env = r.environmentOf(text);
-  if (env) return `${env} environment`;
+  if (env) return r.describeBlock?.(env) ?? `${env} environment`;
   const before = it.context.before + /^\s*/.exec(text)![0];
   const after = /\s*$/.exec(text)![0] + it.context.after;
   const prevLine = before.replace(/[ \t]*$/, "").split("\n").slice(-2, -1)[0];

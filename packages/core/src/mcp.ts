@@ -6,11 +6,9 @@ import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { GroupHint, NoteHint } from "./grouping.js";
 
-import { archivedMessage, MCP_INSTRUCTIONS } from "./instructions.js";
-import { documentProfile } from "./lang/index.js";
+import { archivedMessage, mcpInstructions } from "./instructions.js";
+import { documentProfile, type LanguageProfile } from "./lang/index.js";
 
-/** Examples in the document's language, for the tools' descriptions. */
-const TERMS = documentProfile().agentTerms;
 import { isNoteId, moveFrom, moveTo, partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
 import { describeNote } from "./notes.js";
 import { Stet, StetError, type SubmitResult } from "./service.js";
@@ -63,137 +61,145 @@ export function argumentError(def: ToolDef, args: unknown): string | null {
   }
   return null;
 }
-const whereSchema = {
-  type: "array",
-  items: { type: "string" },
-  description:
-    'Locations in YOUR workspace after editing: "file", "file:line" or "file:from-to" (1-based lines), optionally followed by a ' +
-    `quoted snippet of the new text that picks one change on that line: '${TERMS?.location ?? 'main.txt:12 "suggestion"'}'. Use the snippet whenever ` +
-    "several changes share a line (a paragraph is often one line): it is the only way to put them into different parts.",
-};
 
-export const TOOLS: ToolDef[] = [
-  {
-    name: "stet_status",
+/** The tools, with examples in the project's language. */
+export function toolsFor(profile: LanguageProfile = documentProfile()): ToolDef[] {
+  const TERMS = profile.agentTerms;
+  const whereSchema = {
+    type: "array",
+    items: { type: "string" },
     description:
-      "Your agent status: item counts, unread feedback, reviewer notes waiting for you, and whether the document changed so that you must call stet_sync before new work.",
-    inputSchema: obj({}),
-  },
-  {
-    name: "stet_submit",
-    description:
-      "Submit your current edits in this workspace for human review. Stet splits them into reviewable items. " +
-      `Group edits that break the document unless accepted together as 'linked' (${(TERMS?.linked ?? "a definition and its uses").replace(/`/g, "")}, ` +
-      "one symbol renamed across formulas; Stet checks this and makes other linked groups related), edits that only read " +
-      "well together as 'atomic' (one item), and thematic batches as 'related' (any size).",
-    inputSchema: obj(
-      {
-        title: str("Short title of this batch of changes."),
-        rationale: str("Why these changes improve the document."),
-        groups: {
-          type: "array",
-          items: obj(
-            {
-              kind: { type: "string", enum: ["linked", "atomic", "related"] },
-              title: str("What the group does."),
-              rationale: str("Optional explanation."),
-              where: whereSchema,
-              reason: str(
-                "Linked groups only, rarely needed: why accepting only some of these changes would break the document. Stet links only " +
-                  `changes it sees depending on each other (${TERMS?.dependencies ?? "a definition and its uses, the same symbol renamed"}, ` +
-                  "moves, changes touching the same text); without a reason it makes other linked groups related. " +
-                  "The reviewer sees the reason.",
-              ),
-              parts: {
-                type: "array",
-                description:
-                  "Linked groups only: pieces the reviewer can accept or reject one at a time. Accepting a part alone must keep the " +
-                  "document compiling (undefined-reference warnings are fine) and must not block the other parts. Make parts as " +
-                  "small as that allows (a sentence, a formula, a label with its references), not one per paragraph or section. " +
-                  "Stet joins parts that make the same change, need each other's definitions, or touch the same text.",
-                items: obj({ title: str("What this part changes, e.g. 'Rename lem:a to lem:b'."), where: whereSchema }, ["title", "where"]),
+      'Locations in YOUR workspace after editing: "file", "file:line" or "file:from-to" (1-based lines), optionally followed by a ' +
+      `quoted snippet of the new text that picks one change on that line: '${TERMS?.location ?? 'main.txt:12 "suggestion"'}'. Use the snippet whenever ` +
+      "several changes share a line (a paragraph is often one line): it is the only way to put them into different parts.",
+  };
+
+  return [
+    {
+      name: "stet_status",
+      description:
+        "Your agent status: item counts, unread feedback, reviewer notes waiting for you, and whether the document changed so that you must call stet_sync before new work.",
+      inputSchema: obj({}),
+    },
+    {
+      name: "stet_submit",
+      description:
+        "Submit your current edits in this workspace for human review. Stet splits them into reviewable items. " +
+        `Group edits that break the document unless accepted together as 'linked' (${(TERMS?.linked ?? "a definition and its uses").replace(/`/g, "")}, ` +
+        "one symbol renamed across formulas; Stet checks this and makes other linked groups related), edits that only read " +
+        "well together as 'atomic' (one item), and thematic batches as 'related' (any size).",
+      inputSchema: obj(
+        {
+          title: str("Short title of this batch of changes."),
+          rationale: str("Why these changes improve the document."),
+          groups: {
+            type: "array",
+            items: obj(
+              {
+                kind: { type: "string", enum: ["linked", "atomic", "related"] },
+                title: str("What the group does."),
+                rationale: str("Optional explanation."),
+                where: whereSchema,
+                reason: str(
+                  "Linked groups only, rarely needed: why accepting only some of these changes would break the document. Stet links only " +
+                    `changes it sees depending on each other (${TERMS?.dependencies ?? "a definition and its uses, the same symbol renamed"}, ` +
+                    "moves, changes touching the same text); without a reason it makes other linked groups related. " +
+                    "The reviewer sees the reason.",
+                ),
+                parts: {
+                  type: "array",
+                  description:
+                    "Linked groups only: pieces the reviewer can accept or reject one at a time. Accepting a part alone must keep the " +
+                    "document compiling (undefined-reference warnings are fine) and must not block the other parts. Make parts as " +
+                    "small as that allows (a sentence, a formula, a label with its references), not one per paragraph or section. " +
+                    "Stet joins parts that make the same change, need each other's definitions, or touch the same text.",
+                  items: obj({ title: str("What this part changes, e.g. 'Rename lem:a to lem:b'."), where: whereSchema }, ["title", "where"]),
+                },
               },
-            },
-            ["kind", "title", "where"],
-          ),
+              ["kind", "title", "where"],
+            ),
+          },
+          notes: {
+            type: "array",
+            description: "Per-change explanations shown to the reviewer.",
+            items: obj({ where: whereSchema, note: str("Explanation for the reviewer.") }, ["where", "note"]),
+          },
         },
-        notes: {
-          type: "array",
-          description: "Per-change explanations shown to the reviewer.",
-          items: obj({ where: whereSchema, note: str("Explanation for the reviewer.") }, ["where", "note"]),
+        ["title"],
+      ),
+    },
+    {
+      name: "stet_sync",
+      description:
+        "Move your workspace onto the latest document: accepted changes become part of it, rejected/withdrawn ones disappear, " +
+        "pending ones stay on top. Also delivers the reviewer's notes on passages (N3). Requires all edits to be submitted (or discarded) first; " +
+        "waiting notes are delivered even when it refuses.",
+      inputSchema: obj({}),
+    },
+    {
+      name: "stet_get_feedback",
+      description:
+        "New reviewer feedback since your last call: accepted (possibly with edited text), rejected (with reason), " +
+        "revision requests, comments, stale items (text changed underneath), broken linked groups and partly accepted ones, " +
+        "and the reviewer's replies on notes you received.",
+      inputSchema: obj({ ack: { type: "boolean", description: "Mark the feedback as read (default true)." } }),
+    },
+    {
+      name: "stet_list",
+      description: "List your items, optionally filtered by status (pending, needs_revision, accepted, rejected, withdrawn, superseded, stale) or file.",
+      inputSchema: obj({
+        status: { type: "array", items: { type: "string" } },
+        file: str("Only items in this file."),
+      }),
+    },
+    {
+      name: "stet_show",
+      description:
+        "Show one item (12.3: round 12, change 3) with its text, note, groups and discussion thread, a group (G3) with its parts and members, " +
+        "or a reviewer note (N3) with its thread.",
+      inputSchema: obj({ id: str("Item id like 12.3, group id like G3 or note id like N3.") }, ["id"]),
+    },
+    {
+      name: "stet_reply",
+      description: "Reply to the reviewer's comment on one of your items, or to a reviewer note (N3).",
+      inputSchema: obj({ itemId: str("Item id (e.g. 12.3) or note id (e.g. N3)."), text: str("Your reply.") }, ["itemId", "text"]),
+    },
+    {
+      name: "stet_withdraw",
+      description: "Withdraw your own pending items that you no longer propose.",
+      inputSchema: obj({ itemIds: { type: "array", items: { type: "string" } }, reason: str("Optional reason.") }, ["itemIds"]),
+    },
+    {
+      name: "stet_group",
+      description:
+        "Group already-submitted items: 'linked' (all or none; only for edits that break the document without each other, which Stet " +
+        "checks, or with a 'reason'), 'atomic' (merge into one item, same paragraph), or 'related'.",
+      inputSchema: obj(
+        {
+          itemIds: { type: "array", items: { type: "string" } },
+          kind: { type: "string", enum: ["linked", "atomic", "related"] },
+          title: str("What the group does."),
+          rationale: str("Optional explanation."),
+          reason: str("Linked groups only: why accepting only some would break the document, if Stet can't see it (see stet_submit)."),
+          parts: {
+            type: "array",
+            description: "Linked groups only: pieces that can each be accepted on their own (see stet_submit).",
+            items: obj({ title: str("What this part changes."), itemIds: { type: "array", items: { type: "string" } } }, ["title", "itemIds"]),
+          },
         },
-      },
-      ["title"],
-    ),
-  },
-  {
-    name: "stet_sync",
-    description:
-      "Move your workspace onto the latest document: accepted changes become part of it, rejected/withdrawn ones disappear, " +
-      "pending ones stay on top. Also delivers the reviewer's notes on passages (N3). Requires all edits to be submitted (or discarded) first; " +
-      "waiting notes are delivered even when it refuses.",
-    inputSchema: obj({}),
-  },
-  {
-    name: "stet_get_feedback",
-    description:
-      "New reviewer feedback since your last call: accepted (possibly with edited text), rejected (with reason), " +
-      "revision requests, comments, stale items (text changed underneath), broken linked groups and partly accepted ones, " +
-      "and the reviewer's replies on notes you received.",
-    inputSchema: obj({ ack: { type: "boolean", description: "Mark the feedback as read (default true)." } }),
-  },
-  {
-    name: "stet_list",
-    description: "List your items, optionally filtered by status (pending, needs_revision, accepted, rejected, withdrawn, superseded, stale) or file.",
-    inputSchema: obj({
-      status: { type: "array", items: { type: "string" } },
-      file: str("Only items in this file."),
-    }),
-  },
-  {
-    name: "stet_show",
-    description:
-      "Show one item (12.3: round 12, change 3) with its text, note, groups and discussion thread, a group (G3) with its parts and members, " +
-      "or a reviewer note (N3) with its thread.",
-    inputSchema: obj({ id: str("Item id like 12.3, group id like G3 or note id like N3.") }, ["id"]),
-  },
-  {
-    name: "stet_reply",
-    description: "Reply to the reviewer's comment on one of your items, or to a reviewer note (N3).",
-    inputSchema: obj({ itemId: str("Item id (e.g. 12.3) or note id (e.g. N3)."), text: str("Your reply.") }, ["itemId", "text"]),
-  },
-  {
-    name: "stet_withdraw",
-    description: "Withdraw your own pending items that you no longer propose.",
-    inputSchema: obj({ itemIds: { type: "array", items: { type: "string" } }, reason: str("Optional reason.") }, ["itemIds"]),
-  },
-  {
-    name: "stet_group",
-    description:
-      "Group already-submitted items: 'linked' (all or none; only for edits that break the document without each other, which Stet " +
-      "checks, or with a 'reason'), 'atomic' (merge into one item, same paragraph), or 'related'.",
-    inputSchema: obj(
-      {
-        itemIds: { type: "array", items: { type: "string" } },
-        kind: { type: "string", enum: ["linked", "atomic", "related"] },
-        title: str("What the group does."),
-        rationale: str("Optional explanation."),
-        reason: str("Linked groups only: why accepting only some would break the document, if Stet can't see it (see stet_submit)."),
-        parts: {
-          type: "array",
-          description: "Linked groups only: pieces that can each be accepted on their own (see stet_submit).",
-          items: obj({ title: str("What this part changes."), itemIds: { type: "array", items: { type: "string" } } }, ["title", "itemIds"]),
-        },
-      },
-      ["itemIds", "kind", "title"],
-    ),
-  },
-  {
-    name: "stet_ungroup",
-    description: "Remove one of your groups (including groups Stet detected automatically).",
-    inputSchema: obj({ groupId: str("Group id, e.g. G3.") }, ["groupId"]),
-  },
-];
+        ["itemIds", "kind", "title"],
+      ),
+    },
+    {
+      name: "stet_ungroup",
+      description: "Remove one of your groups (including groups Stet detected automatically).",
+      inputSchema: obj({ groupId: str("Group id, e.g. G3.") }, ["groupId"]),
+    },
+  ];
+}
+
+/** The tools for a LaTeX project (their schemas are the same for every language). */
+export const TOOLS: ToolDef[] = toolsFor();
 
 // ---------------------------------------------------------------------------
 // Text formatting for the model
@@ -342,6 +348,15 @@ export class StetMcpServer {
     return { stet: this.stet, agent };
   }
 
+  /** The project's language (LaTeX where Stet can't tell), for the examples agents are given. */
+  private async profile(): Promise<LanguageProfile> {
+    try {
+      return documentProfile(await (await Stet.open(this.opts.project ?? this.opts.workspace ?? this.opts.cwd)).config());
+    } catch {
+      return documentProfile();
+    }
+  }
+
   /** Handle one JSON-RPC message; returns the response, or null for notifications. */
   async handle(raw: unknown): Promise<object | null> {
     // Validate the envelope before touching any field (a client may send null, scalars, …).
@@ -362,13 +377,13 @@ export class StetMcpServer {
             protocolVersion: SUPPORTED_VERSIONS.includes(requested) ? requested : SUPPORTED_VERSIONS[0],
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "stet", title: "Stet review", version: this.opts.version },
-            instructions: MCP_INSTRUCTIONS,
+            instructions: mcpInstructions(await this.profile()),
           });
         }
         case "ping":
           return reply({});
         case "tools/list":
-          return reply({ tools: TOOLS });
+          return reply({ tools: toolsFor(await this.profile()) });
         case "tools/call":
           return reply(await this.callTool(msg.params?.name, msg.params?.arguments ?? {}));
         default:

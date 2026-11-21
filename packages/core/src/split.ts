@@ -707,17 +707,19 @@ function gap(
  * Slide insertions and deletions that could equally sit a few tokens earlier or later to where
  * they read best: where the text around them matches exactly (`same` takes a line break for a
  * space), then starting a sentence, after a space. A sentence moved inside its paragraph was
- * inserted as ". The method is fast" before the next full stop.
+ * inserted as ". The method is fast" before the next full stop. Likewise after the end of one
+ * of the language's other units (`endsUnit`): a new table row came with the separator before it.
  */
-function slide(u: U[], ot: Token[], nt: Token[], same: Same): void {
+function slide(u: U[], ot: Token[], nt: Token[], same: Same, endsUnit: (t: Token) => boolean = () => false): void {
   const ends = (t: Token | undefined) => !!t && t.type === "punct" && ".?!".includes(t.text);
   const score = (toks: Token[], a: number, b: number): number => {
     const prev = toks[a - 1];
     let sc = 0;
     if (!prev || isBlank(prev)) sc += 1;
+    if (prev && endsUnit(prev)) sc += 2;
     if (!prev || prev.type === "parbreak" || (isBlank(prev) && (a < 2 || ends(toks[a - 2]) || toks[a - 2]!.type === "parbreak"))) sc += 2;
     const last = toks[b - 1];
-    if (last && (isBlank(last) || ends(last))) sc += 1;
+    if (last && (isBlank(last) || ends(last) || endsUnit(last))) sc += 1;
     return sc;
   };
   for (const key of ["n", "o"] as const) {
@@ -786,7 +788,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   // Where a new unit of the alignment starts (see `alignTokens`): changes don't cross these.
   const hard = new Set<number>();
   const u = alignTokens(ot, nt, same, hard, rules);
-  slide(u, ot, nt, same);
+  slide(u, ot, nt, same, rules.endsUnit);
   const isChange = (e: U) => e.o < 0 || e.n < 0;
 
   // Raw edits: maximal runs of changed entries.

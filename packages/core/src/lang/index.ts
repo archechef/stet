@@ -1,17 +1,18 @@
 /**
  * The language profiles Stet knows, and which one a file gets: the first whose config patterns
- * (`files.tex`, `files.bib`) match it, else plain text.
+ * (`files.tex`, `files.bib`, `files.typ`) match it, else plain text.
  */
 import { BIBTEX } from "./bibtex.js";
 import { LATEX } from "./latex.js";
 import { PLAIN } from "./plain.js";
+import { TYPST } from "./typst.js";
 import type { FilesKey, LanguageProfile } from "./profile.js";
 
 export type { LanguageProfile } from "./profile.js";
-export { BIBTEX, LATEX, PLAIN };
+export { BIBTEX, LATEX, PLAIN, TYPST };
 
 /** Every profile with files of its own, in the order they are tried. */
-export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX];
+export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX, TYPST];
 
 /** File patterns per profile (the config's `files`). */
 export type FilePatterns = Record<FilesKey, string[]>;
@@ -30,9 +31,24 @@ export function profileFor(path: string, files: FilePatterns): LanguageProfile {
   return PROFILES.find((p) => p.files && matchesAny(path, files[p.files])) ?? PLAIN;
 }
 
-/** The language previews compile: the first profile with a typesetter. */
-export function documentProfile(): LanguageProfile {
-  return PROFILES.find((p) => p.typesetter) ?? PLAIN;
+/** Languages a project can be written in (the config's `language`): profiles with examples for agents. */
+export const DOCUMENT_LANGUAGES: readonly LanguageProfile[] = PROFILES.filter((p) => p.agentTerms);
+
+/**
+ * The language the project is written in: the config's `language` (detected at setup), LaTeX
+ * when it names none. Agents' examples and PDF previews follow it.
+ */
+export function documentProfile(cfg?: { language?: string }): LanguageProfile {
+  return DOCUMENT_LANGUAGES.find((p) => p.id === (cfg?.language ?? LATEX.id)) ?? LATEX;
+}
+
+/**
+ * The language of a project, by its files (relative paths): the one language among them with
+ * files of its own, else LaTeX (a project with .tex and .typ files, or neither, is LaTeX).
+ */
+export function detectLanguage(paths: string[], files: FilePatterns): string {
+  const found = DOCUMENT_LANGUAGES.filter((p) => p.files && paths.some((f) => matchesAny(f, files[p.files!] ?? p.defaultFiles ?? [])));
+  return found.length === 1 ? found[0]!.id : LATEX.id;
 }
 
 /** Does a change to this file have a PDF preview (by its name alone, for front ends)? */

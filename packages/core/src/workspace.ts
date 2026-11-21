@@ -3,6 +3,7 @@ import { appendInside, readInside, writeInside } from "./safefs.js";
 import { shQuote } from "./text.js";
 import { Repo } from "./git.js";
 import { agentInstructions, STET_MARKER } from "./instructions.js";
+import type { LanguageProfile } from "./lang/index.js";
 import type { Agent } from "./model.js";
 
 /** How to invoke the `stet` CLI (absolute paths, so it works without PATH setup). */
@@ -53,6 +54,8 @@ export interface WorkspaceContext {
   gitDir: string;
   cli: CliCommand;
   platform?: NodeJS.Platform;
+  /** The project's language, for the agent's instructions. */
+  profile?: LanguageProfile;
 }
 
 /**
@@ -153,7 +156,7 @@ export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<Worksp
     return true;
   };
 
-  const instructions = agentInstructions(ctx.agent.id, cliShellCommand(ctx.cli, "watch"));
+  const instructions = agentInstructions(ctx.agent.id, cliShellCommand(ctx.cli, "watch"), ctx.profile);
   await put("CLAUDE.local.md", instructions);
 
   // Codex reads AGENTS.override.md *instead of* AGENTS.md: carry the project's own instructions over.
