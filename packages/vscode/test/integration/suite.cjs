@@ -28,7 +28,7 @@ exports.run = async function run() {
     const store = join(fx.repo, ".git", "stet");
     await until("managed CLI", () => existsSync(join(store, "bin", "stet.mjs")));
     const cfg = JSON.parse(readFileSync(join(store, "config.json"), "utf8"));
-    check("records bundled CLI", cfg.cli && cfg.cli.args[0].endsWith("/stet/bin/stet.mjs"), JSON.stringify(cfg.cli));
+    check("records bundled CLI", cfg.cli?.args[0].endsWith("/stet/bin/stet.mjs"), JSON.stringify(cfg.cli));
     const mcp = await until("agent MCP config", () => existsSync(join(fx.worktree, ".mcp.json")) && JSON.parse(readFileSync(join(fx.worktree, ".mcp.json"), "utf8")));
     check("writes agent workspace files", mcp.mcpServers.stet.args.includes("mcp"), JSON.stringify(mcp.mcpServers.stet));
     const help = execFileSync(cfg.cli.command, [...cfg.cli.args, "--help"], { env: { ...process.env, ...(cfg.cli.env || {}) }, encoding: "utf8" });
@@ -45,9 +45,9 @@ exports.run = async function run() {
       timeout: 30000,
     });
     const replies = mcpOut.trim().split("\n").map((l) => JSON.parse(l));
-    const tools = (replies.find((r) => r.id === 2) || {}).result;
-    const status = (replies.find((r) => r.id === 3) || {}).result;
-    check("agent MCP server answers", tools && tools.tools.some((t) => t.name === "stet_submit") && status && !status.isError, mcpOut.slice(0, 300));
+    const tools = replies.find((r) => r.id === 2)?.result;
+    const status = replies.find((r) => r.id === 3)?.result;
+    check("agent MCP server answers", tools?.tools.some((t) => t.name === "stet_submit") && status && !status.isError, mcpOut.slice(0, 300));
 
     const uri = vscode.Uri.file(join(fx.repo, "main.tex"));
     const doc = await vscode.workspace.openTextDocument(uri);
@@ -56,14 +56,14 @@ exports.run = async function run() {
       const l = await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri);
       return l && l.length >= 6 ? l : null;
     });
-    const titles = lenses.map((l) => l.command && l.command.title);
+    const titles = lenses.map((l) => l.command?.title);
     check("code lenses for both items", titles.includes(`${fx.items[0]}: $(check) Accept`) && titles.includes(`${fx.items[1]}: $(check) Accept`), titles.join(" | "));
 
     // A change made outside the extension that appends no event (removing a group) still
     // reaches the editor and the panel: the store signals it (bug report 2026-11-20).
     {
       const stetCli = (...a) => execFileSync(cfg.cli.command, [...cfg.cli.args, ...a, "--json"], { cwd: fx.repo, env: { ...process.env, ...(cfg.cli.env || {}) }, encoding: "utf8" });
-      const lens0 = async () => ((await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri)) || []).map((l) => l.command && l.command.title).find((t) => t && t.startsWith(`${fx.items[0]}:`)) || "";
+      const lens0 = async () => ((await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri)) || []).map((l) => l.command?.title).find((t) => t?.startsWith(`${fx.items[0]}:`)) || "";
       const g = JSON.parse(stetCli("group", fx.items[0], fx.items[1], "--kind", "linked", "-t", "Test", "--reason", "integration test")).group.id;
       const linked = await until("linked lens", async () => ((await lens0()).includes("linked") ? true : null), 10000).catch(() => false);
       stetCli("ungroup", g);
@@ -111,7 +111,7 @@ exports.run = async function run() {
     await ed.edit((e) => e.insert(new vscode.Position(0, 0), "% my note\n"));
     const moved = await until("moved lenses", async () => {
       const l = await vscode.commands.executeCommand("vscode.executeCodeLensProvider", uri);
-      const f = l && l.find((x) => x.command && x.command.title === `${fx.items[0]}: $(check) Accept`);
+      const f = l?.find((x) => x.command && x.command.title === `${fx.items[0]}: $(check) Accept`);
       return f && f.range.start.line === 4 ? f : null;
     });
     check("lenses follow unsaved edits", moved);
@@ -179,7 +179,7 @@ exports.run = async function run() {
     // wrap makes room for it. The 83-character line fits in 86 columns on its own; with
     // " real use" after "practice" it has to wrap.
     const doc2 = await vscode.workspace.openTextDocument(uri);
-    const ed3 = await vscode.window.showTextDocument(doc2);
+    await vscode.window.showTextDocument(doc2);
     const lineNo = doc2.getText().split("\n").findIndex((l) => l.startsWith("We show that this approach"));
     const hintLabels = async (u) => {
       const h = await vscode.commands.executeCommand("vscode.executeInlayHintProvider", u, new vscode.Range(0, 0, 50, 0));
@@ -200,7 +200,7 @@ exports.run = async function run() {
       const { editor } = ext.exports;
       const hs = await editor.provideInlayHints(await vscode.workspace.openTextDocument(uri), new vscode.Range(0, 0, 50, 0));
       const resolved = hs.map((h) => editor.resolveInlayHint(h));
-      const tip = resolved.map((h) => (typeof h.tooltip === "string" ? h.tooltip : h.tooltip && h.tooltip.value)).find(Boolean) || "";
+      const tip = resolved.map((h) => (typeof h.tooltip === "string" ? h.tooltip : h.tooltip?.value)).find(Boolean) || "";
       check("the inline text's tooltip is the full hover, with actions", tip.includes("Accept") && tip.includes("Revise"), tip.slice(0, 120) || "(no tooltip)");
     }
     const wraps = async () => {
@@ -299,14 +299,14 @@ exports.run = async function run() {
       check(
         "a diff's left side is your text, read-only, without the proposals",
         !!left && tab.original.scheme === "stet-diff" && left.getText() === readFileSync(join(fx.repo, "wrap.tex"), "utf8"),
-        tab ? `${tab.original.toString()} ${left && left.getText().slice(0, 60)}` : "no diff tab",
+        tab ? `${tab.original.toString()} ${left?.getText().slice(0, 60)}` : "no diff tab",
       );
       await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
 
       // Editing a longer change: an editor of its own; saving keeps your wording, the change stays pending.
       await vscode.commands.executeCommand("stet.edit", { path: fx.repo, id: wrapId });
       const editDoc = await until("edit editor", async () => vscode.workspace.textDocuments.find((d) => d.uri.scheme === "stet-edit" && d.uri.path.startsWith(`/${wrapId}/`)) || null, 10000).catch(() => null);
-      const editLenses = editDoc ? ((await vscode.commands.executeCommand("vscode.executeCodeLensProvider", editDoc.uri)) || []).map((l) => l.command && l.command.title) : [];
+      const editLenses = editDoc ? ((await vscode.commands.executeCommand("vscode.executeCodeLensProvider", editDoc.uri)) || []).map((l) => l.command?.title) : [];
       if (editDoc) {
         const e = new vscode.WorkspaceEdit();
         e.insert(editDoc.uri, editDoc.positionAt(editDoc.getText().length), " Reworded by me.");
@@ -381,7 +381,7 @@ exports.run = async function run() {
       return null;
     }, 60000).catch(() => null);
     check("a PDF preview is built in the background", result && ["ready", "no-spot", "unavailable", "failed"].includes(result.status), JSON.stringify(result && { status: result.status, message: result.message }));
-    console.log("preview result: " + (result && result.status));
+    console.log("preview result: " + (result?.status));
 
     // The hover shows the PDF preview once built (setting stet.pdfPreviews: "both" by default).
     // The position is looked up each time: the undo above changed the file on disk, and the
@@ -409,8 +409,8 @@ exports.run = async function run() {
     const oneLenses = oneDoc ? (await vscode.commands.executeCommand("vscode.executeCodeLensProvider", oneDoc.uri)) || [] : [];
     check(
       "Diff of a pending change is an editable review of just that change",
-      !!oneDoc && oneDoc.getText().includes("the task of reviewing") && oneLenses.some((l) => l.command && l.command.title.startsWith(`${fx.items[0]}: $(check) Accept`)) && !oneLenses.some((l) => l.command && l.command.title.startsWith(`${fx.items[1]}:`)),
-      oneDoc ? oneLenses.map((l) => l.command && l.command.title).join(" | ") : "no review document",
+      !!oneDoc && oneDoc.getText().includes("the task of reviewing") && oneLenses.some((l) => l.command?.title.startsWith(`${fx.items[0]}: $(check) Accept`)) && !oneLenses.some((l) => l.command?.title.startsWith(`${fx.items[1]}:`)),
+      oneDoc ? oneLenses.map((l) => l.command?.title).join(" | ") : "no review document",
     );
     await vscode.commands.executeCommand("stet.reviewFile", mainFile);
     const reviewDoc = await until("review document", async () => vscode.workspace.textDocuments.find((d) => d.uri.scheme === "stet-review" && d.uri.path.endsWith("main.tex") && !d.uri.query.includes("ids=")) || null, 10000).catch(() => null);
@@ -432,7 +432,7 @@ exports.run = async function run() {
       // The same actions as in the file: the row above the change, the hover, Ctrl+.
       const at = reviewDoc.positionAt(reviewDoc.getText().indexOf("hard task") + 2);
       const rl = (await vscode.commands.executeCommand("vscode.executeCodeLensProvider", reviewDoc.uri)) || [];
-      const rt = rl.map((l) => l.command && l.command.title);
+      const rt = rl.map((l) => l.command?.title);
       const rh = ((await vscode.commands.executeCommand("vscode.executeHoverProvider", reviewDoc.uri, at)) || []).flatMap((h) => h.contents.map((c) => (typeof c === "string" ? c : c.value))).join("\n");
       const rc = ((await vscode.commands.executeCommand("vscode.executeCodeActionProvider", reviewDoc.uri, new vscode.Range(at, at))) || []).map((a) => a.title);
       check(
@@ -446,7 +446,7 @@ exports.run = async function run() {
       const e = new vscode.WorkspaceEdit();
       e.replace(reviewDoc.uri, new vscode.Range(reviewDoc.positionAt(k), reviewDoc.positionAt(k + 4)), "harder");
       await vscode.workspace.applyEdit(e);
-      const acceptLens = rl.find((l) => l.command && l.command.title.startsWith(`${fx.items[0]}:`));
+      const acceptLens = rl.find((l) => l.command?.title.startsWith(`${fx.items[0]}:`));
       await vscode.commands.executeCommand(acceptLens.command.command, ...acceptLens.command.arguments);
       const accepted = await until("accept from the review", async () => (item0().status === "accepted" ? readFileSync(join(fx.repo, "main.tex"), "utf8") : null), 10000).catch(() => null);
       check("✓ Accept in the review accepts with your (unsaved) wording", !!accepted && accepted.includes("the harder task of reviewing"), JSON.stringify({ status: item0().status, dirty: reviewDoc.isDirty }));
@@ -467,7 +467,7 @@ exports.run = async function run() {
       const deadUndo = keys.some((k) => k.command === "stet.undo" && k.when.includes("stet.review")) || pkg.menus["view/item/context"].some((m) => m.command === "stet.undo" && m.when.includes("view == stet.review"));
       check("no Undo in the Review panel, where nothing is decided", !deadUndo);
       const agentWelcome = pkg.viewsWelcome.find((v) => v.when === "stet.agentWorkspace");
-      check("an agent's own window says where to review, not \"not set up\"", agentWelcome && agentWelcome.contents.includes("command:stet.openAgentProject") && pkg.viewsWelcome.some((v) => v.contents.startsWith("Stet is not set up") && v.when.includes("!stet.agentWorkspace")));
+      check("an agent's own window says where to review, not \"not set up\"", agentWelcome?.contents.includes("command:stet.openAgentProject") && pkg.viewsWelcome.some((v) => v.contents.startsWith("Stet is not set up") && v.when.includes("!stet.agentWorkspace")));
 
       // From the palette (no argument), a command acts on the change at the cursor once the user
       // moved there, even with another change selected in the panel.
@@ -534,7 +534,7 @@ exports.run = async function run() {
     const wanted = ["stet.changeActions", "stet.acceptOnly", "stet.toggleHighlight", "stet.newTextStyle.wrapping", "stet.agentNotify", "stet.agentNotifyOff", "stet.agentPing", "stet.undo", "stet.toggleCodeLens", "stet.shareEdits.saved", "stet.preview", "stet.previewSetup", "stet.pdfPreviews.hover", "stet.reviewFile", "stet.clearDraft", "stet.openAgentProject", "stet.undoLast", "stet.filter", "stet.clearFilter"];
     check("new commands are registered", wanted.every((c) => allCommands.includes(c)), JSON.stringify(wanted.filter((c) => !allCommands.includes(c))));
   } catch (e) {
-    check("no exception", false, e && e.stack);
+    check("no exception", false, e?.stack);
   }
   writeFileSync(out, JSON.stringify(results, null, 2));
 };

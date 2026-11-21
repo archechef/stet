@@ -11,7 +11,7 @@ describe("item ids: round.number", () => {
     edit(wt, "main.tex", "the problem of reviewing", "the task of reviewing");
     edit(wt, "main.tex", "effective in practice", "effective in real use");
     const first = await stet.submit("a", { title: "one" });
-    expect(first.changeset.id).toBe("C1");
+    expect(first.changeset?.id).toBe("C1");
     expect(first.items.map((i) => i.id)).toEqual(["1.1", "1.2"]);
     edit(wt, "main.tex", "It scales to", "It even scales to");
     const second = await stet.submit("a", { title: "two" });

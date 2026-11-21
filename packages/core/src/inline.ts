@@ -48,7 +48,10 @@ export function inlineDiff(oldText: string, newText: string, tokenize: (text: st
   for (const ch of diffArrays(ot, nt, { comparator: (a, b) => a.text === b.text })) {
     const n = ch.count ?? ch.value.length;
     if (!ch.added && !ch.removed) {
-      if (open) hunks.push(open), (open = null);
+      if (open) {
+        hunks.push(open);
+        open = null;
+      }
       oi += n;
       ni += n;
       kept += n;

@@ -27,7 +27,7 @@ import { constants, existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, sep } from "node:path";
-import { filterOverrides, Repo } from "./git.js";
+import { filterOverrides, type Repo } from "./git.js";
 import { diffArrays } from "diff";
 import { inlineDiff } from "./inline.js";
 import { writeInside } from "./safefs.js";
@@ -104,7 +104,7 @@ export const runProgram = (cmd: string, args: string[], opts: { input?: string; 
   new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     let stdout = "";
     let stderr = "";
-    let child;
+    let child: ReturnType<typeof spawn>;
     try {
       // Its own process group (POSIX), so a timeout also stops what it started (latexmk → TeX).
       child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
@@ -767,7 +767,10 @@ export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
   let block: PdfWord[] | null = null;
   const re = /<page\b|<block\b|<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g;
   for (let m = re.exec(xhtml); m; m = re.exec(xhtml)) {
-    if (m[0] === "<page") (page++, (block = null));
+    if (m[0] === "<page") {
+      page++;
+      block = null;
+    }
     else if (m[0] === "<block") blocks.push((block = []));
     else (block ?? blocks[blocks.push((block = [])) - 1]!).push({ text: decodeXml(m[5]!), page, x0: Number(m[1]), y0: Number(m[2]), x1: Number(m[3]), y1: Number(m[4]) });
   }
@@ -781,7 +784,11 @@ export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
     const rows: { mid: number; y0: number; y1: number; words: PdfWord[] }[] = [];
     for (const w of [...words].filter((w) => h(w) >= 0.85 * usual).sort((a, b) => mid(a) - mid(b))) {
       const row = rows.find((r) => Math.abs(r.mid - mid(w)) < 0.3 * usual);
-      if (row) row.words.push(w), (row.y0 = Math.min(row.y0, w.y0)), (row.y1 = Math.max(row.y1, w.y1));
+      if (row) {
+        row.words.push(w);
+        row.y0 = Math.min(row.y0, w.y0);
+        row.y1 = Math.max(row.y1, w.y1);
+      }
       else rows.push({ mid: mid(w), y0: w.y0, y1: w.y1, words: [w] });
     }
     // The rest: into the line its middle is in, else the nearest.
@@ -902,7 +909,10 @@ export function wordDiff(before: PdfWord[], after: PdfWord[]): { inserted: PdfWo
       if (!text) return;
       // A prose word, with the punctuation on it, compares whole ("document." is not "document"
       // and a full stop from elsewhere).
-      if (/^[^\p{L}\p{M}\p{N}]*\p{L}[\p{L}\p{M}]+[^\p{L}\p{M}\p{N}]*$/u.test(text)) return void out.push({ key: "", pieces: [{ text, k }], prose: true });
+      if (/^[^\p{L}\p{M}\p{N}]*\p{L}[\p{L}\p{M}]+[^\p{L}\p{M}\p{N}]*$/u.test(text)) {
+        out.push({ key: "", pieces: [{ text, k }], prose: true });
+        return;
+      }
       // Maths, numbers and punctuation between two prose words: one formula, compared by its pieces
       // in any order (sub- and superscripts are read in another order when lines break differently).
       const last = out[out.length - 1];

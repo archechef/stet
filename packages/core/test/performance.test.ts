@@ -143,7 +143,6 @@ describe("many changes in one long file (test report v0.14, B3)", () => {
   });
 
   it("the read-only items within a locked operation follow its writes", async () => {
-    const { Store } = await import("../src/store.js");
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     edit(wt, "main.tex", "the problem", "the task");
@@ -173,7 +172,10 @@ describe("locating while typing (test report v0.16, UX)", () => {
     const all = await stet.listItems();
     const reads = { n: 0 };
     const orig = stet.store.items;
-    (stet.store as any).items = async () => (reads.n++, orig());
+    (stet.store as any).items = async () => {
+      reads.n++;
+      return orig();
+    };
     const text = read(repo, "main.tex");
     const r = await stet.locateMany(items, text, all);
     expect(reads.n).toBe(0);

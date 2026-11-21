@@ -971,7 +971,7 @@ export class Stet {
     const top = await wt.tryRun(["rev-parse", "--show-toplevel"]);
     const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
     const cfg = await this.config();
-    if (!top || !branch || !branch.startsWith(cfg.agentBranchPrefix)) {
+    if (!top || !branch?.startsWith(cfg.agentBranchPrefix)) {
       throw new StetError(
         `This folder is not a Stet agent workspace (branch '${branch ?? "?"}'). ` +
           `Create one with \`stet agent new <name>\` in the project and work inside the folder it prints.`,
@@ -1307,7 +1307,7 @@ export class Stet {
         const { file, range, text } = await tipRange(w);
         const hits = pool.filter((c) => unitMatches(unit(c, ""), file, range, text));
         if (!hits.length) result.warnings.push(`'${w}' matched no change.`);
-        hits.forEach((h) => out.add(h));
+        for (const h of hits) out.add(h);
       }
       return [...out];
     };
@@ -1946,7 +1946,7 @@ export class Stet {
       for (const gid of new Set(members.flatMap((m) => m.groups))) {
         const grp = await this.store.getGroup(gid);
         // Only the group that is just this move; an agent's larger linked group stays.
-        if (!grp || grp.kind !== "linked" || grp.source !== "auto" || grp.items.length !== all.size || !grp.items.every((i) => all.has(i))) continue;
+        if (grp?.kind !== "linked" || grp.source !== "auto" || grp.items.length !== all.size || !grp.items.every((i) => all.has(i))) continue;
         await this.store.deleteGroup(gid);
         for (const m of members) m.groups = m.groups.filter((x) => x !== gid);
       }
@@ -2769,7 +2769,7 @@ export class Stet {
       }
       if (reason) rationale = `Linked because: ${reason}${rationale ? `\n\n${rationale}` : ""}`;
       const [gid] = await this.store.allocate("group");
-      let group: Group = {
+      const group: Group = {
         id: gid!, agent, changeset: items[0]!.changeset, kind, title, rationale: rationale ?? null, source: "agent",
         items: items.map((i) => i.id), ...(partList.length ? { parts: partList } : {}), state: "open",
       };

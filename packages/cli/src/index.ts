@@ -199,6 +199,7 @@ export function forTerminal(s: string): string {
   return printable(s).replace(OWN_SGR, (_, code: string) => `\x1b[${code}m`);
 }
 
+// biome-ignore lint/suspicious/noConfusingVoidType: `human` prints on its own when it returns nothing.
 function out(human: () => string | void, data: unknown) {
   if (opt.json) console.log(JSON.stringify(data, null, 2));
   else {
@@ -797,7 +798,7 @@ async function main() {
         if (args.length !== 1 || isGroupId(args[0]!)) throw new StetError("--text/--text-file needs exactly one item id.");
         edited[args[0]!] = text;
       }
-      let ids = args.filter((a) => !isGroupId(a) && !isRoundId(a));
+      const ids = args.filter((a) => !isGroupId(a) && !isRoundId(a));
       for (const r of args.filter(isRoundId)) ids.push(...(await roundItems(stet, r)));
       const results: AcceptResult[] = [];
       const confirmEffects = !!opt.confirm;

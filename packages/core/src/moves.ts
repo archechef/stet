@@ -118,7 +118,7 @@ function sameBlocks(a: string[][], b: string[][], allowed: number): { order: num
 export function moveChanges(fromText: string, toText: string): MoveChange[] {
   const fb = blocksOf(fromText);
   const sb = sameBlocks(fb, blocksOf(toText), Infinity);
-  if (sb && sb.order.some((k, j) => k !== j) && sb.changed < changedWords(fb.flat(), moveWords(toText))) {
+  if (sb?.order.some((k, j) => k !== j) && sb.changed < changedWords(fb.flat(), moveWords(toText))) {
     fromText = sb.order.map((k) => fb[k]!.join(" ")).join("\n\n");
   }
   const words = [...toText.matchAll(/\S+/g)].map((m) => ({ text: m[0], start: m.index!, end: m.index! + m[0].length }));

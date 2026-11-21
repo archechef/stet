@@ -182,7 +182,6 @@ export class Store {
 
   /** Remove the lock if its owner is gone. Returns true if it was removed. */
   private async takeOverIfAbandoned(): Promise<boolean> {
-    let info: { pid?: number; host?: string; token?: string } | null;
     let mtime: number;
     try {
       mtime = (await stat(this.lockPath)).mtimeMs;
@@ -191,7 +190,7 @@ export class Store {
     }
     // A lock that doesn't say whose it is (empty, or cut short) counts as another machine's: taken
     // over once it is older than `stale`. Its owner, if any, would have written it in milliseconds.
-    info = await readJson<{ pid?: number; host?: string; token?: string }>(this.lockPath).catch(() => null);
+    const info = await readJson<{ pid?: number; host?: string; token?: string }>(this.lockPath).catch(() => null);
     const age = Date.now() - mtime;
     const here = !!info?.pid && info.host === hostname();
     const alive = here && processAlive(info!.pid!);
@@ -374,7 +373,7 @@ export class Store {
   private eventCache: { bytes: number; events: StetEvent[] } = { bytes: 0, events: [] };
 
   async events(since = 0): Promise<StetEvent[]> {
-    let fh;
+    let fh: Awaited<ReturnType<typeof open>>;
     try {
       fh = await open(join(this.root, "events.jsonl"), "r");
     } catch {

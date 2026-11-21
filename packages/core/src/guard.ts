@@ -219,7 +219,7 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
     // Stet's own workspace files (settings, MCP config, instructions) may be read but not changed.
     // Match the names anywhere, including inside quoted code such as python -c "open('.claude/…')".
     // The worktree's `.git` file links it to the repository; changing it would redirect Stet's git calls.
-    const names = cmd.match(/[\w:.\/\\~-]*?(?:\.claude|\.codex|\.stet|CLAUDE\.local\.md|AGENTS\.override\.md|\.mcp\.json|\.git\b)[\w.\/\\-]*/gi) ?? [];
+    const names = cmd.match(/[\w:./\\~-]*?(?:\.claude|\.codex|\.stet|CLAUDE\.local\.md|AGENTS\.override\.md|\.mcp\.json|\.git\b)[\w./\\-]*/gi) ?? [];
     const touchesOwn = names.some((t) => {
       try {
         const p = abs(t, cwd);

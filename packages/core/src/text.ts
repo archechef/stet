@@ -192,6 +192,8 @@ export function printable(s: string): string {
  * breaks and tabs), direction marks and overrides, zero-width characters, the soft hyphen, the
  * byte-order mark, fillers and tag characters.
  */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it finds.
+// biome-ignore lint/suspicious/noMisleadingCharacterClass: single code points, listed on purpose.
 const INVISIBLE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]/gu;
 
 /** Text on one line (whitespace collapsed), cut to `max` characters with an ellipsis. */
@@ -300,7 +302,7 @@ export function changeSummary(oldText: string, newText: string, max = 30): [stri
   if (call >= 0 && call < from && pre - call <= 30) from = call;
   const cut = (s: string) => {
     const end = Math.min(s.length, s.length - suf + ctx);
-    let t = s.slice(from, end);
+    const t = s.slice(from, end);
     const lead = from > 0 ? "…" : "";
     const tail = end < s.length ? "…" : "";
     if (lead.length + t.length + tail.length > max) return lead + t.slice(0, max - lead.length - 1) + "…";

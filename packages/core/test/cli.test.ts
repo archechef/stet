@@ -36,7 +36,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line", () => {
     expect(out).toMatch(/paragraph split: "␣" → "¶"/);
     expect(out).toMatch(/paragraph break moved: /);
     expect(out).not.toMatch(/moved (in|out)/);
-    const id = /(\d+\.\d+) pending main\.tex:\d+  paragraph break moved/.exec(out)![1]!;
+    const id = /(\d+\.\d+) pending main\.tex:\d+ {2}paragraph break moved/.exec(out)![1]!;
     // Only the breaks, made visible: not the sentence removed and added again.
     expect(stet(repo, "show", id).out).toContain("practice.[-␣-]{+¶+}It scales to large documents.[-¶-]{+␣+}As shown");
   });

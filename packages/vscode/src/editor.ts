@@ -1,6 +1,6 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
-import { itemEffect, lineDiff, moveChanges, movesOut, moveTexts, partIndexOf, profileByName, type Item } from "@stet/core";
+import { itemEffect, lineDiff, moveChanges, moveFrom, movesOut, moveTexts, moveTo, partIndexOf, profileByName, type Item } from "@stet/core";
 import { diffBlock, draftMarkdown, esc, fence, ghostText, linkTitle, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
 
@@ -406,8 +406,8 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   if (item.move) {
     const out = movesOut(item);
     const files = [...new Set(model.others(item).map((o) => o.file).filter((f) => f !== item.file))];
-    const from = (item.move.from instanceof Array ? item.move.from : [item.move.from]).join(", ");
-    const to = (item.move.to instanceof Array ? item.move.to : [item.move.to]).join(", ");
+    const from = moveFrom(item.move).join(", ");
+    const to = moveTo(item.move).join(", ");
     lines.push(`⇅ **Move**: ${from} remove${out ? " text here" : ""}, ${to} insert${out ? "" : " it here"}${files.length ? ` (also in ${files.map(esc).join(", ")})` : ""}. Accepting or rejecting one decides the whole move.`);
     const texts = moveTexts(item.move, model.get);
     const changes = texts ? moveChanges(texts.from, texts.to) : [];

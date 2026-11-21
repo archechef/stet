@@ -2,7 +2,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import { relative, resolve } from "node:path";
 import * as vscode from "vscode";
-import { CHANGED_FILE, foldPath, isSafeRepoPath, Stet } from "@stet/core";
+import { CHANGED_FILE, foldPath, isSafeRepoPath, type Stet } from "@stet/core";
 import { shownAgentText, type Snapshot } from "./model.js";
 
 export class Project implements vscode.Disposable {

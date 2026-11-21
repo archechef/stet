@@ -1,0 +1,13 @@
+// Type-checks the tests of every package, and the sources they use, without emitting anything
+// (`npm run typecheck`). The packages' own tsconfig.json files build only their sources.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "rootDir": ".",
+    "paths": { "@stet/core": ["./packages/core/src/index.ts"] }
+  },
+  "include": ["packages/*/test/*.ts"]
+}

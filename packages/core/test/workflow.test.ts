@@ -300,8 +300,8 @@ describe("grouping", () => {
     expect(Object.keys(byText)).toContain("examine the problem of checking");
     expect(byText["examine the problem of checking"]!.note).toBe("Reword first sentence");
     const related = r.groups.find((g) => g.kind === "related")!;
-    expect(related.items.sort()).toEqual([byText["real use"]!.id, byText["method"]!.id].sort());
-    expect(byText["method"]!.note).toBe("'method' matches Section 2");
+    expect(related.items.sort()).toEqual([byText["real use"]!.id, byText.method!.id].sort());
+    expect(byText.method!.note).toBe("'method' matches Section 2");
     expect(r.warnings.join()).toMatch(/other\.tex:3/);
   });
 

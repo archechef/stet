@@ -8,7 +8,7 @@
  *   braces balanced, and no macro used that isn't defined.
  */
 import { describe, expect, it } from "vitest";
-import type { Item } from "../src/model.js";
+import type { Item, MoveInfo } from "../src/model.js";
 import { normalizeWs } from "../src/text.js";
 import { read, setup, write } from "./helpers.js";
 
@@ -17,7 +17,7 @@ type Files = Record<string, string>;
 interface Run {
   items: Item[];
   groups: { id: string; kind: string; items: string[]; title: string; rationale: string | null }[];
-  moves: { from: string[]; to: string[]; changed: number }[];
+  moves: MoveInfo[];
   warnings: string[];
   stet: Awaited<ReturnType<typeof setup>>["stet"];
   repo: string;

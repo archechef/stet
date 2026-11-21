@@ -60,7 +60,7 @@ export function tokenize(text: string): Token[] {
     while (j < text.length) {
       const d = text[j]!;
       if (chars.test(d)) j++;
-      else if (inner && inner.test(d) && j + 1 < text.length && chars.test(text[j + 1]!)) j += 2;
+      else if (inner?.test(d) && j + 1 < text.length && chars.test(text[j + 1]!)) j += 2;
       else break;
     }
     return j;

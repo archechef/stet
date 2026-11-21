@@ -30,6 +30,19 @@ jobs:
           node packages/cli/dist/index.js --help
           node packages/cli/dist/index.js doctor || true
 
+  # Lint, formatting and the tests' types: the same on every platform, so checked once.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx biome ci
+      - run: npm run typecheck
+
   # Stet itself supports Node.js 20: build it there and run the CLI.
   node20:
     runs-on: ubuntu-latest

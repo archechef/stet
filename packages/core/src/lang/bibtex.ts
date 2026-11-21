@@ -61,6 +61,7 @@ function splitBib(oldText: string, newText: string): Edit[] | null {
   const commonOld = o.entries.filter((e) => newByKey.has(e.key)).map((e) => e.key);
   const commonNew = n.entries.filter((e) => oldByKey.has(e.key)).map((e) => e.key);
   if (commonOld.join("\n") !== commonNew.join("\n")) return null;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL marks removed text.
   const bare = (s: string) => s.replace(/\u0000|\s+/g, "");
   if (bare(o.skeleton) !== bare(n.skeleton)) return null;
   // An entry whose key changed, and nothing else, in the same place: one change of the key, so

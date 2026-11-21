@@ -871,7 +871,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   const abbreviations = new Set(cfg.abbreviations);
   const isSentenceEnd = (i: number): boolean => {
     const t = oldTok(i);
-    if (!t || t.type !== "punct" || !".?!".includes(t.text)) return false;
+    if (t?.type !== "punct" || !".?!".includes(t.text)) return false;
     const next = oldTok(i + 1);
     if (!next || !isBlank(next)) return false;
     if (t.text !== ".") return true;

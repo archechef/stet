@@ -361,7 +361,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   private async updateFileContext(): Promise<void> {
     const uri = vscode.window.activeTextEditor?.document.uri;
     const p = uri && this.projectFor(uri);
-    const rel = p && p.relPath(uri!);
+    const rel = p?.relPath(uri!);
     const has = !!rel && p!.snapshot.items.some((i) => i.file === rel && i.kind === "modify" && isLive(i));
     await vscode.commands.executeCommand("setContext", "stet.fileHasChanges", has);
   }
@@ -1654,7 +1654,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     this.onlyOne("Comment", t.item, arg, all);
     const text = await vscode.window.showInputBox({ title: `Comment on ${t.item.id}`, prompt: "The agent sees this with its feedback and can reply.", placeHolder: "Message to the agent…" });
     if (!text) return;
-    const ok = await this.run(t.project, async () => (await t.project.stet.comment(t.item.id, text, "user"), true));
+    const ok = await this.run(t.project, async () => {
+      await t.project.stet.comment(t.item.id, text, "user");
+      return true;
+    });
     if (ok) announce(`$(comment) Comment on ${t.item.id} sent: the agent gets it with its feedback, and can reply.`);
   }
 
@@ -1736,20 +1739,29 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   async reopenNote(arg: unknown): Promise<void> {
     const t = this.noteTarget(arg);
     if (!t) return;
-    const ok = await this.run(t.project, async () => (await t.project.stet.reopenNote(t.note.id), true));
+    const ok = await this.run(t.project, async () => {
+      await t.project.stet.reopenNote(t.note.id);
+      return true;
+    });
     if (ok) announce(`$(note) Note ${t.note.id} is open again; the agent is told.`);
   }
 
   async resolveNote(arg: unknown): Promise<void> {
     const t = this.noteTarget(arg);
     if (!t) return;
-    const ok = await this.run(t.project, async () => (await t.project.stet.resolveNote(t.note.id), true));
+    const ok = await this.run(t.project, async () => {
+      await t.project.stet.resolveNote(t.note.id);
+      return true;
+    });
     if (ok) announce(`$(check) Note ${t.note.id} resolved.`);
   }
 
   /** Reply in a note's thread (from the editor). */
   async replyNote(p: Project, note: Note, text: string): Promise<void> {
-    const ok = await this.run(p, async () => (await p.stet.replyNote(note.id, text, "user"), true));
+    const ok = await this.run(p, async () => {
+      await p.stet.replyNote(note.id, text, "user");
+      return true;
+    });
     if (ok) {
       this.markRead(p, note);
       announce(`$(comment) Reply on note ${note.id} sent.`);
@@ -1806,7 +1818,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       return;
     }
     if (!threads.isOwn(reply.thread)) reply.thread.dispose();
-    const ok = await this.run(hit.project, async () => (await hit.project.stet.comment(hit.item.id, reply.text, "user"), true));
+    const ok = await this.run(hit.project, async () => {
+      await hit.project.stet.comment(hit.item.id, reply.text, "user");
+      return true;
+    });
     if (ok) {
       this.markRead(hit.project, hit.item);
       announce(`$(comment) Reply on ${hit.item.id} sent.`);
@@ -2207,7 +2222,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       placeHolder: "e.g. I've finished reviewing round 3",
     });
     if (message === undefined) return;
-    const ok = await this.run(a.project, async () => (await a.project.stet.pingAgent(a.agent.id, message), true));
+    const ok = await this.run(a.project, async () => {
+      await a.project.stet.pingAgent(a.agent.id, message);
+      return true;
+    });
     if (ok) announce(`$(megaphone) Asked ${a.agent.id} to check in`, 4000);
   }
 

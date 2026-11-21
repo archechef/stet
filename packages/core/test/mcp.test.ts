@@ -62,7 +62,7 @@ describe("the protocol, the review loop and the guard hook", () => {
     let buf = "";
     child.stdout.on("data", (d) => {
       buf += d;
-      let i;
+      let i: number;
       while ((i = buf.indexOf("\n")) >= 0) {
         lines.push(JSON.parse(buf.slice(0, i)));
         buf = buf.slice(i + 1);

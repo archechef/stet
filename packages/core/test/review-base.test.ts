@@ -76,7 +76,7 @@ describe("review base: accepted changes are applied exactly once", () => {
 });
 
 describe("pending changes that are already in the text", () => {
-  it("accepting pk → \pk where the text already reads \pk does not double the macro", async () => {
+  it("accepting pk → pk where the text already reads pk does not double the macro", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     edit(wt, "main.tex", String.raw`(pk_i,sk_i) \gets`, String.raw`(\pk_i,sk_i) \gets`);

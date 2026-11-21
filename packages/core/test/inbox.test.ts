@@ -60,7 +60,10 @@ describe("agent inbox", () => {
     await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Shorter.");
     const w = new InboxWriter(stet, "a");
     let settled = false;
-    const t = w.tick(true).then((l) => ((settled = true), l));
+    const t = w.tick(true).then((l) => {
+      settled = true;
+      return l;
+    });
     await w.stop();
     expect(settled).toBe(true);
     expect(await t).toEqual([]); // stopped before it wrote
@@ -185,7 +188,7 @@ describe("what wakes an agent", () => {
 
   it("tells saves from commits", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
-    const a = await stet.newAgent("a");
+    await stet.newAgent("a");
     await stet.setNotify("a", "now");
     await stet.setShareEdits("saved");
     await stet.setNotifyOn("a", ["document"]);
@@ -210,6 +213,7 @@ describe("what wakes an agent", () => {
     await stet.setNotify("a", "off");
     const got = (async () => {
       for await (const l of followInbox(join(a.worktree, INBOX_FILE), { once: true, poll: 20, settle: 30 })) return l;
+      return undefined;
     })();
     await new Promise((r) => setTimeout(r, 50));
     await stet.pingAgent("a", "Round 3 is reviewed.");

@@ -252,7 +252,9 @@ export async function settleParts(
       const it = byId.get(i)!;
       const p = profileOf(it.file);
       const sum = sums.get(p) ?? [];
-      imbalance(it, profileOf).forEach((x, k) => (sum[k] = (sum[k] ?? 0) + x));
+      imbalance(it, profileOf).forEach((x, k) => {
+        sum[k] = (sum[k] ?? 0) + x;
+      });
       sums.set(p, sum);
     }
     return [...sums].some(([p, sum]) => isOpen(sum, p.parts?.parity ?? []));

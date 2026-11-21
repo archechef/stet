@@ -141,7 +141,7 @@ describe("labels and text", () => {
     // A paragraph split, joined, or its break moved past a sentence, said in words (test report 2026-11-20).
     expect(itemLabel(item("S1", "C1", { oldText: " ", newText: "\n\n" }))).toBe("S1  “␣” → “¶”  · paragraph split");
     const moved = itemLabel(item("S1", "C1", { oldText: " Beta two is a long sentence here.\n\n", newText: "\n\nBeta two is a long sentence here. " }));
-    expect(moved).toMatch(/^S1  “….*here\.¶” → “¶Beta two.*…”  · paragraph break moved$/);
+    expect(moved).toMatch(/^S1 {2}“….*here\.¶” → “¶Beta two.*…” {2}· paragraph break moved$/);
     expect(itemSpoken(item("S1", "C1", { oldText: "\n\n", newText: " " }))).toMatch(/^Change S1, paragraphs joined, /);
     expect(itemLabel(item("S1", "C1", { kind: "rename-file", oldFile: "a.tex", file: "b.tex" }))).toBe("S1  rename a.tex → b.tex");
   });
@@ -211,8 +211,8 @@ describe("moves (spec §6.4.7)", () => {
   it("labels both halves, recognises the move group, and decides the halves together", () => {
     const m = new TreeModel(moveSnap(), "review");
     const [a, b, c] = ["7.1", "7.2", "7.3"].map((id) => m.item(id)!);
-    expect(itemLabel(a!)).toMatch(/^1  ⇣ moved out: “Our tool splits every proposal into .*…”$/);
-    expect(itemLabel(b!)).toMatch(/^2  ⇡ moved in: “Our tool/);
+    expect(itemLabel(a!)).toMatch(/^1 {2}⇣ moved out: “Our tool splits every proposal into .*…”$/);
+    expect(itemLabel(b!)).toMatch(/^2 {2}⇡ moved in: “Our tool/);
     expect(m.isMove(m.group("G7")!)).toBe(true);
     expect(groupDescription(m.group("G7")!, 2, true)).toBe("move");
     expect(m.withMove(b!)).toEqual(["7.2", "7.1"]);

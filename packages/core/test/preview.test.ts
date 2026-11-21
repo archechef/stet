@@ -184,7 +184,7 @@ describe("preview: missing packages", () => {
 });
 
 describe("preview: finding a change's words on the page", () => {
-  const xhtml = (lines: string[][], page = 1) =>
+  const xhtml = (lines: string[][]) =>
     `<doc><page width="612" height="792"><flow><block>` +
     lines
       .map((ws, k) => `<line>` + ws.map((w, i) => `<word xMin="${100 + i * 40}" yMin="${100 + k * 12}" xMax="${130 + i * 40}" yMax="${110 + k * 12}">${w}</word>`).join("") + `</line>`)

@@ -2,7 +2,7 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { StetConfig } from "./config.js";
-import { Repo } from "./git.js";
+import type { Repo } from "./git.js";
 import { shQuote } from "./text.js";
 import { pathExists } from "./paths.js";
 
