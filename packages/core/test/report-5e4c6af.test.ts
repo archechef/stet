@@ -9,6 +9,11 @@ import { StetMcpServer } from "../src/mcp.js";
 import type { Item } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
 import { splitText } from "../src/split.js";
+import { effectOf } from "../src/effects.js";
+import { detectRoot } from "../src/lang/latex-preview.js";
+import { detectLanguage, languageCounts } from "../src/lang/index.js";
+import { LARGE_SUBMIT } from "../src/service.js";
+import { changeSummary, lineDiff, spokenChange, summaryTexts, textWithBadBytes } from "../src/text.js";
 import { edit, PAPER, read, setup, write } from "./helpers.js";
 
 const cfg = defaultConfig("main");
@@ -207,3 +212,96 @@ describe("test report 5e4c6af", () => {
     expect(read(wt, "chapters/one.typ")).toContain("../figures/x.png");
   });
 });
+
+describe("decisions on the 5e4c6af reports", () => {
+  const FAKE_CLI = { command: "/usr/bin/node", args: ["/opt/stet/cli.js"] };
+
+  it("S5: the MCP server refuses to start in a workspace whose tool settings were changed", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const { worktree: wt } = await stet.newAgent("a");
+    const call = (server: StetMcpServer) => server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "stet_status", arguments: {} } });
+    expect(JSON.stringify(await call(new StetMcpServer({ cwd: wt, workspace: wt, project: repo, agentId: "a", version: "t" })))).not.toMatch(/refuses/);
+    write(wt, ".codex/config.toml", read(wt, ".codex/config.toml").replace('sandbox_mode = "workspace-write"', 'sandbox_mode = "danger-full-access"'));
+    const r = JSON.stringify(await call(new StetMcpServer({ cwd: wt, workspace: wt, project: repo, agentId: "a", version: "t" })));
+    expect(r).toMatch(/refuses to work in this workspace: \.codex\/config\.toml was changed/);
+    // Written again by Stet: accepted again.
+    await stet.refreshWorkspace("a");
+    expect(JSON.stringify(await call(new StetMcpServer({ cwd: wt, workspace: wt, project: repo, agentId: "a", version: "t" })))).not.toMatch(/refuses/);
+  });
+
+  it("S7: a text file with a byte that isn't UTF-8 is shown as text, the byte marked", async () => {
+    expect(textWithBadBytes(Buffer.from([0x61, 0x0a, 0x25, 0xff, 0x0a, 0x62]))).toBe("a\n%⟨0xFF⟩\nb");
+    expect(textWithBadBytes(Buffer.from([0x00, 0x01]))).toBeNull();
+    expect(lineDiff("a\nb\nc\nd\ne\nf", "a\nb\nc\nX\ne\nf", 1)).toEqual(["…", "  c", "- d", "+ X", "  e", "…"]);
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    writeFileSync(join(wt, "main.tex"), Buffer.concat([Buffer.from(PAPER), Buffer.from("%\xff\n\\immediate\\write18{x}\n", "latin1")]));
+    const r = await stet.submit("a", { title: "t" });
+    const it = r.items.find((i) => i.kind === "binary")!;
+    expect(it.shownText?.new).toContain("%⟨0xFF⟩");
+    expect(it.shownText?.new).toContain("\\immediate\\write18{x}");
+  });
+
+  it("S12: changes to files that take effect are accepted only when confirmed", async () => {
+    expect(effectOf(".latexmkrc")).toMatch(/Perl/);
+    expect(effectOf("chapters/latexmkrc")).toMatch(/Perl/);
+    expect(effectOf(".vscode/tasks.json")).toMatch(/VS Code/);
+    expect(effectOf("AGENTS.md")).toMatch(/instructions/);
+    expect(effectOf("main.tex")).toBeNull();
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, ".latexmkrc", "$pdflatex = 'x';\n");
+    const r = await stet.submit("a", { title: "t" });
+    await expect(stet.accept(r.items.map((i) => i.id))).rejects.toThrow(/latexmk runs it as Perl code.*--confirm/);
+    await stet.accept(r.items.map((i) => i.id), { confirmEffects: true });
+    expect(read(repo, ".latexmkrc")).toContain("pdflatex");
+  });
+
+  it("S15: a very large round is said to be, not refused", async () => {
+    const was = { ...LARGE_SUBMIT };
+    LARGE_SUBMIT.items = 1;
+    try {
+      const { stet } = await setup({ "main.tex": PAPER });
+      const { worktree: wt } = await stet.newAgent("a");
+      edit(wt, "main.tex", "effective in practice", "effective in real use");
+      edit(wt, "main.tex", "reviewing changes", "reviewing edits");
+      const r = await stet.submit("a", { title: "t" });
+      expect(r.warnings.join(" ")).toMatch(/very large/);
+      expect((await stet.store.getChangeset(r.changeset!.id))?.stetNote).toMatch(/very large round/);
+    } finally {
+      Object.assign(LARGE_SUBMIT, was);
+    }
+  });
+
+  it("S18: a file named with a leading '-' is never taken as the document to compile", () => {
+    const doc = "\\documentclass{article}\n\\begin{document}x\\end{document}\n";
+    expect(detectRoot(new Map([["-pvc.tex", doc]]), null)).toBeNull();
+    expect(detectRoot(new Map([["paper.tex", doc]]), null)).toBe("paper.tex");
+  });
+
+  it("mixed folders: the language with more files, LaTeX on a tie; init can be told", async () => {
+    const files = defaultConfig("main").files;
+    expect(languageCounts(["a.typ", "b.typ", "old.tex"], files)).toEqual({ latex: 1, typst: 2 });
+    expect(detectLanguage(["a.typ", "b.typ", "old.tex"], files)).toBe("typst");
+    expect(detectLanguage(["a.typ", "old.tex"], files)).toBe("latex");
+    const { stet } = await setup({ "main.typ": "= Hi\n", "old.tex": "x\n" });
+    expect((await stet.config()).language).toBe("latex");
+    await (await import("../src/service.js")).Stet.init(stet.mainPath, { language: "typst" });
+    expect((await stet.config()).language).toBe("typst");
+  });
+
+  it("summaries: the words around a short change, and a call's name", () => {
+    const it = item("80", "90", { context: { before: '#image("a.png", width: ', after: "%)\n" } });
+    expect(summaryTexts(it)).toEqual(["width: 80%", "width: 90%"]);
+    const [o, n] = changeSummary('See #cite(<linikos1986>) here.', 'See #cite(<linikos1986>, form: "prose") here.', 40);
+    expect(o.startsWith("#cite(") || o.startsWith("…#cite(")).toBe(true);
+    expect(n).toContain("form:");
+  });
+
+  it("spoken maths: only what differs, labels and references in words", () => {
+    expect(spokenChange("$norm(x - hat(x)) <= C eps^2$", "$norm(x - hat(x)) <= C eps^3$")).toBe("in the formula norm(x - hat(x)) <= C eps^2: 2 becomes 3");
+    expect(spokenChange("see @fig:plot", "see @fig:error")).toBe("replace see reference to fig:plot with see reference to fig:error");
+    expect(spokenChange("plain words", "other words")).toBeNull();
+  });
+});
+

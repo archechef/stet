@@ -9,11 +9,15 @@ import {
   changeSummary,
   DOCUMENT_LANGUAGES,
   documentProfile,
+  languageCounts,
   inlineDiff,
   paragraphChange,
   profileByName,
   foldPath,
   isLive,
+  summaryTexts,
+  itemEffect,
+  lineDiff,
   archivedMessage,
   checkToolUse,
   describeFeedback,
@@ -64,7 +68,7 @@ import {
 const HELP = `stet — review AI-proposed changes to ${DOCUMENT_LANGUAGES.map((p) => p.name).join(" and ")} projects
 
 Project (run in your project folder):
-  stet init [--main <branch>]           set up Stet in this repository
+  stet init [--main <branch>] [--language <latex|typst>]           set up Stet in this repository
   stet doctor                           check your setup
   stet agent new <name> [--kind claude-code|codex|other]
                                         create an agent workspace
@@ -84,7 +88,7 @@ Review:
   stet review [--agent <a>] [--status <s>] [--all]
                                         list items (default: pending)
   stet show <12.3|G3|G3.2|C12|N3> [--full]   show a change (round 12, change 3), group, part of a group, round or note; --full: whole added or deleted files
-  stet accept <12.3|G3|G3.2|C12>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
+  stet accept <12.3|G3|G3.2|C12>... [--force] [--confirm] [--text <t> | --text-file <f>] [--commit | --no-commit]
   stet reject <12.3|G3|G3.2|C12>... [-m <reason>] [--all | --revise-rest | --only]
   stet undo <12.3>                      undo an accept (until committed) or a rejection: pending again
   stet preview <12.3> [--page <n> [--before]]
@@ -152,6 +156,8 @@ const OPTIONS = {
     before: { type: "boolean" },
     print: { type: "boolean" },
     full: { type: "boolean" },
+    confirm: { type: "boolean" },
+    language: { type: "string" },
 } as const;
 
 /** Exit codes, for scripts: 1 any other error, 2 a wrong command line, 3 an unknown id or name. */
@@ -218,6 +224,12 @@ const localTime = (iso: string) => {
 const sizeOf = (n: number) => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 function itemSummary(it: Item, line?: number): string {
+  // A file that takes effect (a latexmkrc, .gitattributes, AGENTS.md…): flagged (security report 5e4c6af, S12).
+  const effect = itemEffect(it);
+  return itemLine(it, line) + (effect ? yellow(` ⚠ takes effect: ${effect}`) : "");
+}
+
+function itemLine(it: Item, line?: number): string {
   const where = `${it.file}${line ? `:${line}` : ""}`;
   if (it.kind !== "modify") {
     const text = it.kind === "delete-file" ? it.oldText : it.newText;
@@ -234,7 +246,7 @@ function itemSummary(it: Item, line?: number): string {
       : `${green(`moved in: "${oneLine(it.newText, 40)}"`)} ${dim(`← ${moveFrom(it.move).join(", ")},`)} ${how}`;
     return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${move}`;
   }
-  const [o, n] = changeSummary(it.oldText, it.newText, it.oldText && it.newText ? 30 : 50);
+  const [o, n] = changeSummary(...summaryTexts(it), it.oldText && it.newText ? 30 : 50);
   const change = !it.oldText ? green(`+ "${n}"`) : !it.newText ? red(`- "${o}"`) : `${red(`"${o}"`)} → ${green(`"${n}"`)}`;
   // A revision says what it revises (the reviewer's request is in `stet show`).
   const revises = it.supersedes ? dim(` (revises ${it.supersedes})`) : "";
@@ -247,7 +259,17 @@ function itemSummary(it: Item, line?: number): string {
 const indented = (t: string) => printable(t).replace(/\n/g, "\n    ");
 
 function itemDiff(it: Item): string {
-  if (it.kind === "binary") return dim("(binary file)");
+  if (it.kind === "binary") {
+    // Text with bytes that aren't UTF-8: shown, the bytes marked (security report 5e4c6af, S7).
+    if (!it.shownText) return dim("(binary file)");
+    const all = lineDiff(it.shownText.old ?? "", it.shownText.new ?? "");
+    const shown = opt.full ? all : all.slice(0, 80);
+    return [
+      dim("(not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte)"),
+      ...shown.map((l) => (l.startsWith("+ ") ? green(l) : l.startsWith("- ") ? red(l) : dim(l))),
+      ...(shown.length < all.length ? [dim(`  … ${all.length - shown.length} more lines (stet show ${it.id} --full shows them all)`)] : []),
+    ].join("\n");
+  }
   if (it.kind !== "modify") {
     const lines: string[] = [];
     // Whole files with --full; else the first 40 lines of each side, and how many more there are
@@ -527,8 +549,11 @@ async function main() {
   if (cmd === "init") {
     // A second run only refreshes the setup: say so, instead of the first-time message (test report UX).
     const already = await Stet.open(cwd).then(() => true, () => false);
-    const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), cli: SELF });
+    const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), ...(opt.language ? { language: opt.language } : {}), cli: SELF });
     const cfg = await stet.config();
+    // Files of both languages: which has more, and how to choose the other (test report 5e4c6af).
+    const counts = languageCounts(((await stet.repo.tryRun(["ls-files", "-z"])) ?? "").split("\0").filter(Boolean), cfg.files);
+    const mixed = !opt.language && !already && Object.keys(counts).length > 1;
     const hooks = await hookStatus(stet.repo, stet.commonDir);
     // Agents start from the last commit: edits not committed yet are not theirs to see.
     const dirty = (await stet.repo.tryRun(["status", "--porcelain", "--untracked-files=no"])) ?? "";
@@ -537,6 +562,9 @@ async function main() {
         (already ? `Stet was already set up for ${stet.mainPath} (main branch '${cfg.mainBranch}'); its setup is refreshed.\n` : `Stet is set up for ${stet.mainPath} (main branch '${cfg.mainBranch}').\n`) +
         // Which language agents are told about, and how to change it (test report 5e4c6af, UX).
         `Language: ${documentProfile(cfg).name} (agents' instructions follow it; set "language" in .git/stet/config.json to change it).\n` +
+        (mixed
+          ? yellow(`! The project has files of both languages (${Object.entries(counts).map(([id, n]) => `${n} ${DOCUMENT_LANGUAGES.find((p) => p.id === id)?.name ?? id}`).join(", ")}); Stet took the one with more. \`stet init --language <${DOCUMENT_LANGUAGES.map((p) => p.id).join("|")}>\` chooses.`) + "\n"
+          : "") +
         (hooks.missing.length
           ? yellow(`! Git guard hooks not installed (${hooks.customHooksPath ? `core.hooksPath is ${hooks.dir}` : "disabled"}). See \`stet hooks install\`.`) + "\n"
           : already ? "" : `Git guard hooks installed in ${hooks.dir}.\n`) +
@@ -664,7 +692,7 @@ async function main() {
       for (const cs of changesets) {
         const csItems = items.filter((i) => i.changeset === cs.id);
         if (!csItems.length) continue;
-        lines.push(`${bold(cs.agent)} › ${bold(`Round ${roundOf(cs.id)}`)} (${cs.id}) ${oneLine(cs.title, 200)}${cs.rationale ? dim(" — " + oneLine(cs.rationale, 60)) : ""}`);
+        lines.push(`${bold(cs.agent)} › ${bold(`Round ${roundOf(cs.id)}`)} (${cs.id}) ${oneLine(cs.title, 200)}${cs.rationale ? dim(" — " + oneLine(cs.rationale, 60)) : ""}${cs.stetNote ? yellow(` ! ${cs.stetNote}`) : ""}`);
         const shown = new Set<string>();
         for (const g of groups.filter((g) => g.items.some((i) => csItems.some((x) => x.id === i)))) {
           const icon = g.kind === "linked" ? "⛓" : g.kind === "related" ? "≡" : "◆";
@@ -772,8 +800,9 @@ async function main() {
       let ids = args.filter((a) => !isGroupId(a) && !isRoundId(a));
       for (const r of args.filter(isRoundId)) ids.push(...(await roundItems(stet, r)));
       const results: AcceptResult[] = [];
-      for (const g of args.filter(isGroupId)) results.push(await stet.acceptGroup(g, commit === undefined ? {} : { commit }));
-      if (ids.length) results.push(await stet.accept(ids, { edited, overrideLinked: !!opt.force, ...(commit === undefined ? {} : { commit }) }));
+      const confirmEffects = !!opt.confirm;
+      for (const g of args.filter(isGroupId)) results.push(await stet.acceptGroup(g, { confirmEffects, ...(commit === undefined ? {} : { commit }) }));
+      if (ids.length) results.push(await stet.accept(ids, { edited, overrideLinked: !!opt.force, confirmEffects, ...(commit === undefined ? {} : { commit }) }));
       return out(
         () =>
           results

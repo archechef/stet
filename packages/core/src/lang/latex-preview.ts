@@ -183,7 +183,9 @@ export function detectRoot(files: Map<string, string>, rootFile: string | null):
   if (rootFile) return files.has(rootFile) ? rootFile : null;
   const main = files.get("main.tex");
   if (main !== undefined && isDocument(main)) return "main.tex";
-  const top = [...files].filter(([p, t]) => !p.includes("/") && p.endsWith(".tex") && isDocument(t)).map(([p]) => p);
+  // A name starting with "-" would reach latexmk as an option, not a file: never taken (security
+  // report 5e4c6af, S18; the configured rootFile refuses such names too).
+  const top = [...files].filter(([p, t]) => !p.includes("/") && !p.startsWith("-") && p.endsWith(".tex") && isDocument(t)).map(([p]) => p);
   return top.length === 1 ? top[0]! : null;
 }
 

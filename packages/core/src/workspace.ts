@@ -1,6 +1,6 @@
 /** Files Stet writes into agent workspaces: instructions, MCP config, guardrails (spec §9, §10). */
 import { appendInside, readInside, writeInside } from "./safefs.js";
-import { shQuote } from "./text.js";
+import { sha256, shQuote } from "./text.js";
 import { Repo } from "./git.js";
 import { agentInstructions, STET_MARKER } from "./instructions.js";
 import type { LanguageProfile } from "./lang/index.js";
@@ -44,6 +44,8 @@ export function claudeAbsPath(p: string): string {
 export interface WorkspaceResult {
   written: string[];
   skipped: { file: string; reason: string }[];
+  /** The tool settings written (file → SHA-256), to tell later whether they were changed. */
+  toolConfigs: Record<string, string>;
 }
 
 export interface WorkspaceContext {
@@ -139,12 +141,43 @@ function codexConfig(ctx: WorkspaceContext): string {
   ].join("\n");
 }
 
+/** Workspace files tracked by the project (in the agent branch, read from the project's repository, not the worktree's own index). */
+async function trackedFiles(ctx: WorkspaceContext): Promise<Set<string>> {
+  const listed = await new Repo(ctx.mainPath).tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${ctx.agent.branch}`, "--", ...WORKSPACE_FILES]);
+  return new Set((listed ?? "").split("\0").filter(Boolean));
+}
+
+/**
+ * The workspace files that configure programs started outside the agent's sandbox (the MCP
+ * server, Claude's hooks and sandbox, Codex's sandbox mode), with the content Stet writes.
+ */
+function toolConfigs(ctx: WorkspaceContext, tracked: Set<string>): [string, string][] {
+  const settings = JSON.stringify(claudeSettings(ctx), null, 2) + "\n";
+  return [
+    [".mcp.json", JSON.stringify({ mcpServers: { stet: mcpServer(ctx) } }, null, 2) + "\n"],
+    [tracked.has(".claude/settings.json") ? ".claude/settings.local.json" : ".claude/settings.json", settings],
+    [".codex/config.toml", codexConfig(ctx)],
+  ];
+}
+
+/**
+ * Tool settings in the workspace that differ from what Stet last wrote there (`written`: file →
+ * SHA-256, from `writeWorkspaceFiles`). An agent can edit them, and the programs they configure
+ * run outside its sandbox at its next session (security report 5e4c6af, S5).
+ */
+export async function changedToolConfigs(worktree: string, written: Record<string, string>): Promise<string[]> {
+  const out: string[] = [];
+  for (const [file, hash] of Object.entries(written)) {
+    const now = await readInside(worktree, file).catch(() => null);
+    if (now === null || sha256(now.toString("utf8")) !== hash) out.push(file);
+  }
+  return out;
+}
+
 /** Write (or refresh) the workspace files. Files tracked by the project are never touched. */
 export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<WorkspaceResult> {
-  // Tracked = in the agent branch, read from the project's repository (not the worktree's own index).
-  const listed = await new Repo(ctx.mainPath).tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${ctx.agent.branch}`, "--", ...WORKSPACE_FILES]);
-  const tracked = new Set((listed ?? "").split("\0").filter(Boolean));
-  const result: WorkspaceResult = { written: [], skipped: [] };
+  const tracked = await trackedFiles(ctx);
+  const result: WorkspaceResult = { written: [], skipped: [], toolConfigs: {} };
   const put = async (file: string, content: string) => {
     if (tracked.has(file)) {
       result.skipped.push({ file, reason: "tracked by the project" });
@@ -163,12 +196,8 @@ export async function writeWorkspaceFiles(ctx: WorkspaceContext): Promise<Worksp
   const projectAgents = (await readInside(ctx.agent.worktree, "AGENTS.md"))?.toString("utf8") ?? "";
   await put("AGENTS.override.md", (projectAgents && !projectAgents.includes(STET_MARKER) ? projectAgents.trimEnd() + "\n\n" : "") + instructions);
 
-  await put(".mcp.json", JSON.stringify({ mcpServers: { stet: mcpServer(ctx) } }, null, 2) + "\n");
-
-  const settings = JSON.stringify(claudeSettings(ctx), null, 2) + "\n";
-  if (!(await put(".claude/settings.json", settings))) await put(".claude/settings.local.json", settings);
-
-  await put(".codex/config.toml", codexConfig(ctx));
+  if (tracked.has(".claude/settings.json")) result.skipped.push({ file: ".claude/settings.json", reason: "tracked by the project" });
+  for (const [file, content] of toolConfigs(ctx, tracked)) if (await put(file, content)) result.toolConfigs[file] = sha256(content);
 
   // The inbox is appended to, never replaced: a running `stet watch` or `tail -f` keeps following it.
   if (!tracked.has(".stet/inbox")) await appendInside(ctx.agent.worktree, ".stet/inbox", "");

@@ -52,7 +52,7 @@ import { detectMoves, detectRewritten, separateMoved } from "./moves.js";
 import { describeNote, type DeliveredNote } from "./notes.js";
 import { combineParts, imbalance, settleParts, type PartDraft, type ProfileOf } from "./parts.js";
 import { splitText, type Edit } from "./split.js";
-import { detectLanguage, documentProfile, profileFor, type LanguageProfile } from "./lang/index.js";
+import { detectLanguage, DOCUMENT_LANGUAGES, documentProfile, profileFor, type LanguageProfile } from "./lang/index.js";
 import { Store, writeJsonAtomic } from "./store.js";
 import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
 import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewChange, type PreviewEnv, type PreviewRequest, type PreviewResult } from "./preview.js";
@@ -60,12 +60,13 @@ import { mapReviewEdits, reviewDocument, type ReviewChange, type ReviewDocument 
 import { pingInbox } from "./inbox.js";
 import { archivedMessage, STET_MARKER } from "./instructions.js";
 import { installHooks } from "./hooks.js";
-import { isWorkspaceFile, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
+import { itemEffect } from "./effects.js";
+import { changedToolConfigs, isWorkspaceFile, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
 import { isInside, pathExists, samePath } from "./paths.js";
 import { StetError } from "./errors.js";
 import { AgentFiles } from "./agentfiles.js";
 import { verifyAgentWorktree } from "./worktree.js";
-import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normalizeWs, oneLine, sha256, toLf } from "./text.js";
+import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normalizeWs, oneLine, sha256, textWithBadBytes, toLf } from "./text.js";
 
 export { StetError };
 
@@ -187,6 +188,7 @@ interface Candidate extends Edit {
   kind: Item["kind"];
   oldBlob?: string | null;
   newBlob?: string | null;
+  shownText?: Item["shownText"];
 }
 
 /** Submit: an agent's linked group made related, and what stayed linked. */
@@ -224,6 +226,9 @@ function noPreviews(doc: LanguageProfile): string {
     : `Stet has no PDF previews for ${doc.name}.`;
 }
 
+/** Above these, a submit is said to be very large (not refused). */
+export const LARGE_SUBMIT = { items: 1000, files: 200 };
+
 export class Stet {
   private constructor(
     /** Path of the main worktree (the user's working copy). */
@@ -259,7 +264,8 @@ export class Stet {
     return new Stet(mainPath, repo, store);
   }
 
-  static async init(cwd: string, opts: { mainBranch?: string; cli?: CliCommand } = {}): Promise<Stet> {
+  /** `language`: the project's language when it is set up (else detected from its files). */
+  static async init(cwd: string, opts: { mainBranch?: string; cli?: CliCommand; language?: string } = {}): Promise<Stet> {
     const { repo, mainPath, commonDir } = await Stet.locate(cwd);
     const branch = opts.mainBranch ?? (await repo.tryRun(["symbolic-ref", "--short", "HEAD"]));
     if (!branch) throw new StetError("Can't determine the main branch (detached HEAD?). Pass --main <branch>.");
@@ -272,9 +278,11 @@ export class Stet {
     await store.withLock(async () => {
       let cfg = await store.config();
       // The project's language, from its files: once, when Stet is first set up here.
-      if (fresh) {
-        const paths = ((await repo.tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${branch}`])) ?? "").split("\0").filter(Boolean);
-        const language = detectLanguage(paths, cfg.files);
+      if (opts.language !== undefined && !DOCUMENT_LANGUAGES.some((p) => p.id === opts.language))
+        throw new StetError(`Unknown language '${opts.language}' (${DOCUMENT_LANGUAGES.map((p) => p.id).join(" or ")}).`);
+      if (fresh || opts.language) {
+        const paths = fresh && !opts.language ? ((await repo.tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${branch}`])) ?? "").split("\0").filter(Boolean) : [];
+        const language = opts.language ?? detectLanguage(paths, cfg.files);
         if (language !== cfg.language) await store.saveConfig((cfg = { ...cfg, language }));
       }
       if (opts.cli) await store.saveConfig({ ...cfg, cli: opts.cli });
@@ -914,7 +922,24 @@ export class Stet {
     const cfg = await this.config();
     if (!cfg.cli) return null;
     const gitDir = await this.checkWorktree(agent.worktree);
-    return writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, gitDir, cli: cfg.cli, profile: documentProfile(cfg) });
+    const r = await writeWorkspaceFiles({ agent, mainPath: this.mainPath, commonDir: this.commonDir, gitDir, cli: cfg.cli, profile: documentProfile(cfg) });
+    // What was written, kept where the agent can't write: the MCP server checks it at each start.
+    agent.toolConfigs = r.toolConfigs;
+    await this.store.withLock(async () => {
+      const stored = await this.store.getAgent(agent.id);
+      if (stored) await this.store.putAgent({ ...stored, toolConfigs: r.toolConfigs });
+    });
+    return r;
+  }
+
+  /**
+   * Tool settings in the agent's workspace that differ from what Stet last wrote (see
+   * `changedToolConfigs`). Workspaces written before Stet kept a record have nothing to compare.
+   */
+  async changedToolConfigs(agent: Agent): Promise<string[]> {
+    if (!agent.toolConfigs) return [];
+    await this.checkWorktree(agent.worktree);
+    return changedToolConfigs(agent.worktree, agent.toolConfigs);
   }
 
   /**
@@ -1141,10 +1166,14 @@ export class Stet {
         newText: binary ? "" : newText,
       });
       if (binary) {
+        // Text with a byte that isn't UTF-8 is still shown, the byte marked: shown as "(binary
+        // file)", it hid what accepting it writes (security report 5e4c6af, S7).
+        const [os, ns] = [oldBuf && textWithBadBytes(oldBuf), newBuf && textWithBadBytes(newBuf)];
         out.push({
           ...whole("binary"),
           oldBlob: oldBuf ? await this.repo.blobId(base, oldPath) : null,
           newBlob: newBuf ? await this.repo.blobId(tip, ch.path) : null,
+          ...((os ?? null) !== null || (ns ?? null) !== null ? { shownText: { old: os ?? null, new: ns ?? null } } : {}),
         });
       } else if (ch.status === "A") out.push(whole("add-file"));
       else if (ch.status === "D") out.push(whole("delete-file"));
@@ -1181,6 +1210,15 @@ export class Stet {
         await this.itemize(cfg, agent, tip, opts, result);
         agent.lastTip = tip;
         await this.store.putAgent(agent);
+        // A very large round: said to the agent and the reviewer, not refused. 3,000 changes in
+        // one held the store lock for over a minute (security report 5e4c6af, S15).
+        const nFiles = new Set(result.items.map((i) => i.file)).size;
+        if (result.changeset && (result.items.length > LARGE_SUBMIT.items || nFiles > LARGE_SUBMIT.files)) {
+          const what = `${result.items.length} changes in ${nFiles} file${nFiles === 1 ? "" : "s"}`;
+          result.warnings.push(`This round is very large (${what}): it is slow for Stet and hard to review. Submit in smaller rounds, one topic each.`);
+          result.changeset.stetNote = `A very large round: ${what}.`;
+          await this.store.putChangeset(result.changeset);
+        }
       } else result.warnings.push("Nothing new to submit.");
 
       if (agent.baseCommit !== base) result.sync = await this.sync(agentId);
@@ -1388,7 +1426,7 @@ export class Stet {
         range: { start: c.start, end: c.end },
         oldText: c.oldText,
         newText: c.newText,
-        ...(c.kind === "binary" ? { oldBlob: c.oldBlob ?? null, newBlob: c.newBlob ?? null } : {}),
+        ...(c.kind === "binary" ? { oldBlob: c.oldBlob ?? null, newBlob: c.newBlob ?? null, ...(c.shownText ? { shownText: c.shownText } : {}) } : {}),
         context: c.kind === "modify" ? captureContext(bt, c.start, c.end) : { before: "", after: "" },
         fingerprint: this.fingerprint(c),
         note: (c as any).note ?? null,
@@ -2009,7 +2047,7 @@ export class Stet {
   }
 
   /** Accept the pending items of a group (G3) or of one part (G3.2). */
-  async acceptGroup(groupId: string, opts: { commit?: boolean } = {}): Promise<AcceptResult> {
+  async acceptGroup(groupId: string, opts: { commit?: boolean; confirmEffects?: boolean } = {}): Promise<AcceptResult> {
     const { pending } = await this.groupTarget(groupId);
     if (!pending.length) throw new StetError(`${groupId.toUpperCase()} has no pending items.`);
     return this.accept(pending, opts);
@@ -2019,7 +2057,7 @@ export class Stet {
    * The checks of an accept and its edits, in `view`, without writing anything: what `accept`
    * applies, or the error it gives. Call under lock.
    */
-  private async planAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean }, view: FileView) {
+  private async planAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean; confirmEffects?: boolean }, view: FileView) {
     const cfg = await this.config();
     const items = await this.withMovePartners(await this.requireItems(ids));
     for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
@@ -2029,6 +2067,15 @@ export class Stet {
     if (onBranch !== cfg.mainBranch)
       throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before accepting.`);
 
+    // Files that take effect (a latexmkrc, .gitattributes, AGENTS.md…): only when asked for
+    // explicitly (security report 5e4c6af, S12).
+    const effects = items.filter((i) => itemEffect(i));
+    if (effects.length && !opts.confirmEffects) {
+      throw new StetError(
+        `${effects.map((i) => `${i.id} changes ${i.file}: ${itemEffect(i)}`).join("; ")}. ` +
+          `Look at ${effects.length > 1 ? "them" : "it"} first (stet show ${effects[0]!.id}), then accept with --confirm.`,
+      );
+    }
     const warnings: string[] = [];
     const missing = (await this.linkedMembers(items)).filter((m) => !items.some((i) => i.id === m.id));
     if (missing.length) {
@@ -2064,7 +2111,7 @@ export class Stet {
    * those files; writes nothing. An editor saves its buffers only for an accept that will work:
    * a failed accept had already saved them (test report v0.16.0, D7).
    */
-  async checkAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean; unsaved?: Record<string, string> } = {}): Promise<void> {
+  async checkAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean; confirmEffects?: boolean; unsaved?: Record<string, string> } = {}): Promise<void> {
     return this.store.withLock(async () => {
       await this.recoverInterrupted();
       const disk = this.workingView();
@@ -2084,7 +2131,7 @@ export class Stet {
 
   async accept(
     ids: string[],
-    opts: { edited?: Record<string, string>; overrideLinked?: boolean; commit?: boolean } = {},
+    opts: { edited?: Record<string, string>; overrideLinked?: boolean; commit?: boolean; confirmEffects?: boolean } = {},
   ): Promise<AcceptResult> {
     return this.store.withLock(async () => {
       await this.recoverInterrupted();

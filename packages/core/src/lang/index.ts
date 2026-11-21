@@ -42,13 +42,26 @@ export function documentProfile(cfg?: { language?: string }): LanguageProfile {
   return DOCUMENT_LANGUAGES.find((p) => p.id === (cfg?.language ?? LATEX.id)) ?? LATEX;
 }
 
+/** How many files of each document language a project has (relative paths), by language id; languages without files left out. */
+export function languageCounts(paths: string[], files: FilePatterns): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of DOCUMENT_LANGUAGES) {
+    if (!p.files) continue;
+    const n = paths.filter((f) => matchesAny(f, files[p.files!] ?? p.defaultFiles ?? [])).length;
+    if (n) out[p.id] = n;
+  }
+  return out;
+}
+
 /**
- * The language of a project, by its files (relative paths): the one language among them with
- * files of its own, else LaTeX (a project with .tex and .typ files, or neither, is LaTeX).
+ * The language of a project, by its files (relative paths): the one with the most files, LaTeX
+ * on a tie or with none. A Typst thesis with one old .tex file was set up as LaTeX (test report
+ * 5e4c6af); a front end asks when there are both (`languageCounts`).
  */
 export function detectLanguage(paths: string[], files: FilePatterns): string {
-  const found = DOCUMENT_LANGUAGES.filter((p) => p.files && paths.some((f) => matchesAny(f, files[p.files!] ?? p.defaultFiles ?? [])));
-  return found.length === 1 ? found[0]!.id : LATEX.id;
+  const counts = Object.entries(languageCounts(paths, files)).sort((a, b) => b[1] - a[1]);
+  if (!counts.length || (counts.length > 1 && counts[0]![1] === counts[1]![1] && counts.some(([id]) => id === LATEX.id))) return LATEX.id;
+  return counts[0]![0];
 }
 
 /** Does a change to this file have a PDF preview (by its name alone, for front ends)? */

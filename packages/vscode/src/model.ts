@@ -14,6 +14,9 @@ import {
   numberInRound,
   oneLine,
   printable,
+  lineDiff,
+  spokenChange,
+  summaryTexts,
   changeSummary,
   paragraphChange,
   profileByName,
@@ -373,7 +376,7 @@ export function itemLabel(it: Item, get?: (id: string) => Item | undefined): str
         return `${n}  ⇡ moved in: “${oneLine(it.newText, 40)}”${k ? ` · ${k} word${k > 1 ? "s" : ""} changed` : ""}`;
       }
       {
-        const [o, nw] = changeSummary(it.oldText, it.newText, it.oldText && it.newText ? 28 : 50);
+        const [o, nw] = changeSummary(...summaryTexts(it), it.oldText && it.newText ? 28 : 50);
         const breaks = paragraphChange(it.oldText, it.newText);
         const revises = (breaks ? `  · ${breaks}` : "") + (it.supersedes ? `  · revises ${it.supersedes}` : "");
         if (!it.oldText) return `${n}  + “${nw}”${revises}`;
@@ -591,7 +594,7 @@ export function manyQuestion(
   if (rest.length) choices.push({ label: `${verb} the ${count} selected and the ${rest.length} linked with them`, detail: "Linked changes belong together.", withRest: true });
   if (otherParts.length)
     choices.push({ label: `${verb} the ${count} selected and all ${otherParts.length + rest.length} other changes of their linked groups`, detail: "Every part at once.", withRest: true, withGroups: true });
-  if (rest.length) choices.push({ label: `${verb} only the ${count} selected`, detail: "Breaks their linked groups; the agent is asked to repair the document.", withRest: false });
+  if (rest.length) choices.push({ label: `${verb} only the ${count} selected (breaks their linked groups)`, detail: "The agent is asked to repair the document.", withRest: false });
   else choices.push({ label: `${verb} only the ${count} selected`, detail: `The other parts of their linked groups (${otherParts.join(", ")}) stay pending: the document is inconsistent until they are accepted too.`, withRest: true });
   return { title: `The ${count} selected changes are linked with ${[...rest, ...otherParts].join(", ")}`, choices };
 }
@@ -621,6 +624,9 @@ export function fence(text: string, lang = ""): string {
 
 /** A unified-style diff for hovers. */
 export function diffBlock(oldText: string, newText: string): string {
+  // Several lines on both sides (a .bib entry whose key alone changed): the changed lines with one
+  // line around them, not the whole entry twice (test report 5e4c6af, UX).
+  if (oldText.split("\n").length >= 3 && newText.split("\n").length >= 3) return fence(lineDiff(printable(oldText), printable(newText), 1).join("\n"), "diff");
   const lines = [
     ...(oldText ? printable(oldText).split("\n").map((l) => "- " + l) : []),
     ...(newText ? printable(newText).split("\n").map((l) => "+ " + l) : []),
@@ -747,7 +753,7 @@ export function itemSpoken(it: Item, line?: number, unread = 0): string {
   const breaks = paragraphChange(it.oldText, text);
   const what = breaks
     ? `${breaks}, “${o}” to “${n}”`
-    : !it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`;
+    : (spokenChange(it.oldText, text) ?? (!it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`));
   return `Change ${it.id}, ${what}, ${where}, ${state}${it.supersedes ? `, revises ${it.supersedes}` : ""}`;
 }
 

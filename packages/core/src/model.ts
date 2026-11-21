@@ -22,6 +22,8 @@ export interface Agent {
   notify?: NotifyMode;
   /** Which kinds of news wake it. Absent: all of them. */
   notifyOn?: NotifyTrigger[];
+  /** The tool settings Stet last wrote into its workspace (file → SHA-256): checked at each MCP server start. */
+  toolConfigs?: Record<string, string>;
 }
 
 /**
@@ -128,6 +130,8 @@ export interface Changeset {
   submittedAt: string;
   items: string[];
   groups: string[];
+  /** Stet's own remark on the round, for the reviewer (a very large submit). */
+  stetNote?: string;
 }
 
 export type ItemKind = "modify" | "add-file" | "delete-file" | "rename-file" | "binary";
@@ -165,6 +169,11 @@ export interface Item {
   /** For binary items: blob ids (null = file absent). */
   oldBlob?: string | null;
   newBlob?: string | null;
+  /**
+   * For binary items that are text with bytes that aren't UTF-8: the text, those bytes shown as
+   * ⟨0xFF⟩, for review only (accepting writes the blob byte for byte). Security report 5e4c6af, S7.
+   */
+  shownText?: { old: string | null; new: string | null };
   context: { before: string; after: string };
   fingerprint: string;
   note: string | null;

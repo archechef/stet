@@ -104,7 +104,30 @@ export async function replaceFile(path: string, data: string | Buffer): Promise<
 export async function writeInside(root: string, rel: string, data: string | Buffer): Promise<void> {
   const t = await inspect(root, rel, { replaceLinks: true });
   await prepare(root, t);
-  await replaceFile(t.path, data);
+  // The folder is checked again after the file is created and after it is moved into place: a
+  // folder swapped for a link between the check and the write would have taken it elsewhere
+  // (security report 5e4c6af, S14). A file that landed elsewhere is removed.
+  const dir = dirname(t.path);
+  const want = join(await realpath(root), relative(root, dir));
+  const where = async () => samePath(await realpath(dir).catch(() => ""), want);
+  const st = await lstatOrNull(t.path);
+  if (st?.isSymbolicLink()) await removeLink(t.path);
+  const tmp = `${t.path}.stet-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
+  await writeFile(tmp, data, { flag: "wx" });
+  if (!(await where())) {
+    await rm(tmp, { force: true });
+    throw new UnsafePathError(`${rel}: its folder was replaced by a link while Stet wrote it`);
+  }
+  try {
+    await rename(tmp, t.path);
+  } catch (e) {
+    await rm(tmp, { force: true });
+    throw e;
+  }
+  if (!(await where())) {
+    await rm(t.path, { force: true }).catch(() => undefined);
+    throw new UnsafePathError(`${rel}: its folder was replaced by a link while Stet wrote it`);
+  }
 }
 
 /**

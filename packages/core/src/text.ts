@@ -294,6 +294,10 @@ export function changeSummary(oldText: string, newText: string, max = 30): [stri
     const sp = a.lastIndexOf(" ", pre - 1);
     from = sp >= from - ctx && sp >= 0 && sp < pre ? sp + 1 : from;
   }
+  // A change inside a function call starts at the call's name: "#cite(<a>) → #cite(<a>, form: …"
+  // read as "…a>) → …a>, form: …" (test report 5e4c6af, UX).
+  const call = callStart(a.slice(0, pre));
+  if (call >= 0 && call < from && pre - call <= 30) from = call;
   const cut = (s: string) => {
     const end = Math.min(s.length, s.length - suf + ctx);
     let t = s.slice(from, end);
@@ -303,6 +307,64 @@ export function changeSummary(oldText: string, newText: string, max = 30): [stri
     return lead + t + tail;
   };
   return [cut(a), cut(b)];
+}
+
+/** Where the innermost call still open at the end of `s` starts (`#name(`, `name(`), or -1. */
+function callStart(s: string): number {
+  let depth = 0;
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (s[i] === ")") depth++;
+    else if (s[i] === "(") {
+      if (depth > 0) depth--;
+      else {
+        const m = /#?[\p{L}_][\p{L}\p{N}_.-]*$/u.exec(s.slice(0, i));
+        return m ? m.index : -1;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * A change's old and new text for a summary, with the words around a short change (a number, a
+ * symbol): "width: 80%" → "width: 90%" said more than "80" → "90" (test report 5e4c6af, UX).
+ */
+export function summaryTexts(it: { oldText: string; newText: string; context: { before: string; after: string } }): [string, string] {
+  const short = (t: string) => !t.includes("\n") && (t.trim().length <= 4 || !/\p{L}{2}/u.test(t));
+  if (!short(it.oldText) || !short(it.newText) || !it.oldText.trim() || !it.newText.trim()) return [it.oldText, it.newText];
+  const lineBefore = it.context.before.split("\n").pop() ?? "";
+  const lineAfter = it.context.after.split("\n")[0] ?? "";
+  const before = /(?:[\p{L}\p{N}_.#-]+\s*[:=]\s*|[\p{L}\p{N}_.#\\-]+\s)?\S*$/u.exec(lineBefore)?.[0] ?? "";
+  const after = /^[^\s,;)\]}]*/.exec(lineAfter)?.[0] ?? "";
+  return [before + it.oldText + after, before + it.newText + after];
+}
+
+/**
+ * A change as words, for screen readers: in a formula only what differs ("in the formula … : 2
+ * becomes 3"), labels and references spelled out. Raw source buried a one-character change in
+ * symbols (test report 5e4c6af, accessibility). Null when the summary says it well enough.
+ */
+export function spokenChange(oldText: string, newText: string): string | null {
+  const said = (t: string) =>
+    printable(t)
+      .replace(/<([\p{L}\p{N}_:.-]+)>/gu, " label $1 ")
+      .replace(/(?<![\p{L}\p{N}_])@([\p{L}\p{N}_:.-]*[\p{L}\p{N}_])/gu, " reference to $1 ")
+      .replace(/\\(?:ref|eqref|cref|autoref)\{([^}]*)\}/g, " reference to $1 ")
+      .replace(/\\label\{([^}]*)\}/g, " label $1 ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const maths = /\$/.test(oldText) || /\$/.test(newText);
+  const keys = /<[^>\s]+>|@\w|\\(?:ref|label|eqref|cref|autoref)\{/.test(oldText + newText);
+  if (!maths && !keys) return null;
+  let pre = 0;
+  while (pre < oldText.length && pre < newText.length && oldText[pre] === newText[pre]) pre++;
+  let suf = 0;
+  while (suf < oldText.length - pre && suf < newText.length - pre && oldText[oldText.length - 1 - suf] === newText[newText.length - 1 - suf]) suf++;
+  const [was, now] = [said(oldText.slice(pre, oldText.length - suf)), said(newText.slice(pre, newText.length - suf))];
+  if (!maths) return !was ? `insert ${now}` : !now ? `delete ${was}` : `replace ${said(oldText)} with ${said(newText)}`;
+  const formula = said(oldText.replace(/\$/g, " ")) || said(newText.replace(/\$/g, " "));
+  const change = !was ? `${now} is inserted` : !now ? `${was} is deleted` : `${was} becomes ${now}`;
+  return `in the formula ${formula.length > 80 ? formula.slice(0, 79) + "…" : formula}: ${change.replace(/\$/g, "")}`;
 }
 
 /** Quote for a POSIX shell: nothing inside is expanded (no `$`, backticks or globs). */
@@ -317,6 +379,45 @@ export function isBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8000);
   for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
   return !isUtf8(buf);
+}
+
+/**
+ * A file that isn't UTF-8 text, as text to review: bytes that aren't UTF-8 shown as ⟨0xFF⟩.
+ * Null for a real binary file (a zero byte near the start).
+ */
+export function textWithBadBytes(buf: Buffer): string | null {
+  const n = Math.min(buf.length, 8000);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return null;
+  let out = "";
+  let start = 0;
+  for (let i = 0; i < buf.length; ) {
+    const b = buf[i]!;
+    const len = b < 0x80 ? 1 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+    if (len && i + len <= buf.length && isUtf8(buf.subarray(i, i + len))) {
+      i += len;
+      continue;
+    }
+    out += buf.subarray(start, i).toString("utf8") + `⟨0x${b.toString(16).toUpperCase().padStart(2, "0")}⟩`;
+    start = ++i;
+  }
+  return toLf(out + buf.subarray(start).toString("utf8"));
+}
+
+/**
+ * The changed lines of two texts with `context` lines around them, as "- ", "+ " and "  " lines
+ * ("…" where lines are left out). For reviewing whole files that aren't split into changes.
+ */
+export function lineDiff(oldText: string, newText: string, context = 2): string[] {
+  const parts = diffArrays(oldText ? oldText.split("\n") : [], newText ? newText.split("\n") : []);
+  const rows: { sign: string; line: string }[] = [];
+  for (const p of parts) for (const line of p.value) rows.push({ sign: p.added ? "+ " : p.removed ? "- " : "  ", line });
+  const near = rows.map((r, i) => r.sign !== "  " || rows.slice(Math.max(0, i - context), i + context + 1).some((x) => x.sign !== "  "));
+  const out: string[] = [];
+  rows.forEach((r, i) => {
+    if (near[i]) out.push(r.sign + r.line);
+    else if (i === 0 || near[i - 1]) out.push("…");
+  });
+  return out;
 }
 
 export function allIndexesOf(haystack: string, needle: string): number[] {

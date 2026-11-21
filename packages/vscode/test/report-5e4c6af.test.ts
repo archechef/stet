@@ -89,6 +89,26 @@ describe("test report 5e4c6af", () => {
     expect(finishQuestion(1, ["main.typ"], [], []).message).toBe("Commit 1 accepted change?");
   });
 
+  it("Accept wording is one set of phrases; accepting a Typst change alone says it may not compile", () => {
+    const g: Group = { id: "G1", kind: "linked", title: "Rename", rationale: null, source: "auto", items: ["1.1", "1.2"], state: "open" } as unknown as Group;
+    const m = new TreeModel(snap([item("1.1", { groups: ["G1"] }), item("1.2", { groups: ["G1"] })], [g]));
+    const q = acceptQuestion(m, m.item("1.1")!)!;
+    expect(q.choices.map((c) => c.label)).toEqual(["Accept all of G1 (2 changes)", "Accept only 1.1 (breaks G1)"]);
+    expect(q.choices[1]!.detail).toMatch(/may not compile/);
+  });
+
+  it("a failed accept of a change that can't be found offers Reject and Revise", () => {
+    expect(src("extension.ts")).toContain('showErrorMessage(noLinks(msg), "Reject…", "Revise…")');
+  });
+
+  it("a key-only change of a .bib entry shows the changed line, not the entry twice", () => {
+    const entry = (k: string) => `@book{${k},\n  title = {The TeXbook},\n  author = {Knuth},\n  year = {1984}\n}`;
+    const d = diffBlock(entry("knuth84"), entry("knuth1984"));
+    expect(d).toContain("- @book{knuth84,");
+    expect(d).toContain("+ @book{knuth1984,");
+    expect(d).not.toContain("year");
+  });
+
   it("accessibility: rows are read out in words", () => {
     expect(spokenRow("G1 linked · 💬 3 (1 new) · ⚠ broken")).toBe("G1 linked, 3 messages (1 new), warning: broken");
   });

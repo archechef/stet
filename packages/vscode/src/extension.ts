@@ -7,7 +7,7 @@ import { closeSync, openSync, readSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { buildIgnores, doctor, DOCUMENT_LANGUAGES, documentProfile, foldPath, gitIdentity, matchesAny, profileByName, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
+import { buildIgnores, defaultConfig, doctor, DOCUMENT_LANGUAGES, documentProfile, itemEffect, languageCounts, foldPath, gitIdentity, matchesAny, profileByName, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
 import { acceptAction, acceptQuestion, changeActions, withIcon, type ChangeAction } from "./actions.js";
 import { esc, inlineProblems, itemMarkdown, usesHints, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
 import { inProject, Threads } from "./comments.js";
@@ -51,6 +51,7 @@ import {
   toLf,
   TreeModel,
   type PanelFilter,
+  type Ref,
   type TreeMode,
   type Node,
 } from "./model.js";
@@ -852,7 +853,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const live = model.liveCount((i) => i.changeset === cs.id);
         t.description = history ? model.outcome((i) => i.changeset === cs.id) : model.openText((i) => i.changeset === cs.id);
         t.iconPath = new vscode.ThemeIcon("layers");
-        t.tooltip = new vscode.MarkdownString(`**Round ${roundOf(cs.id)}** (${cs.id}) ${esc(cs.title)}\n\n${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`);
+        t.tooltip = new vscode.MarkdownString(`**Round ${roundOf(cs.id)}** (${cs.id}) ${esc(cs.title)}\n\n${cs.stetNote ? `⚠ ${esc(cs.stetNote)}\n\n` : ""}${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`);
         t.contextValue = live ? "changeset.live" : "changeset.done";
         return t;
       }
@@ -899,7 +900,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const { line, found } = await this.placeOf(el.project, it);
         // Can't be found in your file any more: said on the row, with what to do (test report v0.16.0).
         const lost = !found && !history;
-        t.description = `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, this.unread(el.project, it))}` : ""}`;
+        t.description = `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}${itemEffect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, this.unread(el.project, it))}` : ""}`;
         t.iconPath = lost
           ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
           : this.unread(el.project, it)
@@ -1382,7 +1383,20 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return part ? `part ${part.index + 1} “${part.group.parts![part.index]!.title}”` : "the linked group";
   }
 
-  private async doAccept(p: Project, ids: string[], opts: { overrideLinked?: boolean; edited?: Record<string, string> } = {}): Promise<void> {
+  private async doAccept(p: Project, ids: string[], opts: { overrideLinked?: boolean; edited?: Record<string, string>; confirmEffects?: boolean } = {}): Promise<void> {
+    // Files that take effect once accepted (a latexmkrc, .gitattributes, AGENTS.md…): asked
+    // explicitly, with what they set off (security report 5e4c6af, S12).
+    const effects = ids.map((id) => this.model(p).item(id)).filter((it): it is Item => !!it && !!itemEffect(it));
+    if (effects.length) {
+      const ok = `Accept ${effects.length > 1 ? "them" : "it"}`;
+      const pick = await vscode.window.showWarningMessage(
+        `${effects.map((i) => i.id).join(", ")} ${effects.length > 1 ? "change files that take" : "changes a file that takes"} effect once accepted.`,
+        { modal: true, detail: effects.map((i) => `${i.id} ${i.file}: ${itemEffect(i)}.`).join("\n") + "\n\nLook at the content first (Diff, or the hover)." },
+        ok,
+      );
+      if (pick !== ok) return;
+      opts = { ...opts, confirmEffects: true };
+    }
     const files = ids.flatMap((id) => {
       const it = this.model(p).item(id);
       return it ? [it.file, ...(it.oldFile ? [it.oldFile] : [])] : [];
@@ -1392,7 +1406,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (!(await this.saveWording(p, ids, files))) return;
     await this.run(p, async () => {
       // Your unsaved edits of these files are saved only for an accept that will work (D7).
-      await p.stet.checkAccept(ids, { ...opts, unsaved: this.unsavedTexts(p, files) });
+      try {
+        await p.stet.checkAccept(ids, { ...opts, unsaved: this.unsavedTexts(p, files) });
+      } catch (e) {
+        if (this.offerInstead(p, ids, e)) return;
+        throw e;
+      }
       await this.saveFiles(p, files);
       const r = await p.stet.accept(ids, opts);
       this.noteDecision(p, r.accepted.map((i) => i.id), "accept");
@@ -1402,6 +1421,20 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       if (r.warnings.length) void vscode.window.showWarningMessage(noLinks(msg.join(" ")));
       else announce(`$(check) ${msg.join(" ")}`, 4000);
     });
+  }
+
+  /**
+   * A change that can't be found in your file any more: the failed accept offers Reject… and
+   * Revise…, as its More… list does (test report 5e4c6af). False for other failures.
+   */
+  private offerInstead(p: Project, ids: string[], e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (ids.length !== 1 || !/can't be located/.test(msg)) return false;
+    const ref: Ref = { path: p.mainPath, id: ids[0]! };
+    void vscode.window.showErrorMessage(noLinks(msg), "Reject…", "Revise…").then((pick) => {
+      if (pick) void vscode.commands.executeCommand(pick === "Reject…" ? "stet.reject" : "stet.revise", ref);
+    });
+    return true;
   }
 
   /**
@@ -1984,6 +2017,21 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         opts.cli = await cliCommand(vscode.workspace.getConfiguration("stet").get<RuntimeMode>("runtime", "auto"), script);
       }
       const already = await Stet.open(dir, loc).then(() => true, () => false);
+      // Files of both languages: asked, not guessed (a Typst thesis with one old .tex file was
+      // set up as LaTeX without a word: test report 5e4c6af).
+      if (!already) {
+        const tracked = ((await new Repo(loc.mainPath).tryRun(["ls-files", "-z"])) ?? "").split("\0").filter(Boolean);
+        const counts = Object.entries(languageCounts(tracked, defaultConfig("main").files)).sort((a, b) => b[1] - a[1]);
+        if (counts.length > 1) {
+          const name = (id: string) => DOCUMENT_LANGUAGES.find((l) => l.id === id)?.name ?? id;
+          const pick = await vscode.window.showQuickPick(
+            counts.map(([id, n], k) => ({ label: name(id), description: `${n} file${n === 1 ? "" : "s"}${k === 0 ? " (most)" : ""}`, id })),
+            { title: `${folder.name} has ${counts.map(([id, n]) => `${n} ${name(id)}`).join(" and ")} files: which language is the project written in?`, placeHolder: "Agents' instructions and examples follow it" },
+          );
+          if (!pick) return;
+          opts.language = pick.id;
+        }
+      }
       const stet = await Stet.init(dir, opts);
       await this.discover();
       // Agents start from the last commit: edits not committed yet are not theirs to see (as `stet init` says).

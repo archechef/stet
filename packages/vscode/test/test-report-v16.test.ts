@@ -24,7 +24,7 @@ describe("D3/D5: every Accept of a linked change asks what to take along", () =>
     const q = acceptQuestion(m, m.item("1.1")!)!;
     expect(q.title).toMatch(/^1\.1 is linked with 1\.2, 1\.3 \(G1 “Rename label/);
     expect(q.choices.map((c) => [c.ids, c.overrideLinked])).toEqual([[["1.1", "1.2", "1.3"], false], [["1.1"], false]]);
-    expect(q.choices[1]!.detail).toMatch(/rest of G1 stays pending/);
+    expect(q.choices[1]!.detail).toMatch(/other parts of G1 stay pending/);
     // The CodeLens, hover and title bar no longer accept it in one click.
     const a = acceptAction(m, "/p", m.item("1.1")!);
     expect(a.command).toBe("stet.accept");
@@ -34,18 +34,18 @@ describe("D3/D5: every Accept of a linked change asks what to take along", () =>
   it("a member of a part with others: its part, the whole group, or only it (breaking the part)", () => {
     const m = model(parts);
     const q = acceptQuestion(m, m.item("1.2")!)!;
-    expect(q.choices.map((c) => c.label)).toEqual(["Accept part 2 “References” (2 changes)", "Accept all 3 changes of G1", "Accept only 1.2"]);
+    expect(q.choices.map((c) => c.label)).toEqual(["Accept part 2 of 2 “References” (2 changes)", "Accept all of G1 (3 changes)", "Accept only 1.2 (breaks G1)"]);
     expect(q.choices.map((c) => c.overrideLinked)).toEqual([false, false, true]);
     expect(q.choices[0]!.detail).toMatch(/other parts of G1 stay pending/);
-    expect(changeActions(m, "/p", m.item("1.2")!).map((x) => x.label)).toContain("Accept only 1.2");
-    expect(changeActions(m, "/p", m.item("1.1")!).map((x) => x.label)).not.toContain("Accept only 1.1");
+    expect(changeActions(m, "/p", m.item("1.2")!).map((x) => x.label)).toContain("Accept only 1.2 (breaks G1)");
+    expect(changeActions(m, "/p", m.item("1.1")!).map((x) => x.label)).not.toContain("Accept only 1.1 (breaks G1)");
   });
 
   it("a group without parts: all its linked changes, or only this one", () => {
     const m = model({});
     const q = acceptQuestion(m, m.item("1.3")!)!;
-    expect(q.choices.map((c) => [c.label, c.ids])).toEqual([["Accept all 3 linked changes", ["1.3", "1.1", "1.2"]], ["Accept only 1.3", ["1.3"]]]);
-    expect(acceptAction(m, "/p", m.item("1.3")!).label).toBe("Accept all 3 linked…");
+    expect(q.choices.map((c) => [c.label, c.ids])).toEqual([["Accept all of G1 (3 changes)", ["1.3", "1.1", "1.2"]], ["Accept only 1.3 (breaks G1)", ["1.3"]]]);
+    expect(acceptAction(m, "/p", m.item("1.3")!).label).toBe("Accept all of G1…");
   });
 
   it("nothing to ask once the rest is decided, nor for a change alone", () => {
@@ -243,7 +243,7 @@ describe("Several changes selected", () => {
   it("asks whether to take along what they are linked with, that first", () => {
     const q = manyQuestion("Accept", 3, ["1.4", "1.5"]);
     expect(q.title).toBe("The 3 selected changes are linked with 1.4, 1.5");
-    expect(q.choices.map((c) => [c.label, c.withRest])).toEqual([["Accept the 3 selected and the 2 linked with them", true], ["Accept only the 3 selected", false]]);
-    expect(manyQuestion("Reject", 2, ["1.1"]).choices[1]!.label).toBe("Reject only the 2 selected");
+    expect(q.choices.map((c) => [c.label, c.withRest])).toEqual([["Accept the 3 selected and the 2 linked with them", true], ["Accept only the 3 selected (breaks their linked groups)", false]]);
+    expect(manyQuestion("Reject", 2, ["1.1"]).choices[1]!.label).toBe("Reject only the 2 selected (breaks their linked groups)");
   });
 });

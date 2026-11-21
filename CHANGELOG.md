@@ -41,6 +41,22 @@ Fixes from the security review and the test report of commit 5e4c6af (2026-11-21
 - A failed accept says "change", not "item", and that you edited its text or the text around it.
 - Every panel row is read out in words by screen readers (messages, warnings), not only change rows; the High Contrast offer no longer implies that either style is read out.
 
+Decisions on the open points of the 5e4c6af reports.
+
+**Security**
+- **Stet's MCP server refuses to work in a workspace whose tool settings were changed** (`.mcp.json`, `.codex/config.toml`, the Claude settings): they start programs outside the sandbox. Stet keeps a hash of what it wrote and checks it at every start; `stet agent refresh` writes them again.
+- **Files that take effect are flagged** (`.latexmkrc`, `.gitattributes`, `.vscode/`, agent settings, `CLAUDE.md`, `AGENTS.md`, workflows, Makefiles, …): the review says what they set off and shows their content, and accepting one needs `stet accept --confirm` or a confirmation in VS Code.
+- **A text file with bytes that aren't UTF-8 is shown as text**, each such byte as `⟨0xFF⟩`, instead of as a binary file without content; accepting it still writes it byte for byte.
+- Files are written through a newly created temporary file, and Stet checks that they landed where it meant; automatic detection of the main LaTeX file skips names starting with `-`.
+- A very large round (1000 changes or 200 files) gets a warning, for the agent and in `stet review` and the panel.
+
+**Reviewing**
+- **A folder with both LaTeX and Typst files:** *Set up project* asks which language; `stet init` takes the one with more files, says so, and takes `--language latex|typst`.
+- **Accept says the same thing everywhere:** *Accept part 1 of 2*, *Accept all of G1*, *Accept only 1.10 (breaks G1)*, in the CodeLens, the hover, the panel and the questions.
+- **Shorter summaries:** a change's row starts at the argument or field that changed, a key-only change of a `.bib` entry shows only its key line, and a changed call names the call. Diffs of long changes show the changed lines with a little context.
+- **Spoken maths says only what differs**, with labels and references read out in words.
+- **A failed accept of a change that can't be found** offers *Reject…* and *Revise…* in its message.
+
 Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code focus).
 
 **Your files and decisions**

@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { hasPreview, moveOthers, movesOut, oneLine, partId, type Item } from "@stet/core";
+import { hasPreview, moveOthers, movesOut, oneLine, partId, profileByName, type Item } from "@stet/core";
 import { isLive, type Ref, type TreeModel } from "./model.js";
 
 export interface ChangeAction {
@@ -46,29 +46,41 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
   const others = g ? model.members(g).filter((m) => isLive(m) && !unit.includes(m.id)).map((m) => m.id) : [];
   if (unit.length === own.length && !others.length) return null;
   const part = model.partOf(item);
+  const n = (k: number) => `${k} change${k === 1 ? "" : "s"}`;
   const choices: AcceptChoice[] = [];
+  // One set of phrases wherever Accept is offered (test report 5e4c6af): "Accept part 1 of 2",
+  // "Accept all of G1", "Accept only 1.10 (breaks G1)".
   if (unit.length > own.length) {
     choices.push({
-      label: part ? `Accept part ${part.index + 1} “${oneLine(part.group.parts![part.index]!.title, 80)}” (${unit.length} changes)` : `Accept all ${unit.length} linked changes`,
-      detail: `${unit.join(", ")} belong together.${others.length ? ` The other parts of ${g!.id} stay pending.` : ""}`,
+      label: part ? `${partPhrase(part)} (${n(unit.length)})` : g && !others.length ? `Accept all of ${g.id} (${n(unit.length)})` : `Accept the whole move (${n(unit.length)})`,
+      detail: `${unit.join(", ")} go together.${others.length ? ` The other parts of ${g!.id} stay pending.` : ""}`,
       ids: unit,
       overrideLinked: false,
     });
   }
   if (g && others.length) {
-    choices.push({ label: `Accept all ${unit.length + others.length} changes of ${g.id}`, detail: `“${oneLine(g.title, 80)}”, every part at once.`, ids: [...unit, ...others], overrideLinked: false });
+    choices.push({ label: `Accept all of ${g.id} (${n(unit.length + others.length)})`, detail: `“${oneLine(g.title, 80)}”, every part at once.`, ids: [...unit, ...others], overrideLinked: false });
   }
+  const breaks = unit.length > own.length;
   choices.push({
-    label: `Accept only ${own.join(" + ")}`,
-    detail:
-      unit.length > own.length
-        ? "Breaks the linked group; the agent is asked to repair the document."
-        : `The rest of ${g!.id} stays pending: the document is inconsistent until it is accepted too.`,
+    label: breaks ? `Accept only ${own.join(" + ")} (breaks ${g?.id ?? "the move"})` : `Accept only ${own.join(" + ")}${part ? ` (${partPhrase(part).replace(/^Accept /, "")})` : ""}`,
+    detail: breaks ? onlyDetail(item) : `The other parts of ${g!.id} stay pending: the document is inconsistent until they are accepted too.`,
     ids: own,
-    overrideLinked: unit.length > own.length,
+    overrideLinked: breaks,
   });
   const linked = [...unit, ...others].filter((id) => !own.includes(id));
   return { title: `${own.join(" + ")} ${own.length > 1 ? "are" : "is"} linked with ${linked.join(", ")} (${g?.id ?? "a move"} “${oneLine(g?.title ?? "", 80)}”)`, choices };
+}
+
+/** "Accept part 1 of 2 “title”". */
+function partPhrase(part: { group: { parts?: { title: string }[] | undefined }; index: number }): string {
+  return `Accept part ${part.index + 1} of ${part.group.parts!.length} “${oneLine(part.group.parts![part.index]!.title, 80)}”`;
+}
+
+/** What accepting only a linked change does: breaks its group, and in Typst the build. */
+function onlyDetail(item: Item): string {
+  const strict = !!profileByName(item.file).references?.strict;
+  return `Breaks the linked group; the agent is asked to repair the document${strict ? ". Until then it may not compile" : ""}.`;
 }
 
 /**
@@ -85,8 +97,9 @@ export function acceptAction(model: TreeModel, mainPath: string, item: Item): Ch
       : { ...base, label: "Accept", detail: "Applies the change to your file." };
   }
   const part = model.partOf(item);
+  const g = model.linkedGroup(item);
   const first = q.choices[0]!;
-  const label = part ? `Accept part ${part.index + 1} of ${part.group.parts!.length}…` : first.ids.length > 1 && !first.overrideLinked ? `Accept all ${first.ids.length} linked…` : "Accept…";
+  const label = part ? `${partPhrase(part).replace(/ “.*”$/, "")}…` : first.ids.length > 1 && !first.overrideLinked ? (g ? `Accept all of ${g.id}…` : "Accept move…") : "Accept…";
   return { ...base, label, detail: `${q.title}: asks which to accept.` };
 }
 
@@ -101,7 +114,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
     const accept = acceptAction(model, mainPath, item);
     out.push(accept);
     if (acceptQuestion(model, item)?.choices.some((c) => c.overrideLinked)) {
-      out.push({ label: `Accept only ${item.id}`, icon: "check", command: "stet.acceptOnly", args: r, tier: "decide", detail: "Breaks the linked group; the agent is asked to repair the document." });
+      out.push({ label: `Accept only ${item.id} (breaks ${model.linkedGroup(item)?.id ?? "the move"})`, icon: "check", command: "stet.acceptOnly", args: r, tier: "decide", detail: onlyDetail(item) });
     }
     out.push({ label: item.move ? "Reject move…" : "Reject…", icon: "close", key: "r", command: "stet.reject", args: r, tier: "decide", detail: "With an optional reason, which the agent gets." });
     if (modify && !item.move) out.push({ label: "Edit & accept…", icon: "edit", key: "e", command: "stet.edit", args: r, tier: "decide", detail: "Change the wording, then accept it. The agent sees your version." });

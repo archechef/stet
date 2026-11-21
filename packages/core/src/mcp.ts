@@ -323,6 +323,7 @@ export class StetMcpServer {
   private inbox: InboxWriter | null = null;
   private inboxStarting: Promise<void> | null = null;
   private inboxStopped = false;
+  private configsChecked = false;
 
   constructor(private readonly opts: McpOptions) {}
 
@@ -339,8 +340,21 @@ export class StetMcpServer {
       throw new StetError(`Stet: this workspace folder (${where}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
     }
     // Always identify the agent from its folder (this also verifies the folder's git link).
-    const agent = (await this.stet.agentForCwd(where)).id;
+    const found = await this.stet.agentForCwd(where);
+    const agent = found.id;
     if (this.opts.agentId && this.opts.agentId !== agent) throw new StetError(`This workspace belongs to agent '${agent}', not '${this.opts.agentId}'.`);
+    // Once per start: the workspace's tool settings are as Stet wrote them. They start programs
+    // outside the agent's sandbox, and the agent can edit them (security report 5e4c6af, S5).
+    if (!this.configsChecked) {
+      const changed = await this.stet.changedToolConfigs(found);
+      if (changed.length) {
+        throw new StetError(
+          `Stet refuses to work in this workspace: ${changed.join(", ")} ${changed.length > 1 ? "were" : "was"} changed since Stet wrote ${changed.length > 1 ? "them" : "it"}. ` +
+            `These settings start programs outside your sandbox, so only Stet writes them. Tell the user; they can check the files, and \`stet agent refresh ${agent}\` in the project writes them again.`,
+        );
+      }
+      this.configsChecked = true;
+    }
     return { stet: this.stet, agent };
   }
 

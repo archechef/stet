@@ -1,6 +1,6 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
-import { moveChanges, movesOut, moveTexts, partIndexOf, profileByName, type Item } from "@stet/core";
+import { itemEffect, lineDiff, moveChanges, movesOut, moveTexts, partIndexOf, profileByName, type Item } from "@stet/core";
 import { diffBlock, draftMarkdown, esc, fence, ghostText, linkTitle, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
 
@@ -383,6 +383,9 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
 export function itemMarkdown(item: Item, model: TreeModel): string {
   const cs = model.snap.changesets.find((c) => c.id === item.changeset);
   const lines = [`**${item.id}** · ${esc(item.agent)} · ${STATUS_TEXT[item.status]}`];
+  // A file that takes effect once accepted: said first (security report 5e4c6af, S12).
+  const effect = itemEffect(item);
+  if (effect) lines.push(`⚠ **Takes effect:** ${esc(effect)}. Accepting asks to confirm.`);
   if (cs) lines.push(`*${esc(cs.title)}*${cs.rationale ? ` — ${esc(cs.rationale)}` : ""}`);
   if (item.note) lines.push(esc(item.note));
   // A revision: what it revises, and what you asked for there (test report 2026-11-20, B4).
@@ -413,7 +416,20 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     } else lines.push("Word for word: the text arrives unchanged (spacing and line breaks aside).");
     lines.push(fence(out ? item.oldText : item.newText, profileByName(item.file).fence));
   } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
-  else lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);
+  else {
+    lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);
+    // A whole file's content (its first lines): new files showed only their name.
+    const whole = item.kind === "add-file" || item.kind === "rename-file" ? item.newText : item.kind === "delete-file" ? item.oldText : "";
+    if (whole) {
+      const ls = whole.split("\n");
+      lines.push(fence(ls.slice(0, 60).join("\n") + (ls.length > 60 ? `\n… ${ls.length - 60} more lines` : ""), profileByName(item.file).fence));
+    }
+    // Text with bytes that aren't UTF-8: its changed lines, the bytes marked (security report 5e4c6af, S7).
+    if (item.kind === "binary" && item.shownText) {
+      const diff = lineDiff(item.shownText.old ?? "", item.shownText.new ?? "");
+      lines.push("Not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte.", fence(diff.slice(0, 60).join("\n") + (diff.length > 60 ? `\n… ${diff.length - 60} more lines` : ""), "diff"));
+    }
+  }
   // A decided change shows its whole conversation (History's tooltip showed only three messages,
   // and later replies were lost); a pending one the latest three, as more is in its comment thread.
   const last = isLive(item) ? item.thread.slice(-3) : item.thread;
