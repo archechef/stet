@@ -148,7 +148,8 @@ export function itemSpoken(it: Item, line?: number, unread = 0): string {
   const breaks = paragraphChange(it.oldText, text);
   const what = breaks
     ? `${breaks}, “${o}” to “${n}”`
-    : (spokenChange(it.oldText, text) ?? (!it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`));
+    : (spokenChange(it.oldText, text, profileByName(it.file).spoken) ??
+      (!it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`));
   return `Change ${it.id}, ${what}, ${where}, ${state}${it.supersedes ? `, revises ${it.supersedes}` : ""}`;
 }
 

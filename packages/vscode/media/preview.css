@@ -1,0 +1,24 @@
+/* The PDF preview page (packages/vscode/src/previewPage.ts). */
+body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 0 12px; }
+.page { overflow: hidden; position: relative; background: white; border: 1px solid var(--vscode-panel-border); cursor: grab; touch-action: none; user-select: none; }
+.page.dragging { cursor: grabbing; }
+.page img { display: block; width: 100%; max-width: none; }
+.page.tall { height: calc(100vh - 150px); min-height: 240px; }
+.sheet { position: relative; width: 100%; }
+.sheet img { width: 100%; }
+.mark { position: absolute; pointer-events: none; border-radius: 2px; }
+.sheet.loading .mark { display: none; }
+.mark.after { background: var(--vscode-diffEditor-insertedTextBackground, rgba(40, 180, 70, .28)); outline: 1px solid var(--vscode-diffEditor-insertedTextBorder, rgba(40, 160, 60, .7)); }
+.mark.before { background: var(--vscode-diffEditor-removedTextBackground, rgba(220, 50, 50, .22)); outline: 1px solid var(--vscode-diffEditor-removedTextBorder, rgba(200, 40, 40, .7)); }
+/* High contrast: marks drawn as thick outlines, so they don't rely on colour. */
+body.vscode-high-contrast .mark, body.vscode-high-contrast-light .mark { outline: 2px dashed var(--vscode-contrastActiveBorder, currentColor); }
+.page:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.seg button.on { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.zoom button:disabled { opacity: .4; cursor: default; }
+.zoom { position: sticky; top: 0; z-index: 1; padding: 4px 0; background: var(--vscode-editor-background); }
+.zoom .hint { margin-left: 1em; font-size: .9em; }
+#level { margin-left: .6em; }
+.zoom button { min-width: 2.2em; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: none; padding: 2px 6px; cursor: pointer; }
+h2 { font-size: 1.1em; } h3 { font-size: 1em; margin: 1em 0 .4em; }
+.muted { color: var(--vscode-descriptionForeground); } .warn { color: var(--vscode-errorForeground); }
+pre { white-space: pre-wrap; font-size: .9em; background: var(--vscode-textCodeBlock-background); padding: 8px; }

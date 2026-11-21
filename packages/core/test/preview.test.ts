@@ -13,21 +13,9 @@ import {
   plainWords,
   previewExtrasContainerfile,
 } from "../src/lang/latex-preview.js";
-import {
-  applyChanges,
-  changeMarks,
-  containerArgs,
-  cropRegion,
-  DEFAULT_PREVIEW,
-  detectPreviewEnv,
-  findWords,
-  findWordsIn,
-  insideDir,
-  markRuns,
-  PreviewBuilder,
-  parseWords,
-  wordDiff,
-} from "../src/preview.js";
+import { applyChanges, cropRegion, insideDir, PreviewBuilder } from "../src/preview/builder.js";
+import { containerArgs, DEFAULT_PREVIEW, detectPreviewEnv } from "../src/preview/env.js";
+import { changeMarks, findWords, findWordsIn, markRuns, parseWords, wordDiff } from "../src/preview/words.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -194,6 +182,11 @@ describe("preview: isolation", () => {
     for (const rootFile of ["../outside.tex", "/etc/main.tex", "-shell-escape.tex", "main.pdf", "a;b.tex"])
       expect(() => cfg({ rootFile })).toThrow(/preview.rootFile/);
     expect(() => cfg({ engine: "pdflatex -shell-escape" })).toThrow(/preview.engine/);
+    expect(cfg({ engine: "lualatex" }).preview.engine).toBe("lualatex");
+    // The engines are the language's (code quality report 6a517ae, language leaks): Typst has none of LaTeX's.
+    const typst = (pv: object) => validateConfig({ ...defaultConfig("main"), language: "typst", preview: { ...DEFAULT_PREVIEW, ...pv } });
+    expect(typst({ engine: "auto" }).preview.engine).toBe("auto");
+    expect(() => typst({ engine: "lualatex" })).toThrow(/preview.engine 'lualatex' \(auto\)/);
     expect(() => cfg({ isolation: "none" })).toThrow(/preview.isolation/);
     expect(() => cfg({ image: "x; rm -rf /" })).toThrow(/preview.image/);
     expect(() => cfg({ timeout: 0 })).toThrow(/preview.timeout/);

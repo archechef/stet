@@ -6,10 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { announce } from "../src/announce.js";
 import { insertedTextStyle } from "../src/editor.js";
 import { type Snapshot, TreeModel } from "../src/model.js";
-import { frameKey, pageAlt, previewPage, viewerKey } from "../src/previewPage.js";
+import { previewPage } from "../src/previewPage.js";
 import { offerContrastStyle } from "../src/questions.js";
 import { itemRow, itemSpoken, LOST_TEXT, statusView } from "../src/rows.js";
 import { spokenRow } from "../src/text.js";
+import { frameKey, pageAlt, viewerKey } from "../src/webview/keys.js";
 import { fake } from "./fake-vscode.js";
 import { makeItem as item } from "./fixtures.js";
 
@@ -26,9 +27,11 @@ const page = (result: PreviewResult | undefined) =>
     inCache: () => true,
     cspSource: "webview:",
     nonce: "n0nce",
+    script: "webview:/ext/dist/preview.js",
+    style: "webview:/ext/media/preview.css",
   });
 const side = (p: number) => ({ file: `/cache/p${p}.png`, page: p, count: 9, width: 600, height: 800, marks: [{ x0: 1, y0: 2, x1: 3, y1: 4 }] });
-const scriptOf = (h: string) => h.slice(h.indexOf('<script nonce="n0nce">') + 22, h.lastIndexOf("</script>"));
+const pagesOf = (h: string) => JSON.parse(h.slice(h.indexOf('<script type="application/json" id="stet-pages">') + 48, h.indexOf("</script>")));
 
 describe("the PDF preview page", () => {
   const viewer = page({ status: "ready", after: { file: "/cache/a.png", page: 3 }, pages: { after: side(3), before: side(2) } } as unknown as PreviewResult);
@@ -41,9 +44,22 @@ describe("the PDF preview page", () => {
     expect(viewer).toMatch(/class="page tall" tabindex="0" role="region" aria-label="[^"]*Page Up and Page Down turn pages/);
   });
 
-  it("runs only its own script, which is valid JavaScript", () => {
+  it("runs only its own script and style, from the extension (code quality report 6a517ae, preview.ts)", () => {
     expect(viewer).toContain("script-src 'nonce-n0nce'");
-    expect(() => new Function(scriptOf(viewer))).not.toThrow();
+    expect(viewer).toContain("style-src webview:;");
+    expect(viewer).not.toContain("unsafe-inline");
+    expect(viewer).toContain('<script nonce="n0nce" src="webview:/ext/dist/preview.js"></script>');
+    expect(viewer).toContain('<link rel="stylesheet" href="webview:/ext/media/preview.css">');
+    // Its pages as data, which the script reads; agent text in them can't close the element.
+    expect(pagesOf(viewer)).toMatchObject({ after: { page: 3, src: "webview:/cache/p3.png" }, before: { page: 2 } });
+    const sly = page({ status: "ready", after: { file: "/cache/a.png", page: 3 }, pages: { after: side(3), before: null } } as unknown as PreviewResult);
+    expect(sly.match(/<\/script>/g)).toHaveLength(2);
+  });
+
+  it("has its script built, as valid JavaScript", () => {
+    const built = readFileSync(join(__dirname, "..", "dist", "preview.js"), "utf8");
+    expect(() => new Function(built)).not.toThrow();
+    expect(built).toContain("stet-pages");
   });
 
   it("moves and zooms a page from the keyboard as the mouse does", () => {

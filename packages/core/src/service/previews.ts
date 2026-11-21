@@ -6,15 +6,8 @@ import { notFound } from "../errors.js";
 import { documentProfile, type LanguageProfile } from "../lang/index.js";
 import { type Item, isLive, linkedRest } from "../model.js";
 import { imbalance, type ProfileOf } from "../parts.js";
-import {
-  detectPreviewEnv,
-  PreviewBuilder,
-  type PreviewChange,
-  type PreviewEnv,
-  type PreviewRequest,
-  type PreviewResult,
-  setupPreviewImage,
-} from "../preview.js";
+import { PreviewBuilder, type PreviewChange, type PreviewRequest, type PreviewResult } from "../preview/builder.js";
+import { detectPreviewEnv, type PreviewEnv, setupPreviewImage } from "../preview/env.js";
 import type { Stet } from "../service.js";
 import { sha256 } from "../text.js";
 

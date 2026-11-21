@@ -25,7 +25,7 @@ export class Project implements vscode.Disposable {
   }
 
   get storeRoot(): string {
-    return this.stet.store.root;
+    return this.stet.storeRoot;
   }
 
   /** The workspace folder's name ("paper-typst"), else the folder's own ("typ"). */

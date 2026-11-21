@@ -1,6 +1,7 @@
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import { diffArrays } from "diff";
+import type { SpokenRules } from "./lang/profile.js";
 
 /** Line-ending style of a text file. Stet works on LF text internally and restores the style on write. */
 export type Eol = "lf" | "crlf";
@@ -347,20 +348,14 @@ export function summaryTexts(it: { oldText: string; newText: string; context: { 
 
 /**
  * A change as words, for screen readers: in a formula only what differs ("in the formula … : 2
- * becomes 3"), labels and references spelled out. Raw source buried a one-character change in
- * symbols. Null when the summary says it well enough.
+ * becomes 3"), labels and references spelled out, as the file's language (`rules`) writes them.
+ * Raw source buried a one-character change in symbols. Null when the summary says it well enough.
  */
-export function spokenChange(oldText: string, newText: string): string | null {
-  const said = (t: string) =>
-    printable(t)
-      .replace(/<([\p{L}\p{N}_:.-]+)>/gu, " label $1 ")
-      .replace(/(?<![\p{L}\p{N}_])@([\p{L}\p{N}_:.-]*[\p{L}\p{N}_])/gu, " reference to $1 ")
-      .replace(/\\(?:ref|eqref|cref|autoref)\{([^}]*)\}/g, " reference to $1 ")
-      .replace(/\\label\{([^}]*)\}/g, " label $1 ")
-      .replace(/\s+/g, " ")
-      .trim();
-  const maths = /\$/.test(oldText) || /\$/.test(newText);
-  const keys = /<[^>\s]+>|@\w|\\(?:ref|label|eqref|cref|autoref)\{/.test(oldText + newText);
+export function spokenChange(oldText: string, newText: string, rules: SpokenRules | undefined): string | null {
+  if (!rules) return null;
+  const said = (t: string) => rules.words(printable(t)).replace(/\s+/g, " ").trim();
+  const maths = rules.maths.test(oldText) || rules.maths.test(newText);
+  const keys = rules.keys.test(oldText + newText);
   if (!maths && !keys) return null;
   let pre = 0;
   while (pre < oldText.length && pre < newText.length && oldText[pre] === newText[pre]) pre++;

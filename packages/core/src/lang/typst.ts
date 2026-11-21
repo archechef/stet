@@ -507,4 +507,9 @@ export const TYPST: LanguageProfile = {
   definitions,
   includes,
   parts,
+  spoken: {
+    maths: /\$/,
+    keys: /<[^>\s]+>|@\w/,
+    words: (t) => t.replace(/<([\p{L}\p{N}_:.-]+)>/gu, " label $1 ").replace(/(?<![\p{L}\p{N}_])@([\p{L}\p{N}_:.-]*[\p{L}\p{N}_])/gu, " reference to $1 "),
+  },
 };

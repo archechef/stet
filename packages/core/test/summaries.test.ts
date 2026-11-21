@@ -1,5 +1,8 @@
 /** One-line summaries of changes, and how they are read out. */
 import { describe, expect, it } from "vitest";
+import { profileByName } from "../src/lang/index.js";
+import { LATEX } from "../src/lang/latex.js";
+import { TYPST } from "../src/lang/typst.js";
 import type { Item } from "../src/model.js";
 import { changeSummary, spokenChange, summaryTexts } from "../src/text.js";
 import { makeItem } from "./helpers.js";
@@ -32,8 +35,18 @@ describe("short changes and spoken maths (decisions on the 5e4c6af reports)", ()
   });
 
   it("spoken maths: only what differs, labels and references in words", () => {
-    expect(spokenChange("$norm(x - hat(x)) <= C eps^2$", "$norm(x - hat(x)) <= C eps^3$")).toBe("in the formula norm(x - hat(x)) <= C eps^2: 2 becomes 3");
-    expect(spokenChange("see @fig:plot", "see @fig:error")).toBe("replace see reference to fig:plot with see reference to fig:error");
-    expect(spokenChange("plain words", "other words")).toBeNull();
+    const typst = TYPST.spoken;
+    expect(spokenChange("$norm(x - hat(x)) <= C eps^2$", "$norm(x - hat(x)) <= C eps^3$", typst)).toBe(
+      "in the formula norm(x - hat(x)) <= C eps^2: 2 becomes 3",
+    );
+    expect(spokenChange("see @fig:plot", "see @fig:error", typst)).toBe("replace see reference to fig:plot with see reference to fig:error");
+    expect(spokenChange("plain words", "other words", typst)).toBeNull();
+  });
+
+  it("spells out labels and references as the file's language writes them (code quality report 6a517ae, language leaks)", () => {
+    expect(spokenChange("see \\ref{a}", "see \\ref{b}", LATEX.spoken)).toBe("replace see reference to a with see reference to b");
+    // In LaTeX an email address is no reference, and in a plain text file nothing is spelled out.
+    expect(spokenChange("mail a@b.org", "mail c@d.org", LATEX.spoken)).toBeNull();
+    expect(spokenChange("see \\ref{a}", "see \\ref{b}", profileByName("notes.txt").spoken)).toBeNull();
   });
 });

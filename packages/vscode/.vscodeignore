@@ -1,6 +1,7 @@
 **
 !dist/extension.js
 !dist/stet.mjs
+!dist/preview.js
 !media/**
 !package.json
 !README.md

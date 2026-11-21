@@ -7,7 +7,7 @@ import type { FileChange, FileView, TextFile } from "./apply.js";
 import { defaultConfig, type StetConfig } from "./config.js";
 import { notFound, StetError } from "./errors.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
-import { installHooks } from "./hooks.js";
+import { type HookStatus, hookStatus, installHooks, uninstallHooks } from "./hooks.js";
 import { DOCUMENT_LANGUAGES, detectLanguage, type LanguageProfile, languageCounts, profileFor } from "./lang/index.js";
 import {
   type Accepted,
@@ -136,21 +136,36 @@ export class Stet {
    * The parts of the service, by area. Stet's own methods below forward to them, so callers
    * never need these; the parts reach each other and Stet's helpers through `stet`.
    */
+  /** @internal The operations by area; front ends use the methods below, which forward to them. */
   readonly baseOps = new ReviewBase(this);
+  /** @internal */
   readonly agentOps = new Agents(this);
+  /** @internal */
   readonly submitOps = new Submission(this);
+  /** @internal */
   readonly groupOps = new GroupOps(this);
+  /** @internal */
   readonly decisionOps = new Decisions(this);
+  /** @internal */
   readonly previewOps = new Previews(this);
+  /** @internal */
   readonly draftOps = new Drafts(this);
+  /** @internal */
   readonly noteOps = new Notes(this);
 
   private constructor(
     /** Path of the main worktree (the user's working copy). */
     readonly mainPath: string,
+    /** @internal Git in the main worktree: for the core only. */
     readonly repo: Repo,
+    /** @internal The records in `.git/stet/`: for the core only, which keeps their rules (the lock, validation). */
     readonly store: Store,
   ) {}
+
+  /** The folder of Stet's records (`.git/stet`), for watching it. */
+  get storeRoot(): string {
+    return this.store.root;
+  }
 
   // -------------------------------------------------------------------------
   // Opening / init
@@ -598,6 +613,21 @@ export class Stet {
   }
 
   getItem = (id: string) => this.store.getItem(id);
+  getGroup = (id: string) => this.store.getGroup(id);
+  getAgent = (id: string) => this.store.getAgent(id);
+
+  /** The git hooks that keep agent branches from being merged or pushed past review. */
+  hookStatus(): Promise<HookStatus> {
+    return hookStatus(this.repo, this.commonDir);
+  }
+
+  async installHooks(opts: { force?: boolean } = {}): Promise<HookStatus> {
+    return installHooks(this.repo, this.commonDir, await this.config(), opts);
+  }
+
+  uninstallHooks(): Promise<void> {
+    return uninstallHooks(this.repo, this.commonDir);
+  }
   listGroups = () => this.store.groups();
   listChangesets = () => this.store.changesets();
 

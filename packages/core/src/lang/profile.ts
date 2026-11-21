@@ -9,7 +9,7 @@
 import type { GroupingConfig } from "../config.js";
 import type { DoctorCheck } from "../doctor.js";
 import type { Item } from "../model.js";
-import type { PreviewConfig, PreviewEnv } from "../preview.js";
+import type { PreviewConfig, PreviewEnv } from "../preview/env.js";
 import type { Edit } from "../split.js";
 import type { Token } from "../tokenizer.js";
 
@@ -49,6 +49,8 @@ export interface LanguageProfile {
   includes?: IncludeRules;
   parts?: PartRules;
   typesetter?: Typesetter;
+  /** How its labels and references read aloud (screen readers), for `spokenChange`. */
+  spoken?: SpokenRules;
 }
 
 /** Examples in a language, for what agents are told (markdown). */
@@ -177,6 +179,16 @@ export interface SourceBox {
 export type RunIsolated = (work: string, cmd: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
 
 /** Compiling the document to PDF for previews (spec §14). */
+/** A language's labels, references and formulas in words, for screen readers. */
+export interface SpokenRules {
+  /** Whether a text has a formula ("$…$"). */
+  maths: RegExp;
+  /** Whether a text has a label or a reference. */
+  keys: RegExp;
+  /** Labels and references spelled out: "\\ref{a}" → " reference to a ". */
+  words(text: string): string;
+}
+
 export interface Typesetter {
   /** In messages: "LaTeX" ("LaTeX reported an error"). */
   name: string;
@@ -187,6 +199,8 @@ export interface Typesetter {
   sourceName: string;
   /** An example root file, for the message when Stet can't tell which one it is. */
   rootHint: string;
+  /** The engines `preview.engine` may name besides "auto" ("pdflatex", …). */
+  engines: readonly string[];
   /** The tool chain: installed, or the container with it. Never installs anything. */
   detect(cfg: PreviewConfig, opts: { podman?: string | null }): Promise<PreviewEnv>;
   /** Build the previews' container image (downloads: only on the user's request). */

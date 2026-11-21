@@ -400,4 +400,9 @@ export const LATEX: LanguageProfile = {
   includes,
   parts: LATEX_PARTS,
   typesetter: LATEX_TYPESETTER,
+  spoken: {
+    maths: /\$/,
+    keys: /\\(?:ref|label|eqref|cref|autoref)\{/,
+    words: (t) => t.replace(/\\(?:ref|eqref|cref|autoref)\{([^}]*)\}/g, " reference to $1 ").replace(/\\label\{([^}]*)\}/g, " label $1 "),
+  },
 };

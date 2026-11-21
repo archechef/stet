@@ -32,6 +32,8 @@ export class PreviewPanel implements vscode.Disposable {
     /** Install the extra fonts (asks first) / a preview found files missing that they may bring. */
     private readonly extras: (p: Project) => Promise<void>,
     private readonly onMissing: (p: Project, files: string[]) => void,
+    /** The extension's folder: the page's script and style are in it. */
+    private readonly extensionUri: vscode.Uri,
   ) {}
 
   get visible(): boolean {
@@ -144,8 +146,9 @@ export class PreviewPanel implements vscode.Disposable {
     if (r?.status === "ready" && (!inCache(r.after.file) || (r.before && !inCache(r.before.file)))) {
       r = { status: "unavailable", message: "This preview's files aren't in Stet's preview cache; not shown." };
     }
-    const roots = r?.status === "ready" ? [vscode.Uri.file(r.pages ? previewCacheRoot(t.project) : dirname(r.after.file))] : [];
-    w.options = { enableScripts: true, localResourceRoots: roots };
+    const own = (...p: string[]) => vscode.Uri.joinPath(this.extensionUri, ...p);
+    const pictures = r?.status === "ready" ? [vscode.Uri.file(r.pages ? previewCacheRoot(t.project) : dirname(r.after.file))] : [];
+    w.options = { enableScripts: true, localResourceRoots: [own("dist"), own("media"), ...pictures] };
     // Which project, when the window has several: their ids are the same.
     const several = (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
     this.panel.title = `Preview ${t.item.id}${several ? ` (${t.project.name})` : ""}`;
@@ -157,6 +160,8 @@ export class PreviewPanel implements vscode.Disposable {
       inCache,
       cspSource: w.cspSource,
       nonce: randomBytes(16).toString("hex"),
+      script: `${w.asWebviewUri(own("dist", "preview.js"))}`,
+      style: `${w.asWebviewUri(own("media", "preview.css"))}`,
     });
   }
 

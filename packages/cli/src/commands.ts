@@ -22,11 +22,9 @@ import {
   GROUP_KINDS,
   type GroupHint,
   type GroupKind,
-  hookStatus,
   ITEM_STATUSES,
   type Item,
   type ItemStatus,
-  installHooks,
   isAgentKind,
   isGroupKind,
   isLive,
@@ -52,7 +50,6 @@ import {
   StetError,
   StetMcpServer,
   serveStdio,
-  uninstallHooks,
   usageError,
   verifyAgentWorktree,
 } from "@stet/core";
@@ -193,7 +190,7 @@ async function guard(): Promise<number> {
   if (project && agentId) {
     try {
       const stet = await Stet.open(project);
-      const agent = await stet.store.getAgent(agentId);
+      const agent = await stet.getAgent(agentId);
       if (agent?.state === "archived") return block(archivedMessage(agent));
       if (!existsSync(cwd))
         return block(`Stet: this workspace folder (${cwd}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
@@ -275,7 +272,7 @@ export const COMMANDS: Command[] = [
       const cfg = await stet.config();
       // Files of both languages: which has more, and how to choose the other.
       const mixed = !opt.language && !already && languages.length > 1;
-      const hooks = await hookStatus(stet.repo, stet.commonDir);
+      const hooks = await stet.hookStatus();
       // Agents start from the last commit: edits not committed yet are not theirs to see.
       const dirty = await stet.uncommittedEdits();
       return out(
@@ -473,15 +470,15 @@ export const COMMANDS: Command[] = [
     async run({ args, opt, stet, out }) {
       const sub = args[0] ?? "status";
       if (sub === "install") {
-        const st = await installHooks(stet.repo, stet.commonDir, await stet.config(), { force: !!opt.force });
+        const st = await stet.installHooks({ force: !!opt.force });
         if (st.customHooksPath && !opt.force) throw new StetError(`core.hooksPath is set to ${st.dir} (e.g. husky). Use --force to install there anyway.`);
         return out(() => `Installed ${st.installed.join(", ")} in ${st.dir}.`, st);
       }
       if (sub === "uninstall") {
-        await uninstallHooks(stet.repo, stet.commonDir);
+        await stet.uninstallHooks();
         return out(() => "Removed Stet's git hooks (previous hooks restored).", { ok: true });
       }
-      const st = await hookStatus(stet.repo, stet.commonDir);
+      const st = await stet.hookStatus();
       return out(
         () => `Hooks in ${st.dir}: installed ${st.installed.join(", ") || "none"}${st.missing.length ? `; missing ${st.missing.join(", ")}` : ""}.`,
         st,

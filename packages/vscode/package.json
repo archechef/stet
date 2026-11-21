@@ -44,7 +44,7 @@
     "workspaceContains:**/*.typ"
   ],
   "scripts": {
-    "build": "tsc -b ../core && tsc -p . && node esbuild.mjs",
+    "build": "tsc -b ../core && tsc -p . && tsc -p tsconfig.webview.json && node esbuild.mjs",
     "package": "node -e \"for (const f of ['LICENSE','CHANGELOG.md']) require('fs').copyFileSync('../../'+f,f)\" && npm run build && vsce package --no-dependencies --allow-missing-repository -o stet-vscode.vsix",
     "test:integration": "node test/integration/run.mjs"
   },

@@ -7,17 +7,8 @@ import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import type { DoctorCheck } from "../doctor.js";
-import {
-  buildImage,
-  containerRuntime,
-  detectPreviewEnv,
-  normWord,
-  type PreviewConfig,
-  type PreviewEnv,
-  popplerMissing,
-  runProgram,
-  which,
-} from "../preview.js";
+import { buildImage, containerRuntime, detectPreviewEnv, type PreviewConfig, type PreviewEnv, popplerMissing, runProgram, which } from "../preview/env.js";
+import { normWord } from "../preview/words.js";
 import type { RunIsolated, SourceBox, Typesetter } from "./profile.js";
 
 // ---------------------------------------------------------------------------
@@ -351,6 +342,7 @@ export const LATEX_TYPESETTER: Typesetter = {
   source: /\.tex$/i,
   sourceName: ".tex files",
   rootHint: "main.tex",
+  engines: ["pdflatex", "xelatex", "lualatex"],
   detect,
   setupImage,
   doctor: async (whichVersion) => {

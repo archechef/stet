@@ -144,6 +144,7 @@ export class StetExtension implements Host, vscode.Disposable {
       },
       (p) => this.previews.installExtras(p),
       (p, files) => void this.previews.offerExtras(p, files),
+      ctx.extensionUri,
     );
     // Several changes can be selected (Ctrl/Shift+click) and accepted or rejected together.
     this.tree = vscode.window.createTreeView("stet.review", { treeDataProvider: this.panel, showCollapseAll: true, canSelectMany: true });

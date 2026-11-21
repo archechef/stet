@@ -375,7 +375,7 @@ export class StetMcpServer {
     // agent can point that link at a repository of its own, whose hooks Stet's git calls would
     // then run outside the agent's sandbox.
     if (!this.stet) this.stet = await Stet.open(this.opts.project ?? where);
-    const known = this.opts.agentId ? await this.stet.store.getAgent(this.opts.agentId) : await this.stet.agentByWorktree(where);
+    const known = this.opts.agentId ? await this.stet.getAgent(this.opts.agentId) : await this.stet.agentByWorktree(where);
     if (known?.state === "archived") throw new StetError(archivedMessage(known));
     if (!(await pathExists(where))) {
       throw new StetError(`Stet: this workspace folder (${where}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
@@ -577,7 +577,7 @@ export class StetMcpServer {
             );
           }
           if (ref.kind === "group" || ref.kind === "part") {
-            const g = await stet.store.getGroup(id);
+            const g = await stet.getGroup(id);
             if (!g || g.agent !== agent) throw notFound(`Unknown group ${id}.`);
             const members = (await Promise.all(g.items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
             const lines = [`${g.id} ${g.kind} "${g.title}" (${g.state})`, g.rationale ?? ""];

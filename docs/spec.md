@@ -222,7 +222,8 @@ Everything Stet knows about a document language is in its **profile** (`packages
 | `definitions` | macros, environments, TikZ styles: defined, used | macro groups; parts | none |
 | `includes` | files read in (`\input`, `\includegraphics`, …) | *Add file and read it in* groups | none |
 | `parts` | global changes (packages, classes, includes); what nests (braces, environments, maths) | parts of linked groups (§6.4.6); which changes complete a preview | none |
-| `typesetter` | latexmk in TeX Live (or the image's), SyncTeX, the log's errors and missing files, the words the source typesets | PDF previews (§14), `stet doctor` | no previews |
+| `typesetter` | latexmk in TeX Live (or the image's), SyncTeX, the log's errors and missing files, the words the source typesets; the engines `preview.engine` accepts | PDF previews (§14), `stet doctor` | no previews; `preview.engine` takes only `auto` |
+| `spoken` | what is maths and what is a label or reference (`\label`, `\ref`), and how to say them | change labels for screen readers (only what differs, in words) | the label quotes the old and new text |
 | `agentTerms` | examples for agents (`\label` with its references, an undefined macro) | the agents' instructions, the MCP tools' descriptions | generic examples |
 
 A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`, `files.typ`); keys are matched by kind across languages (a `.bib` entry defines the citation key a `\cite` or a Typst `@key` uses). The config keeps its shape: `files.tex` and the `preview` settings are the LaTeX profile's. The project's own language (`language`: `latex` or `typst`) is detected from its files when Stet is set up; the agents' instructions, the MCP tools' examples and PDF previews follow it.
@@ -701,7 +702,7 @@ The web UI will expose this API as REST plus Server-Sent Events on `localhost`, 
 
 ## 14. PDF previews (M5, on request)
 
-What compiles the document and finds a change on its pages is the document language's **typesetter** (§6.0; LaTeX's in `lang/latex-preview.ts`); `preview.ts` holds the rest: isolation, the build cache, pages and the words on them. The steps for LaTeX:
+What compiles the document and finds a change on its pages is the document language's **typesetter** (§6.0; LaTeX's in `lang/latex-preview.ts`); `preview/` holds the rest: settings and isolation (`env.ts`), the build cache and pages (`builder.ts`), and the words on them (`words.ts`). The steps for LaTeX:
 
 1. The user clicks **Preview** on an item.
 2. Stet builds two temporary trees: the review base, and the review base plus this item. It compiles them with `latexmk -synctex=1` in a cache directory, reusing auxiliary files between builds.

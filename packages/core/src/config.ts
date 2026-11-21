@@ -1,7 +1,7 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
 import { DOCUMENT_LANGUAGES, documentProfile, type FilePatterns, PROFILES } from "./lang/index.js";
-import { DEFAULT_PREVIEW, PREVIEW_ENGINES, PREVIEW_ISOLATIONS, PREVIEW_TEX, type PreviewConfig } from "./preview.js";
+import { DEFAULT_PREVIEW, PREVIEW_ISOLATIONS, PREVIEW_TEX, type PreviewConfig } from "./preview/env.js";
 
 export { matchesAny } from "./lang/index.js";
 
@@ -170,7 +170,9 @@ export function validateConfig(cfg: StetConfig): StetConfig {
     (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+$/.test(pv.rootFile) || !ts?.source.test(pv.rootFile) || pv.rootFile.startsWith("/"))
   )
     bad(`preview.rootFile '${pv.rootFile}' (one of the document's ${ts?.sourceName ?? "source files"} relative to the project, or null)`);
-  if (!PREVIEW_ENGINES.includes(pv.engine)) bad(`preview.engine '${pv.engine}' (${PREVIEW_ENGINES.join(", ")})`);
+  // The engines are the language's: LaTeX's mean nothing to Typst.
+  const engines = ["auto", ...(ts?.engines ?? [])];
+  if (!engines.includes(pv.engine)) bad(`preview.engine '${pv.engine}' (${engines.join(", ")})`);
   if (!PREVIEW_ISOLATIONS.includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (${PREVIEW_ISOLATIONS.join(", ")})`);
   if (typeof pv.image !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.image)) bad(`preview.image '${pv.image}'`);
   if (typeof pv.texImage !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.texImage)) bad(`preview.texImage '${pv.texImage}'`);

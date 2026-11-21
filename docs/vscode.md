@@ -366,7 +366,7 @@ Development setup, tests and packaging: [CONTRIBUTING.md](../CONTRIBUTING.md).
     - `tree.ts`: the Review panel and History rows, their order, the filter
     - `commands/`: review (accept, reject, edit, …), notes, navigation, agents, view options
     - `undo.ts`, `unread.ts`, `previews.ts`, `setup.ts`: Undo, unread replies, PDF preview commands, *Set up project*
-  - `previewPage.ts`: the PDF preview's page, free of `vscode`
+  - `previewPage.ts`: the PDF preview's page, free of `vscode`; its script is `webview/preview.ts` (built to `dist/preview.js`, type-checked with `tsconfig.webview.json`), its style `media/preview.css`
   - `editor.ts`: decorations, CodeLens, hovers, diff documents
   - `comments.ts`: threads
   - `project.ts`: store access, live updates
@@ -378,7 +378,7 @@ Development setup, tests and packaging: [CONTRIBUTING.md](../CONTRIBUTING.md).
     - `rows.ts`: what each row of the panel and History shows (`rowView`), and the `contextValue` its menus match (`contextValueOf`)
     - `markdown.ts`, `text.ts`: hover and tooltip Markdown; escaping, cutting and positions in text
     - `questions.ts`: the questions asked before accepting, finishing or archiving
-- **Build:** `npm run build` (the TypeScript type check plus esbuild bundles `dist/extension.js` and `dist/stet.mjs`).
+- **Build:** `npm run build` (the TypeScript type check plus esbuild bundles `dist/extension.js`, `dist/stet.mjs` and the preview page's `dist/preview.js`).
 - **Tests:**
   - `npm test` for the unit tests.
   - `npm run test:integration -w stet-vscode` starts your installed VS Code with a throwaway profile against a fixture project, once with each runtime. A VS Code window appears briefly. It is not part of CI.

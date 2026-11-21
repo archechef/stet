@@ -95,10 +95,22 @@ export function splitLineHunks(oldText: string, newText: string): Edit[] {
 // ---------------------------------------------------------------------------
 // Splitting by syntax (spec §6.2)
 
-interface U {
-  o: number; // old token index or -1
-  n: number; // new token index or -1
+/**
+ * One step of a token alignment: an old token (`o`) and the new token (`n`) it became, as indexes
+ * into the old and new token lists; -1 where a side has none (an insertion or a deletion). Here
+ * `o` and `n` always mean the old and the new side: of steps, paragraph pairs and ranges.
+ */
+interface Step {
+  o: number;
+  n: number;
 }
+
+/** The text of a token range's words (blanks left out), for comparing paragraphs. */
+const wordsOf = (toks: Token[], from: number, to: number): string[] =>
+  toks
+    .slice(from, to)
+    .filter((t) => !isBlank(t))
+    .map((t) => t.text);
 
 /** Matching brace index for every brace token (unmatched braces are absent). */
 function braceMatches(toks: Token[]): Map<number, number> {
@@ -117,7 +129,7 @@ function braceMatches(toks: Token[]): Map<number, number> {
 
 interface Side {
   toks: Token[];
-  pos: number[]; // token index -> U index
+  pos: number[]; // token index -> step index
   braces: Map<number, number>;
   /** Spans that must be taken whole: math and key arguments. */
   math: [number, number][];
@@ -125,7 +137,7 @@ interface Side {
   keys: [number, number][];
 }
 
-function side(toks: Token[], u: U[], key: "o" | "n", rules: SyntaxRules): Side {
+function side(toks: Token[], u: Step[], key: "o" | "n", rules: SyntaxRules): Side {
   const pos = new Array<number>(toks.length);
   u.forEach((e, i) => {
     if (e[key] >= 0) pos[e[key]] = i;
@@ -135,8 +147,8 @@ function side(toks: Token[], u: U[], key: "o" | "n", rules: SyntaxRules): Side {
   return { toks, pos, braces, math: [...rules.mathSpans(toks), ...keys], keys };
 }
 
-/** Extend [s, e) in U so that braces and math spans on this side are whole. */
-function growSide(r: [number, number], u: U[], sd: Side, key: "o" | "n"): boolean {
+/** Extend the steps [s, e) so that braces and math spans on this side are whole. */
+function growSide(r: [number, number], u: Step[], sd: Side, key: "o" | "n"): boolean {
   let changed = false;
   for (let i = r[0]; i < r[1]; i++) {
     const t = u[i]![key];
@@ -412,16 +424,17 @@ function unrelated(oldText: string, newText: string, e: Edit, rules: SyntaxRules
   // The halves take a paragraph break with them, so either one alone leaves the text well formed.
   const after = (t: string, at: number) => /^\n(?:[ \t]*\n)+/.exec(t.slice(at))?.[0].length ?? 0;
   const before = (t: string, at: number) => /(?:\n[ \t]*)+\n$/.exec(t.slice(0, at))?.[0].length ?? 0;
-  const [oa, na] = [after(oldText, oe), after(newText, ne)];
-  if (oa && na) {
-    const del = makeEdit(oldText, newText, os, oe + oa, ne + na, ne + na);
-    const ins = makeEdit(oldText, newText, os, os, ns, ne + na);
+  // The length of the paragraph break after (before) the paragraphs, in the old and new text.
+  const [oldAfter, newAfter] = [after(oldText, oe), after(newText, ne)];
+  if (oldAfter && newAfter) {
+    const del = makeEdit(oldText, newText, os, oe + oldAfter, ne + newAfter, ne + newAfter);
+    const ins = makeEdit(oldText, newText, os, os, ns, ne + newAfter);
     return { ...whole, halves: [...perBlock(oldText, newText, del, rules), ...perBlock(oldText, newText, ins, rules)] };
   }
-  const [ob, nb] = [before(oldText, os), before(newText, ns)];
-  if (ob && nb) {
-    const del = makeEdit(oldText, newText, os - ob, oe, ns - nb, ns - nb);
-    const ins = makeEdit(oldText, newText, os - ob, os - ob, ns - nb, ne);
+  const [oldBefore, newBefore] = [before(oldText, os), before(newText, ns)];
+  if (oldBefore && newBefore) {
+    const del = makeEdit(oldText, newText, os - oldBefore, oe, ns - newBefore, ns - newBefore);
+    const ins = makeEdit(oldText, newText, os - oldBefore, os - oldBefore, ns - newBefore, ne);
     return { ...whole, halves: [...perBlock(oldText, newText, del, rules), ...perBlock(oldText, newText, ins, rules)] };
   }
   return whole;
@@ -436,36 +449,51 @@ const SENTENCE_NEAR = 6;
 
 type Same = (a: Token, b: Token) => boolean;
 
-/** Token diff of ot[oa, ob) and nt[na, nb), appended to `u`. */
-function diffRange(ot: Token[], nt: Token[], oa: number, ob: number, na: number, nb: number, same: Same, u: U[]): void {
+/** Old and new tokens, and how two tokens count as the same. */
+interface Sides {
+  old: Token[];
+  new: Token[];
+  same: Same;
+}
+
+/** Old tokens [o0, o1) and new tokens [n0, n1). */
+interface Span {
+  o0: number;
+  o1: number;
+  n0: number;
+  n1: number;
+}
+
+/** The token diff of an old and a new range. */
+function diffRange({ old: ot, new: nt, same }: Sides, { o0, o1, n0, n1 }: Span): Step[] {
   // Anchor the common prefix and suffix before diffing the middle. The diff matches greedily from
   // the front: for a block inserted before a paragraph whose first words also occur in the block,
   // it matched those words inside the block, and a pure insertion became a replacement ("The
   // algorithm " → block + "The algorithm "), which hid moves. When one
   // side is wholly a suffix of the other, the change is an insertion (deletion) in front.
-  const lo = ob - oa;
-  const ln = nb - na;
-  const shorter = Math.min(lo, ln);
+  const steps: Step[] = [];
+  const shorter = Math.min(o1 - o0, n1 - n0);
   let suf = 0;
-  while (suf < shorter && same(ot[ob - 1 - suf]!, nt[nb - 1 - suf]!)) suf++;
+  while (suf < shorter && same(ot[o1 - 1 - suf]!, nt[n1 - 1 - suf]!)) suf++;
   let pre = 0;
   if (suf < shorter) {
-    while (pre < shorter && same(ot[oa + pre]!, nt[na + pre]!)) pre++;
+    while (pre < shorter && same(ot[o0 + pre]!, nt[n0 + pre]!)) pre++;
     suf = 0;
-    while (suf < shorter - pre && same(ot[ob - 1 - suf]!, nt[nb - 1 - suf]!)) suf++;
+    while (suf < shorter - pre && same(ot[o1 - 1 - suf]!, nt[n1 - 1 - suf]!)) suf++;
   }
-  for (let k = 0; k < pre; k++) u.push({ o: oa + k, n: na + k });
-  let oi = oa + pre;
-  let ni = na + pre;
-  for (const ch of diffArrays(ot.slice(oi, ob - suf), nt.slice(ni, nb - suf), { comparator: same })) {
+  for (let k = 0; k < pre; k++) steps.push({ o: o0 + k, n: n0 + k });
+  let oi = o0 + pre;
+  let ni = n0 + pre;
+  for (const ch of diffArrays(ot.slice(oi, o1 - suf), nt.slice(ni, n1 - suf), { comparator: same })) {
     const count = ch.count ?? ch.value.length;
     for (let k = 0; k < count; k++) {
-      if (ch.removed) u.push({ o: oi++, n: -1 });
-      else if (ch.added) u.push({ o: -1, n: ni++ });
-      else u.push({ o: oi++, n: ni++ });
+      if (ch.removed) steps.push({ o: oi++, n: -1 });
+      else if (ch.added) steps.push({ o: -1, n: ni++ });
+      else steps.push({ o: oi++, n: ni++ });
     }
   }
-  for (let k = 0; k < suf; k++) u.push({ o: oi++, n: ni++ });
+  for (let k = 0; k < suf; k++) steps.push({ o: oi++, n: ni++ });
+  return steps;
 }
 
 /**
@@ -578,13 +606,8 @@ function anchorPairs(ow: string[][], nw: string[][]): { o: number; n: number }[]
  * two (or two merged) pairs with both.
  */
 function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [number, number][]): BlockPair[] {
-  const wordsOf = (toks: Token[], [a, b]: [number, number]) =>
-    toks
-      .slice(a, b)
-      .filter((t) => !isBlank(t))
-      .map((t) => t.text);
-  const ow = ob.map((b) => wordsOf(ot, b));
-  const nw = nb.map((b) => wordsOf(nt, b));
+  const ow = ob.map(([a, b]) => wordsOf(ot, a, b));
+  const nw = nb.map(([a, b]) => wordsOf(nt, a, b));
   const m = ob.length;
   const k = nb.length;
   // Most pairs share too few words to be alike: known from the counts, without diffing them.
@@ -695,101 +718,85 @@ const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a) 
 /**
  * The token alignment of a changed region. With several paragraphs on a side, paragraphs are
  * paired by similarity first and diffed pair by pair; what lies between pairs (new or removed
- * paragraphs) is diffed on its own. `hard` gets the alignment indexes where a pair starts or ends.
+ * paragraphs) is diffed on its own. `hard`: the step indexes where a pair starts or ends, and
+ * where removed paragraphs end and inserted ones begin.
  */
-function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>, rules: SyntaxRules): U[] {
-  const u: U[] = [];
+function alignTokens(ot: Token[], nt: Token[], same: Same, rules: SyntaxRules): { steps: Step[]; hard: Set<number> } {
+  const sides: Sides = { old: ot, new: nt, same };
+  const steps: Step[] = [];
+  const hard = new Set<number>();
+  const add = (more: { steps: Step[]; cut?: number }) => {
+    if (more.cut !== undefined) hard.add(steps.length + more.cut);
+    steps.push(...more.steps);
+  };
   const ob = tokenBlocks(ot, rules);
   const nb = tokenBlocks(nt, rules);
   const pairs = ob.length > 1 || nb.length > 1 ? pairBlocks(ot, nt, ob, nb) : [];
   // The paragraphs left unpaired on each side, for `gap`: one with a counterpart among the other
   // side's changed order (pairs keep the order).
-  const wordsOf = (toks: Token[], [a, b]: [number, number]) =>
-    toks
-      .slice(a, b)
-      .filter((t) => !isBlank(t))
-      .map((t) => t.text);
   const paired = (k: number, side: "o" | "n") => pairs.some((p) => k >= p[side][0] && k <= p[side][1]);
   const unpaired = {
-    o: ob.flatMap((b, k) => (paired(k, "o") ? [] : [wordsOf(ot, b)])),
-    n: nb.flatMap((b, k) => (paired(k, "n") ? [] : [wordsOf(nt, b)])),
+    o: ob.flatMap(([a, b], k) => (paired(k, "o") ? [] : [wordsOf(ot, a, b)])),
+    n: nb.flatMap(([a, b], k) => (paired(k, "n") ? [] : [wordsOf(nt, a, b)])),
   };
   if (!pairs.length) {
     // Nothing paired: nothing here changed order either (pairing found nothing alike).
-    gap(ot, nt, 0, ot.length, 0, nt.length, same, u, ob.length > 0 && nb.length > 0, hard, { o: [], n: [] }, rules);
-    return u;
+    add(gap(sides, { o0: 0, o1: ot.length, n0: 0, n1: nt.length }, { blocks: ob.length > 0 && nb.length > 0, unpaired: { o: [], n: [] }, rules }));
+    return { steps, hard };
   }
   let o = 0;
   let n = 0;
   for (const p of pairs) {
     const [os, oe] = [ob[p.o[0]]![0], ob[p.o[1]]![1]];
     const [ns, ne] = [nb[p.n[0]]![0], nb[p.n[1]]![1]];
-    gap(ot, nt, o, os, n, ns, same, u, true, hard, unpaired, rules);
-    hard.add(u.length);
-    diffRange(ot, nt, os, oe, ns, ne, same, u);
-    hard.add(u.length);
+    add(gap(sides, { o0: o, o1: os, n0: n, n1: ns }, { blocks: true, unpaired, rules }));
+    hard.add(steps.length);
+    add({ steps: diffRange(sides, { o0: os, o1: oe, n0: ns, n1: ne }) });
+    hard.add(steps.length);
     [o, n] = [oe, ne];
   }
-  gap(ot, nt, o, ot.length, n, nt.length, same, u, true, hard, unpaired, rules);
-  return u;
+  add(gap(sides, { o0: o, o1: ot.length, n0: n, n1: nt.length }, { blocks: true, unpaired, rules }));
+  return { steps, hard };
 }
 
 /**
  * Text between paired paragraphs (or a region without pairs): diffed token by token, unless
  * paragraphs there were replaced by unrelated text (`blocks`: the region has several). Then it is
  * one replacement, not a token diff that matches stray words ("\begin{proof} …" → "The proof
- * is in the appendix").
+ * is in the appendix"). `cut`: where removed paragraphs end and inserted ones begin, if the
+ * region's paragraphs changed order.
  */
 function gap(
-  ot: Token[],
-  nt: Token[],
-  oa: number,
-  ob: number,
-  na: number,
-  nb: number,
-  same: Same,
-  u: U[],
-  blocks: boolean,
-  hard: Set<number>,
-  unpaired: { o: string[][]; n: string[][] },
-  rules: SyntaxRules,
-): void {
-  const words = (toks: Token[], a: number, b: number) =>
-    toks
-      .slice(a, b)
-      .filter((t) => !isBlank(t))
-      .map((t) => t.text);
-  const [ow, nw] = [words(ot, oa, ob), words(nt, na, nb)];
-  if (!blocks || !ow.length || !nw.length) {
-    diffRange(ot, nt, oa, ob, na, nb, same, u);
-    return;
-  }
+  sides: Sides,
+  span: Span,
+  opts: { blocks: boolean; unpaired: { o: string[][]; n: string[][] }; rules: SyntaxRules },
+): { steps: Step[]; cut?: number } {
+  const { old: ot, new: nt, same } = sides;
+  const { o0, o1, n0, n1 } = span;
+  const [ow, nw] = [wordsOf(ot, o0, o1), wordsOf(nt, n0, n1)];
+  if (!opts.blocks || !ow.length || !nw.length) return { steps: diffRange(sides, span) };
   // Paragraphs here with a counterpart among the other side's unpaired ones changed order:
   // removed and inserted, paragraph by paragraph, so that they are found as moves. Diffed as one
   // text, a reordered section came out as a few huge changes.
-  const bw = (toks: Token[], a: number, b: number) => tokenBlocks(toks.slice(a, b), rules).map(([s, e]) => words(toks, a + s, a + e));
-  const [obw, nbw] = [bw(ot, oa, ob), bw(nt, na, nb)];
+  const paragraphs = (toks: Token[], a: number, b: number) => tokenBlocks(toks.slice(a, b), opts.rules).map(([s, e]) => wordsOf(toks, a + s, a + e));
   const alike = (x: string[], ys: string[][]) => ys.some((y) => paragraphSimilarity(x, y, PAIR_MIN) >= PAIR_MIN);
-  const reordered = obw.some((x) => alike(x, unpaired.n)) || nbw.some((y) => alike(y, unpaired.o));
-  if (reordered) {
-    for (let k = oa; k < ob; k++) u.push({ o: k, n: -1 });
-    hard.add(u.length);
-    for (let k = na; k < nb; k++) u.push({ o: -1, n: k });
-    return;
-  }
-  if (paragraphSimilarity(ow, nw, PAIR_MIN) >= PAIR_MIN) {
-    diffRange(ot, nt, oa, ob, na, nb, same, u);
-    return;
-  }
+  const reordered = paragraphs(ot, o0, o1).some((x) => alike(x, opts.unpaired.n)) || paragraphs(nt, n0, n1).some((y) => alike(y, opts.unpaired.o));
+  if (reordered) return { steps: [...removed(o0, o1), ...inserted(n0, n1)], cut: o1 - o0 };
+  if (paragraphSimilarity(ow, nw, PAIR_MIN) >= PAIR_MIN) return { steps: diffRange(sides, span) };
+  // Unrelated: one replacement, with the blanks both sides share at its ends kept.
   let pre = 0;
-  while (oa + pre < ob && na + pre < nb && isBlank(ot[oa + pre]!) && same(ot[oa + pre]!, nt[na + pre]!)) pre++;
+  while (o0 + pre < o1 && n0 + pre < n1 && isBlank(ot[o0 + pre]!) && same(ot[o0 + pre]!, nt[n0 + pre]!)) pre++;
   let suf = 0;
-  while (suf < ob - oa - pre && suf < nb - na - pre && isBlank(ot[ob - 1 - suf]!) && same(ot[ob - 1 - suf]!, nt[nb - 1 - suf]!)) suf++;
-  for (let k = 0; k < pre; k++) u.push({ o: oa + k, n: na + k });
-  for (let k = oa + pre; k < ob - suf; k++) u.push({ o: k, n: -1 });
-  for (let k = na + pre; k < nb - suf; k++) u.push({ o: -1, n: k });
-  for (let k = 0; k < suf; k++) u.push({ o: ob - suf + k, n: nb - suf + k });
+  while (suf < o1 - o0 - pre && suf < n1 - n0 - pre && isBlank(ot[o1 - 1 - suf]!) && same(ot[o1 - 1 - suf]!, nt[n1 - 1 - suf]!)) suf++;
+  return {
+    steps: [...kept(o0, n0, pre), ...removed(o0 + pre, o1 - suf), ...inserted(n0 + pre, n1 - suf), ...kept(o1 - suf, n1 - suf, suf)],
+  };
 }
+
+/** Steps that keep `count` tokens from old index `o` and new index `n`, remove old tokens [a, b), insert new ones [a, b). */
+const kept = (o: number, n: number, count: number): Step[] => Array.from({ length: count }, (_, k) => ({ o: o + k, n: n + k }));
+const removed = (a: number, b: number): Step[] => range(a, b).map((o) => ({ o, n: -1 }));
+const inserted = (a: number, b: number): Step[] => range(a, b).map((n) => ({ o: -1, n }));
 
 /**
  * Slide insertions and deletions that could equally sit a few tokens earlier or later to where
@@ -798,7 +805,7 @@ function gap(
  * inserted as ". The method is fast" before the next full stop. Likewise after the end of one
  * of the language's other units (`endsUnit`): a new table row came with the separator before it.
  */
-function slide(u: U[], ot: Token[], nt: Token[], same: Same, endsUnit: (t: Token) => boolean = () => false): void {
+function slide(u: Step[], ot: Token[], nt: Token[], same: Same, endsUnit: (t: Token) => boolean = () => false): void {
   const ends = (t: Token | undefined) => !!t && t.type === "punct" && ".?!".includes(t.text);
   const score = (toks: Token[], a: number, b: number): number => {
     const prev = toks[a - 1];
@@ -855,11 +862,12 @@ function slide(u: U[], ot: Token[], nt: Token[], same: Same, endsUnit: (t: Token
       }
       if (best !== 0) {
         // Rebuild the window [i+lo, j+hi): common entries, with the run shifted by `best`.
-        const out: U[] = [];
+        const out: Step[] = [];
         let c = 0;
         for (let t = first; t < first + (to - from); t++) {
           const inRun = t >= at(best) && t < at(best) + len;
-          out.push(inRun ? ({ [key]: t, [other]: -1 } as unknown as U) : ({ [key]: t, [other]: commons[c++]! } as unknown as U));
+          const partner = inRun ? -1 : commons[c++]!;
+          out.push(key === "n" ? { o: partner, n: t } : { o: t, n: partner });
         }
         u.splice(from, to - from, ...out);
       }
@@ -875,11 +883,10 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   // spaces was dropped, and the next sync reverted it.
   const [oVerb, nVerb] = [rules.verbatim(oldSeg), rules.verbatim(newSeg)];
   const same = (a: Token, b: Token) => a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws" && !oVerb(a) && !nVerb(b));
-  // Where a new unit of the alignment starts (see `alignTokens`): changes don't cross these.
-  const hard = new Set<number>();
-  const u = alignTokens(ot, nt, same, hard, rules);
+  // `hard`: where a new unit of the alignment starts (see `alignTokens`); changes don't cross these.
+  const { steps: u, hard } = alignTokens(ot, nt, same, rules);
   slide(u, ot, nt, same, rules.endsUnit);
-  const isChange = (e: U) => e.o < 0 || e.n < 0;
+  const isChange = (e: Step) => e.o < 0 || e.n < 0;
 
   // Raw edits: maximal runs of changed entries.
   let ranges: [number, number][] = [];
@@ -1064,7 +1071,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
     else sentences.push([r[0], r[1]]);
   }
 
-  // Convert U ranges to character offsets.
+  // Convert step ranges to character offsets.
   const offsetAt = (i: number, key: "o" | "n"): number => {
     const toks = key === "o" ? ot : nt;
     for (let k = i; k < u.length; k++) {
