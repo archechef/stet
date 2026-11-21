@@ -2,7 +2,10 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { edit, git, PAPER, read, setup } from "./helpers.js";
+import { describeItem, firstLines, SHOWN_LINES } from "../src/describe.js";
+import { canUndo, type Group, type Item, linkedRest, parseId, pendingInRound } from "../src/model.js";
+import { Stet } from "../src/service.js";
+import { edit, git, makeItem, PAPER, read, setup, write } from "./helpers.js";
 
 describe("frontend support", () => {
   it("signals every change to records in the store's folder, also without an event (bug report 2026-11-20)", async () => {
@@ -129,5 +132,98 @@ describe("frontend support", () => {
       /^ELECTRON_RUN_AS_NODE='1' STET_PROJECT='.+' STET_AGENT='a' 'C:\/VS Code\/Code\.exe' 'C:\/p\/\.git\/stet\/bin\/stet\.mjs' guard$/,
     );
     expect(readFileSync(join(wt, ".codex/config.toml"), "utf8")).toContain(`env = { ELECTRON_RUN_AS_NODE = "1", STET_WORKSPACE = `);
+  });
+});
+
+describe("rules both front ends share (code quality report 6a517ae, refactoring 4)", () => {
+  it("reads ids the same way everywhere", () => {
+    expect(parseId("g3")).toEqual({ kind: "group", id: "G3" });
+    expect(parseId("G3.2")).toEqual({ kind: "part", id: "G3.2", group: "G3", index: 1 });
+    expect(parseId(" c12 ")).toEqual({ kind: "round", id: "C12" });
+    expect(parseId("n4")).toEqual({ kind: "note", id: "N4" });
+    expect(parseId("12.3")).toEqual({ kind: "item", id: "12.3" });
+    expect(parseId("G3.0").kind).toBe("item"); // no part 0: not found as a change
+  });
+
+  it("can undo a rejection, a revision request and an accept until it is committed", () => {
+    const r = (committed: string | null) => ({ appliedText: "x", edited: false, committed });
+    expect(canUndo(makeItem("a", "b", { status: "rejected" }))).toBe(true);
+    expect(canUndo(makeItem("a", "b", { status: "needs_revision" }))).toBe(true);
+    expect(canUndo(makeItem("a", "b", { status: "accepted", resolution: r(null) }))).toBe(true);
+    expect(canUndo(makeItem("a", "b", { status: "accepted", resolution: r("abc") }))).toBe(false);
+    expect(canUndo(makeItem("a", "b", { status: "pending" }))).toBe(false);
+    expect(canUndo(makeItem("a", "b", { status: "stale" }))).toBe(false);
+  });
+
+  it("decides a change with the rest of its linked part and of its move, and the move's linked groups", () => {
+    const items = new Map<string, Item>();
+    const add = (id: string, extra: Partial<Item> = {}) => items.set(id, makeItem("a", "b", { id, ...extra }));
+    const group = (id: string, members: string[], parts?: string[][]): Group => ({
+      id,
+      agent: "a",
+      changeset: "C1",
+      kind: "linked",
+      title: "t",
+      rationale: null,
+      source: "auto",
+      items: members,
+      state: "open",
+      ...(parts ? { parts: parts.map((p, k) => ({ title: `part ${k + 1}`, items: p })) } : {}),
+    });
+    const groups = new Map([
+      ["G1", group("G1", ["1.1", "1.2", "1.3"], [["1.1", "1.2"], ["1.3"]])],
+      ["G2", group("G2", ["1.5", "1.6"])],
+    ]);
+    add("1.1", { groups: ["G1"] });
+    add("1.2", { groups: ["G1"] });
+    add("1.3", { groups: ["G1"] });
+    // A move: 1.4 takes the text out, 1.5 puts it in; 1.5 is linked with 1.6.
+    const move = { from: ["1.4"], to: ["1.5"], changed: 0 };
+    add("1.4", { move });
+    add("1.5", { move, groups: ["G2"] });
+    add("1.6", { groups: ["G2"] });
+    add("1.7", { status: "accepted", groups: ["G2"] });
+    const look = { item: (id: string) => items.get(id), group: (id: string) => groups.get(id) };
+    const ids = (xs: Item[]) => xs.map((i) => i.id);
+    expect(ids(linkedRest(["1.1"], look))).toEqual(["1.2"]);
+    expect(ids(linkedRest(["1.3"], look))).toEqual([]);
+    expect(ids(linkedRest(["1.4"], look))).toEqual(["1.5", "1.6"]);
+    expect(ids(linkedRest(["1.1", "1.2"], look))).toEqual([]);
+    expect(ids(pendingInRound([...items.values()], "C1"))).toEqual(["1.1", "1.2", "1.3", "1.4", "1.5", "1.6"]);
+  });
+
+  it("describes a change once: what it revises, your wording, its move, and the first lines of a whole file", () => {
+    const asked = makeItem("problem", "issue", { status: "superseded", thread: [{ at: "", author: "user", text: "shorter, please" }] });
+    const rev = makeItem("problem", "task", { supersedes: asked.id, draft: "job" });
+    const get = (id: string) => [asked, rev].find((i) => i.id === id);
+    const d = describeItem(rev, get);
+    expect(d.revises).toEqual({ id: asked.id, item: asked, asked: "shorter, please" });
+    expect(d.yours).toEqual({ text: "job", accepted: false });
+    expect(d.move).toBeNull();
+    const accepted = describeItem({ ...rev, draft: undefined, status: "accepted", resolution: { appliedText: "chore", edited: true, committed: null } }, get);
+    expect(accepted.yours).toEqual({ text: "chore", accepted: true });
+
+    const file = makeItem("", Array.from({ length: SHOWN_LINES + 5 }, (_, k) => `line ${k}`).join("\n"), { kind: "add-file", file: "new.tex" });
+    const whole = describeItem(file, () => undefined).whole!;
+    expect(firstLines(whole.new)).toEqual({ shown: whole.new.slice(0, SHOWN_LINES), more: 5 });
+    expect(whole.old).toEqual([]);
+  });
+
+  it("knows before setup whether a folder is set up, an agent's workspace, and of which languages", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER, "notes.typ": "= Notes\n", "more.typ": "= More\n" });
+    const set = await Stet.inspectSetup(repo);
+    expect(set.setUp).toBe(true);
+    expect(set.languages).toEqual([
+      ["typst", 2],
+      ["latex", 1],
+    ]);
+    expect(set.located.agentWorkspace).toBe(false);
+    const { worktree } = await stet.newAgent("a");
+    expect((await Stet.locate(worktree)).agentWorkspace).toBe(true);
+    expect(await stet.uncommittedEdits()).toBe(false);
+    write(repo, "main.tex", `${PAPER}\nMore.\n`);
+    expect(await stet.uncommittedEdits()).toBe(true);
+    rmSync(join(repo, ".git", "stet"), { recursive: true });
+    expect((await Stet.inspectSetup(repo)).setUp).toBe(false);
   });
 });

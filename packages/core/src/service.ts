@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { AgentFiles } from "./agentfiles.js";
 import { anchor, anchorNear, captureContext, chainInsertions, type Neighbour, type Span } from "./anchor.js";
 import { type AcceptFailure, applyItems, conflicts, type FileChange, type FileView, locate, overlaps, type TextFile } from "./apply.js";
-import { type StetConfig, validateConfig } from "./config.js";
+import { defaultConfig, type StetConfig, validateConfig } from "./config.js";
 import { itemEffect } from "./effects.js";
 import { notFound, StetError } from "./errors.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
@@ -14,11 +14,12 @@ import { autoGroups, type GroupDraft, type GroupHint, type HintUnit, joinTitles,
 import { installHooks } from "./hooks.js";
 import { pingInbox } from "./inbox.js";
 import { archivedMessage, STET_MARKER } from "./instructions.js";
-import { DOCUMENT_LANGUAGES, detectLanguage, documentProfile, type LanguageProfile, profileFor } from "./lang/index.js";
+import { DOCUMENT_LANGUAGES, detectLanguage, documentProfile, type LanguageProfile, languageCounts, profileFor } from "./lang/index.js";
 import {
   type Agent,
   type AgentKind,
   type Changeset,
+  canUndo,
   compareItemIds,
   FEEDBACK_TYPES,
   type Group,
@@ -30,6 +31,8 @@ import {
   type ItemStatus,
   isLive,
   itemId,
+  type Lookup,
+  linkedRest,
   linkedUnit,
   type MoveInfo,
   moveFrom,
@@ -245,7 +248,11 @@ export class Stet {
   // Opening / init
 
   /** Locate the repository containing `cwd` (main worktree or any agent worktree). */
-  static async locate(cwd: string): Promise<{ repo: Repo; mainPath: string; commonDir: string; toplevel: string }> {
+  /**
+   * The repository around `cwd`. `agentWorkspace`: `cwd` is in an agent's workspace (another
+   * worktree of the project), where the reviewer's commands and setup don't belong.
+   */
+  static async locate(cwd: string): Promise<{ repo: Repo; mainPath: string; commonDir: string; toplevel: string; agentWorkspace: boolean }> {
     const probe = new Repo(cwd);
     // One git call for both (each call costs a process start, the most of opening a repository).
     const out = await probe.tryRun(["rev-parse", "--show-toplevel", "--git-common-dir"]);
@@ -256,7 +263,29 @@ export class Stet {
     // the main worktree; elsewhere (an agent workspace, a submodule) git lists where it is.
     const inMain = basename(common) === ".git" && samePath(dirname(common), top);
     const main = inMain ? top : ((await probe.worktrees(common))[0]?.path ?? top);
-    return { repo: new Repo(main), mainPath: main, commonDir: common, toplevel: top };
+    return { repo: new Repo(main), mainPath: main, commonDir: common, toplevel: top, agentWorkspace: !samePath(main, top) };
+  }
+
+  /**
+   * What setting up `dir` would find, before it is done: whether Stet is set up there already,
+   * and the document languages of its tracked files, most files first (when there are files of
+   * several, the front ends say so or ask). Throws when `dir` is in no git repository.
+   */
+  static async inspectSetup(
+    dir: string,
+    located?: Awaited<ReturnType<typeof Stet.locate>>,
+  ): Promise<{ setUp: boolean; languages: [id: string, files: number][]; located: Awaited<ReturnType<typeof Stet.locate>> }> {
+    const loc = located ?? (await Stet.locate(dir));
+    const stet = await Stet.open(dir, loc).catch(() => null);
+    const files = stet ? (await stet.config()).files : defaultConfig("main").files;
+    const tracked = ((await loc.repo.tryRun(["ls-files", "-z"])) ?? "").split("\0").filter(Boolean);
+    const languages = Object.entries(languageCounts(tracked, files)).sort((a, b) => b[1] - a[1]);
+    return { setUp: !!stet, languages, located: loc };
+  }
+
+  /** Edits to tracked files not committed yet: agents start from the last commit and don't see them. */
+  async uncommittedEdits(): Promise<boolean> {
+    return !!(await this.repo.tryRun(["status", "--porcelain", "--untracked-files=no"]));
   }
 
   /** `located`: what `Stet.locate(cwd)` returned, when the caller has it already. */
@@ -2099,24 +2128,11 @@ export class Stet {
     return out;
   }
 
-  private async linkedMembers(items: Item[]): Promise<Item[]> {
-    const out = new Map<string, Item>();
-    for (const it of items) {
-      for (const gid of it.groups) {
-        const g = await this.store.getGroup(gid);
-        if (g?.kind !== "linked") continue;
-        for (const m of linkedUnit(g, it.id)) {
-          const mi = await this.store.getItem(m);
-          if (mi && isLive(mi.status)) out.set(mi.id, mi);
-        }
-      }
-      // The items of a move belong together even if their group was dissolved.
-      for (const p of moveOthers(it)) {
-        const pi = await this.store.getItem(p);
-        if (pi && isLive(pi.status)) out.set(pi.id, pi);
-      }
-    }
-    return [...out.values()];
+  /** The store's items and groups by id, for the rules in model.ts that take a `Lookup`. */
+  private async lookup(): Promise<Lookup> {
+    const items = new Map((await this.store.itemsReadOnly()).map((i) => [i.id, i]));
+    const groups = new Map((await this.store.groups()).map((g) => [g.id, g]));
+    return { item: (id) => items.get(id), group: (id) => groups.get(id) };
   }
 
   /**
@@ -2203,7 +2219,10 @@ export class Stet {
       );
     }
     const warnings: string[] = [];
-    const missing = (await this.linkedMembers(items)).filter((m) => !items.some((i) => i.id === m.id));
+    const missing = linkedRest(
+      items.map((i) => i.id),
+      await this.lookup(),
+    );
     if (missing.length) {
       if (!opts.overrideLinked) {
         throw new StetError(
@@ -2397,7 +2416,10 @@ export class Stet {
     return this.store.withLock(async () => {
       const items = opts.mode === "only" ? await this.requireItems(ids) : await this.withMovePartners(await this.requireItems(ids));
       for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
-      const rest = (await this.linkedMembers(items)).filter((m) => !items.some((i) => i.id === m.id));
+      const rest = linkedRest(
+        items.map((i) => i.id),
+        await this.lookup(),
+      );
       if (rest.length && !opts.mode) {
         throw new StetError(
           `${items.map((i) => i.id).join(", ")} is linked with ${rest.map((m) => m.id).join(", ")}. ` +
@@ -2454,7 +2476,8 @@ export class Stet {
       await this.recoverInterrupted();
       const items = await this.requireItems([...new Set(ids)]);
       for (const it of items) {
-        if (it.status !== "accepted" && it.status !== "rejected" && it.status !== "needs_revision")
+        // A committed accept is refused below, with its commit.
+        if (!canUndo(it) && it.status !== "accepted")
           throw new StetError(`${it.id} is ${it.status}: only accepted and rejected changes, and revision requests, can be undone.`);
       }
       const reopened = new Map<string, Item>();
@@ -2675,7 +2698,7 @@ export class Stet {
     // Apply what accepting it would apply: one end of a move or of a linked part alone can leave
     // the document broken (\begin{proof} without its \end, bug report 2026-11-19).
     const together = (list: Item[]) => list.filter((i) => i.id !== item.id && isTex(i) && i.baseCommit === item.baseCommit);
-    const unit = isLive(item.status) ? together(await this.linkedMembers(await this.withMovePartners([item]))) : [];
+    const unit = isLive(item.status) ? together(linkedRest([item.id], await this.lookup())) : [];
     const request = async (others: Item[], tag: string): Promise<PreviewRequest | null> => {
       const changes = [await change(item), ...(await Promise.all(others.map(change)))];
       if (changes.some((c) => !c)) return null;

@@ -5,11 +5,11 @@
  * and in the editor's title bar: Accept (with this wording), Agent's wording, More….
  */
 import { basename } from "node:path";
-import { foldPath, type Item } from "@stet/core";
+import { foldPath, type Item, isLiveItem } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, type ChangeAction, withIcon } from "./actions.js";
 import { announce } from "./announce.js";
-import { isLive, projectOfQuery, projectQuery, type Ref } from "./model.js";
+import { projectOfQuery, projectQuery, type Ref } from "./model.js";
 import type { Project } from "./project.js";
 import { type ReviewHost, viaReview } from "./review.js";
 
@@ -103,7 +103,7 @@ export class EditFiles implements vscode.FileSystemProvider, vscode.CodeLensProv
         } catch {
           continue;
         }
-        if (item && !isLive(item)) await vscode.window.tabGroups.close(tab).then(undefined, () => undefined);
+        if (item && !isLiveItem(item)) await vscode.window.tabGroups.close(tab).then(undefined, () => undefined);
       }
     }
     this.lensChanged.fire();
@@ -120,7 +120,8 @@ export class EditFiles implements vscode.FileSystemProvider, vscode.CodeLensProv
     }
     const at = new vscode.Range(0, 0, 0, 0);
     const { project: p, id, item } = t;
-    if (!item || !isLive(item)) return [new vscode.CodeLens(at, { title: `${id} is ${item?.status ?? "gone"}: there is no wording to change`, command: "" })];
+    if (!item || !isLiveItem(item))
+      return [new vscode.CodeLens(at, { title: `${id} is ${item?.status ?? "gone"}: there is no wording to change`, command: "" })];
     const route = viaReview(doc.uri);
     const ref: Ref = { path: p.mainPath, id };
     const lens = (a: ChangeAction, title = withIcon(a)) =>

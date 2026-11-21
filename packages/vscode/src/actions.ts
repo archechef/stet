@@ -3,8 +3,8 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { hasPreview, type Item, movesOut, oneLine, profileByName } from "@stet/core";
-import { isLive, linkTitle, type Ref, type TreeModel } from "./model.js";
+import { canUndo, hasPreview, type Item, isLiveItem, movesOut, oneLine, profileByName } from "@stet/core";
+import { linkTitle, type Ref, type TreeModel } from "./model.js";
 
 export interface ChangeAction {
   /** Shown text, without icon. */
@@ -55,7 +55,7 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
   const others = g
     ? model
         .members(g)
-        .filter((m) => isLive(m) && !unit.includes(m.id))
+        .filter((m) => isLiveItem(m) && !unit.includes(m.id))
         .map((m) => m.id)
     : [];
   if (unit.length === own.length && !others.length) return null;
@@ -142,7 +142,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
   const ref = (id: string): Ref => ({ path: mainPath, id });
   const r = [ref(item.id)];
   const out: ChangeAction[] = [];
-  const live = isLive(item);
+  const live = isLiveItem(item);
   const modify = item.kind === "modify";
   if (live) {
     const accept = acceptAction(model, mainPath, item);
@@ -256,8 +256,8 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
       detail: "Drops the wording you gave it in Review file.",
     });
   }
-  // Undoable: a rejection, or an accept not committed yet.
-  if (item.status === "rejected" || (item.status === "accepted" && !!item.resolution && !item.resolution.committed)) {
+  // A decided change whose decision Stet can still undo.
+  if (!live && canUndo(item)) {
     out.push({
       label: "Undo",
       icon: "discard",

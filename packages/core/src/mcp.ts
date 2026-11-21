@@ -9,7 +9,19 @@ import type { GroupHint, NoteHint } from "./grouping.js";
 import { InboxWriter } from "./inbox.js";
 import { archivedMessage, mcpInstructions } from "./instructions.js";
 import { documentProfile, type LanguageProfile } from "./lang/index.js";
-import { type GroupKind, type Item, type ItemBrief, type ItemStatus, isNoteId, moveFrom, moveTo, type PartOutcome, partId, type StetEvent } from "./model.js";
+import {
+  type GroupKind,
+  type Item,
+  type ItemBrief,
+  type ItemStatus,
+  isNoteId,
+  moveFrom,
+  moveTo,
+  type PartOutcome,
+  parseId,
+  partId,
+  type StetEvent,
+} from "./model.js";
 import { describeNote } from "./notes.js";
 import { pathExists } from "./paths.js";
 import { Stet, StetError, type SubmitResult } from "./service.js";
@@ -551,8 +563,9 @@ export class StetMcpServer {
         }
         case "stet_show": {
           // Agents see their own items and groups only (other agents' proposals are not theirs to read).
-          const id = String(args.id ?? "").toUpperCase();
-          if (isNoteId(id)) {
+          const ref = parseId(String(args.id ?? ""));
+          const id = ref.id.toUpperCase();
+          if (ref.kind === "note") {
             const n = await stet.getNote(id);
             if (n.agent !== agent || !n.deliveredAt) throw notFound(`Unknown note ${id}.`);
             return text(
@@ -563,7 +576,7 @@ export class StetMcpServer {
               ].join("\n"),
             );
           }
-          if (id.startsWith("G")) {
+          if (ref.kind === "group" || ref.kind === "part") {
             const g = await stet.store.getGroup(id);
             if (!g || g.agent !== agent) throw notFound(`Unknown group ${id}.`);
             const members = (await Promise.all(g.items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);

@@ -140,6 +140,11 @@ export type ItemStatus = "pending" | "needs_revision" | "accepted" | "rejected" 
 
 export const LIVE_STATUSES: readonly ItemStatus[] = ["pending", "needs_revision"];
 export const isLive = (s: ItemStatus) => LIVE_STATUSES.includes(s);
+/** Whether a change is still to be decided: pending, or waiting for the agent's revision. */
+export const isLiveItem = (it: Pick<Item, "status">): boolean => isLive(it.status);
+/** The changes of round `round` (a changeset id) still to be decided. */
+export const pendingInRound = <T extends Pick<Item, "changeset" | "status">>(items: readonly T[], round: string): T[] =>
+  items.filter((i) => i.changeset === round && isLive(i.status));
 
 export interface ThreadEntry {
   at: string;
@@ -243,6 +248,61 @@ export const movesOut = (it: Pick<Item, "id" | "move">): boolean => !!it.move &&
 export const moveOthers = (it: Pick<Item, "id" | "move">): string[] => (it.move ? [...moveFrom(it.move), ...moveTo(it.move)].filter((i) => i !== it.id) : []);
 
 /**
+ * Whether Stet can undo the decision on a change: a rejection, a revision request, or an accept
+ * not committed yet. A committed accept is in git's history; it is reverted with git.
+ */
+export const canUndo = (it: Pick<Item, "status" | "resolution">): boolean =>
+  it.status === "rejected" || it.status === "needs_revision" || (it.status === "accepted" && !!it.resolution && !it.resolution.committed);
+
+/** Items and groups by id, from the store or from a snapshot of it. */
+export interface Lookup {
+  item(id: string): Item | undefined;
+  group(id: string): Group | undefined;
+}
+
+/**
+ * The pending changes that are decided together with `ids`, not counting `ids`: the other ends of
+ * their moves (part of a move alone drops or doubles the passage), and the rest of the linked
+ * group, or of its part, of each of them (accepting part of a linked group can break the
+ * document). Core refuses to decide `ids` without them unless told to; the front ends ask first.
+ */
+export function linkedRest(ids: readonly string[], look: Lookup): Item[] {
+  const given = new Set(ids.map((i) => i.toUpperCase()));
+  const live = (id: string) => {
+    const it = look.item(id);
+    return it && isLive(it.status) ? it : undefined;
+  };
+  // The changes themselves with the other ends of their moves, then their linked units.
+  const unit = new Map<string, Item>();
+  for (const id of given) {
+    const it = look.item(id);
+    if (!it) continue;
+    unit.set(it.id, it);
+    for (const o of moveOthers(it)) {
+      const oi = live(o);
+      if (oi) unit.set(oi.id, oi);
+    }
+  }
+  const out = new Map<string, Item>();
+  for (const it of unit.values()) {
+    out.set(it.id, it);
+    for (const gid of it.groups) {
+      const g = look.group(gid);
+      if (g?.kind !== "linked") continue;
+      for (const m of linkedUnit(g, it.id)) {
+        const mi = live(m);
+        if (mi) out.set(mi.id, mi);
+      }
+    }
+    for (const o of moveOthers(it)) {
+      const oi = live(o);
+      if (oi) out.set(oi.id, oi);
+    }
+  }
+  return [...out.values()].filter((i) => !given.has(i.id.toUpperCase()) && isLive(i.status)).sort((a, b) => compareItemIds(a.id, b.id));
+}
+
+/**
  * A reviewer's note to one agent about a passage of the document (spec §7.8), e.g. "shorten this
  * paragraph". Delivered at the agent's next sync; afterwards a conversation like an item's.
  */
@@ -265,6 +325,29 @@ export interface Note {
 }
 
 export const isNoteId = (id: string): boolean => /^N\d+$/i.test(id.trim());
+
+/** What an id names, as the reviewer types it: ids are case-insensitive and come back upper-case (items as they are). */
+export type ParsedId =
+  | { kind: "item"; id: string }
+  | { kind: "group"; id: string }
+  | { kind: "part"; id: string; group: string; index: number }
+  | { kind: "round"; id: string }
+  | { kind: "note"; id: string };
+
+/**
+ * G3 a group, G3.2 its second part, C12 a round (changeset), N4 a note; anything else is taken
+ * for a change (12.3), which the store then finds or not.
+ */
+export function parseId(raw: string): ParsedId {
+  const id = raw.trim();
+  const up = id.toUpperCase();
+  const part = parsePartId(id);
+  if (part) return { kind: "part", id: up, ...part };
+  if (/^G\d+$/.test(up)) return { kind: "group", id: up };
+  if (/^C\d+$/.test(up)) return { kind: "round", id: up };
+  if (isNoteId(id)) return { kind: "note", id: up };
+  return { kind: "item", id };
+}
 
 /** An item as events describe it: where it is, and its text (cut at 400 characters). */
 export interface ItemBrief {

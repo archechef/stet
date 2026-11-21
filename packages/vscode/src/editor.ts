@@ -1,6 +1,6 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 
-import { type Item, itemEffect, lineDiff, moveChanges, moveFrom, movesOut, moveTexts, moveTo, partIndexOf, profileByName } from "@stet/core";
+import { describeItem, firstLines, type Item, isLiveItem, movesOut, partIndexOf, profileByName } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, actionRow, type ChangeAction, changeActions, withIcon } from "./actions.js";
 import {
@@ -9,7 +9,6 @@ import {
   esc,
   fence,
   ghostText,
-  isLive,
   itemDiff,
   LineIndex,
   linkTitle,
@@ -57,7 +56,7 @@ export class Locator {
     const sig = JSON.stringify(inFile);
     const hit = this.cache.get(key);
     if (hit && hit.version === doc.version && hit.sig === sig) return hit.located;
-    const located = p ? this.compute(doc, p, inFile.filter(isLive)) : Promise.resolve([]);
+    const located = p ? this.compute(doc, p, inFile.filter(isLiveItem)) : Promise.resolve([]);
     this.cache.set(key, { version: doc.version, sig, located });
     return located;
   }
@@ -424,21 +423,16 @@ export class EditorIntegration
 /** Markdown description of an item (hover, tooltips). */
 export function itemMarkdown(item: Item, model: TreeModel): string {
   const cs = model.snap.changesets.find((c) => c.id === item.changeset);
+  const d = describeItem(item, model.get);
   const lines = [`**${item.id}** · ${esc(item.agent)} · ${STATUS_TEXT[item.status]}`];
   // A file that takes effect once accepted: said first (security report 5e4c6af, S12).
-  const effect = itemEffect(item);
-  if (effect) lines.push(`⚠ **Takes effect:** ${esc(effect)}. Accepting asks to confirm.`);
+  if (d.effect) lines.push(`⚠ **Takes effect:** ${esc(d.effect)}. Accepting asks to confirm.`);
   if (cs) lines.push(`*${esc(cs.title)}*${cs.rationale ? ` — ${esc(cs.rationale)}` : ""}`);
   if (item.note) lines.push(esc(item.note));
   // A revision: what it revises, and what you asked for there (test report 2026-11-20, B4).
-  if (item.supersedes) {
-    const prev = model.get(item.supersedes);
-    const asked = prev ? [...prev.thread].reverse().find((t) => t.author === "user") : undefined;
-    lines.push(`↻ **Revision of ${item.supersedes}**${asked ? `, where you asked: ${esc(asked.text)}` : ""}`);
-  }
-  if (item.status === "accepted" && item.resolution?.edited && item.kind === "modify")
-    lines.push(`✎ **Accepted with your wording:** ${diffBlock(item.oldText, item.resolution.appliedText)}\n\nThe agent proposed:`);
-  if (item.draft !== undefined) lines.push(draftMarkdown(item));
+  if (d.revises) lines.push(`↻ **Revision of ${d.revises.id}**${d.revises.asked ? `, where you asked: ${esc(d.revises.asked)}` : ""}`);
+  if (d.yours?.accepted) lines.push(`✎ **Accepted with your wording:** ${diffBlock(item.oldText, d.yours.text)}\n\nThe agent proposed:`);
+  else if (d.yours) lines.push(draftMarkdown({ draft: d.yours.text, file: item.file }));
   for (const gid of item.groups) {
     const g = model.group(gid);
     if (g && g.kind !== "atomic")
@@ -446,50 +440,32 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     const k = g ? partIndexOf(g, item.id) : -1;
     if (g && k >= 0) lines.push(`part ${k + 1} of ${g.parts!.length}: ${esc(g.parts![k]!.title)} (${g.parts![k]!.items.join(", ")})`);
   }
-  if (item.move) {
-    const out = movesOut(item);
-    const files = [
-      ...new Set(
-        model
-          .others(item)
-          .map((o) => o.file)
-          .filter((f) => f !== item.file),
-      ),
-    ];
-    const from = moveFrom(item.move).join(", ");
-    const to = moveTo(item.move).join(", ");
+  const shown = (ls: readonly string[]) => {
+    const { shown, more } = firstLines(ls);
+    return shown.join("\n") + (more ? `\n… ${more} more lines` : "");
+  };
+  if (d.move) {
+    const { out, from, to, otherFiles, changed, changes } = d.move;
     lines.push(
-      `⇅ **Move**: ${from} remove${out ? " text here" : ""}, ${to} insert${out ? "" : " it here"}${files.length ? ` (also in ${files.map(esc).join(", ")})` : ""}. Accepting or rejecting one decides the whole move.`,
+      `⇅ **Move**: ${from.join(", ")} remove${out ? " text here" : ""}, ${to.join(", ")} insert${out ? "" : " it here"}${otherFiles.length ? ` (also in ${otherFiles.map(esc).join(", ")})` : ""}. Accepting or rejecting one decides the whole move.`,
     );
-    const texts = moveTexts(item.move, model.get);
-    const changes = texts ? moveChanges(texts.from, texts.to) : [];
     if (changes.length) {
-      lines.push(
-        `⚠ **Changed on the way (${item.move.changed} word${item.move.changed > 1 ? "s" : ""}):** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`,
-      );
+      lines.push(`⚠ **Changed on the way (${changed} word${changed > 1 ? "s" : ""}):** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`);
     } else lines.push("Word for word: the text arrives unchanged (spacing and line breaks aside).");
     lines.push(fence(out ? item.oldText : item.newText, profileByName(item.file).fence));
   } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
   else {
     lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);
     // A whole file's content (its first lines): new files showed only their name.
-    const whole = item.kind === "add-file" || item.kind === "rename-file" ? item.newText : item.kind === "delete-file" ? item.oldText : "";
-    if (whole) {
-      const ls = whole.split("\n");
-      lines.push(fence(ls.slice(0, 60).join("\n") + (ls.length > 60 ? `\n… ${ls.length - 60} more lines` : ""), profileByName(item.file).fence));
-    }
+    const whole = d.whole && (item.kind === "delete-file" ? d.whole.old : d.whole.new);
+    if (whole?.length) lines.push(fence(shown(whole), profileByName(item.file).fence));
     // Text with bytes that aren't UTF-8: its changed lines, the bytes marked (security report 5e4c6af, S7).
-    if (item.kind === "binary" && item.shownText) {
-      const diff = lineDiff(item.shownText.old ?? "", item.shownText.new ?? "");
-      lines.push(
-        "Not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte.",
-        fence(diff.slice(0, 60).join("\n") + (diff.length > 60 ? `\n… ${diff.length - 60} more lines` : ""), "diff"),
-      );
-    }
+    if (d.bytes)
+      lines.push("Not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte.", fence(shown(d.bytes), "diff"));
   }
   // A decided change shows its whole conversation (History's tooltip showed only three messages,
   // and later replies were lost); a pending one the latest three, as more is in its comment thread.
-  const last = isLive(item) ? item.thread.slice(-3) : item.thread;
+  const last = isLiveItem(item) ? item.thread.slice(-3) : item.thread;
   if (last.length < item.thread.length)
     lines.push(`*${item.thread.length - last.length} earlier message${item.thread.length - last.length === 1 ? "" : "s"} in the comment thread*`);
   if (last.length) lines.push(last.map((t) => `> **${t.author === "user" ? "You" : esc(item.agent)}:** ${esc(t.text)}`).join("\n>\n"));

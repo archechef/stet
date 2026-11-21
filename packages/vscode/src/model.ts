@@ -5,6 +5,7 @@
 import {
   type Agent,
   type Changeset,
+  canUndo,
   changeSummary,
   compareItemIds,
   type Group,
@@ -13,9 +14,10 @@ import {
   type Item,
   type ItemStatus,
   inlineDiff,
+  isLiveItem,
   itemEffect,
   lineDiff,
-  linkedUnit,
+  linkedRest,
   moveChangesOf,
   moveFrom,
   moveOthers,
@@ -81,8 +83,6 @@ export const isRef = (v: unknown): v is Ref => !!v && typeof v === "object" && t
  */
 export const fromPanel = (arg: unknown): boolean => arg === "panel" || (!!arg && typeof arg === "object" && "project" in arg && !isRef(arg));
 
-export const LIVE: readonly ItemStatus[] = ["pending", "needs_revision"];
-export const isLive = (i: Item) => LIVE.includes(i.status);
 const num = (id: string) => Number(id.slice(1));
 const byNum = (a: { id: string }, b: { id: string }) => num(a.id) - num(b.id);
 const byId = (a: { id: string }, b: { id: string }) => compareItemIds(a.id, b.id);
@@ -165,7 +165,7 @@ export class TreeModel {
   }
 
   visible(i: Item): boolean {
-    return this.mode === "history" ? !isLive(i) : isLive(i);
+    return this.mode === "history" ? !isLiveItem(i) : isLiveItem(i);
   }
 
   /** Visible members of a group (atomic groups never show: their members are merged). */
@@ -264,7 +264,7 @@ export class TreeModel {
   }
 
   liveCount(pred: (i: Item) => boolean): number {
-    return this.snap.items.filter((i) => isLive(i) && pred(i)).length;
+    return this.snap.items.filter((i) => isLiveItem(i) && pred(i)).length;
   }
 
   /**
@@ -280,7 +280,7 @@ export class TreeModel {
   /** How the decided changes matching `pred` were decided, e.g. "5 accepted · 2 rejected". */
   outcome(pred: (i: Item) => boolean): string {
     const counts = new Map<ItemStatus, number>();
-    for (const i of this.snap.items) if (!isLive(i) && pred(i)) counts.set(i.status, (counts.get(i.status) ?? 0) + 1);
+    for (const i of this.snap.items) if (!isLiveItem(i) && pred(i)) counts.set(i.status, (counts.get(i.status) ?? 0) + 1);
     const order: ItemStatus[] = ["accepted", "rejected", "stale", "withdrawn", "superseded"];
     return order
       .filter((st) => counts.has(st))
@@ -296,21 +296,9 @@ export class TreeModel {
     return this.groups.get(id.toUpperCase());
   }
 
-  /** Live items that must be accepted with `ids` (their linked group, or its part), excluding `ids` themselves. */
+  /** Live items that are decided with `ids` (core's rule: their moves, their linked groups or parts), excluding `ids` themselves. */
   linkedRest(ids: string[]): Item[] {
-    const out = new Map<string, Item>();
-    for (const id of ids) {
-      for (const gid of this.item(id)?.groups ?? []) {
-        const g = this.groups.get(gid);
-        if (g?.kind !== "linked") continue;
-        for (const m of linkedUnit(g, id.toUpperCase())) {
-          const mi = this.items.get(m);
-          if (mi && isLive(mi) && !ids.includes(mi.id)) out.set(mi.id, mi);
-        }
-      }
-      for (const o of this.moveRest(this.item(id))) if (!ids.includes(o.id)) out.set(o.id, o);
-    }
-    return [...out.values()].sort(byId);
+    return linkedRest(ids, { item: (id) => this.item(id), group: (id) => this.group(id) });
   }
 
   /** Pending items in other parts of the linked groups of `ids`: neither `ids` nor what `linkedRest` adds. */
@@ -323,7 +311,7 @@ export class TreeModel {
         if (g?.kind !== "linked") continue;
         for (const m of g.items) {
           const mi = this.items.get(m);
-          if (mi && isLive(mi) && !rest.has(mi.id)) out.set(mi.id, mi);
+          if (mi && isLiveItem(mi) && !rest.has(mi.id)) out.set(mi.id, mi);
         }
       }
     }
@@ -335,7 +323,7 @@ export class TreeModel {
     return item
       ? moveOthers(item)
           .map((o) => this.items.get(o))
-          .filter((o): o is Item => !!o && isLive(o))
+          .filter((o): o is Item => !!o && isLiveItem(o))
       : [];
   }
 
@@ -819,13 +807,13 @@ export function itemSpoken(it: Item, line?: number, unread = 0): string {
   // As the row says it (test report v0.16.0, accessibility): "revision requested", your wording,
   // the conversation.
   const extra = [
-    ...(it.draft !== undefined && isLive(it) ? ["your wording"] : []),
+    ...(it.draft !== undefined && isLiveItem(it) ? ["your wording"] : []),
     ...(it.thread.length ? [`${it.thread.length} message${it.thread.length === 1 ? "" : "s"}${unread ? `, ${unread} new` : ""}`] : []),
   ];
   const state = [STATUS_TEXT[it.status], ...extra].join(", ");
   if (it.kind !== "modify") return `Change ${it.id}, ${it.kind.replace("-", " ")} ${where}, ${state}`;
   // What it says: your wording if you have one, or the text it was accepted with.
-  const text = it.status === "accepted" && it.resolution ? it.resolution.appliedText : isLive(it) ? (it.draft ?? it.newText) : it.newText;
+  const text = it.status === "accepted" && it.resolution ? it.resolution.appliedText : isLiveItem(it) ? (it.draft ?? it.newText) : it.newText;
   const [o, n] = changeSummary(it.oldText, text, 60);
   const breaks = paragraphChange(it.oldText, text);
   const what = breaks
@@ -912,10 +900,9 @@ export function itemRow(
   const lost = !place.found && !opts.history;
   const description =
     `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${place.line}` : ""}` +
-    `${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}` +
+    `${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLiveItem(it) ? " · your wording" : ""}` +
     `${itemEffect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, opts.unread)}` : ""}`;
-  // Undoable: a rejection, or an accept not committed yet.
-  const undo = it.status === "rejected" || (it.status === "accepted" && !!it.resolution && !it.resolution.committed);
+  const undo = canUndo(it);
   // ".pdf": the change has a PDF preview (not in a Typst file).
   const pdf = it.kind === "modify" && hasPreview(it.file) ? ".pdf" : "";
   return {
@@ -923,7 +910,7 @@ export function itemRow(
     description,
     spoken: itemSpoken(it, lost ? undefined : place.line, opts.unread) + (lost ? `, ${LOST_TEXT}` : ""),
     lost,
-    contextValue: isLive(it) ? `item.live.${it.kind}${pdf}` : `item.done.${it.kind}${pdf}${undo ? ".undo" : ""}`,
+    contextValue: isLiveItem(it) ? `item.live.${it.kind}${pdf}` : `item.done.${it.kind}${pdf}${undo ? ".undo" : ""}`,
   };
 }
 

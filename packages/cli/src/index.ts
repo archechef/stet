@@ -15,11 +15,12 @@ import {
   checkToolUse,
   DOCUMENT_LANGUAGES,
   describeFeedback,
+  describeItem,
   describeNote,
   doctor,
   documentProfile,
   findInbox,
-  foldPath,
+  firstLines,
   followInbox,
   type GroupHint,
   type GroupKind,
@@ -31,12 +32,10 @@ import {
   isLive,
   isNoteId,
   itemEffect,
-  languageCounts,
   lineDiff,
-  moveChanges,
   moveFrom,
+  moveOthers,
   movesOut,
-  moveTexts,
   moveTo,
   NOTIFY_TRIGGER_TEXT,
   NOTIFY_TRIGGERS,
@@ -49,12 +48,15 @@ import {
   notifyTriggers,
   oneLine,
   paragraphChange,
+  parseId,
   partId,
+  pendingInRound,
   printable,
   profileByName,
   Repo,
   roundOf,
   SHARE_MODES,
+  SHOWN_LINES,
   type ShareMode,
   Stet,
   StetError,
@@ -280,23 +282,21 @@ function itemDiff(it: Item): string {
   if (it.kind === "binary") {
     // Text with bytes that aren't UTF-8: shown, the bytes marked (security report 5e4c6af, S7).
     if (!it.shownText) return dim("(binary file)");
-    const all = lineDiff(it.shownText.old ?? "", it.shownText.new ?? "");
-    const shown = opt.full ? all : all.slice(0, 80);
+    const { shown, more } = firstLines(lineDiff(it.shownText.old ?? "", it.shownText.new ?? ""), opt.full ? Infinity : SHOWN_LINES);
     return [
       dim("(not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte)"),
       ...shown.map((l) => (l.startsWith("+ ") ? green(l) : l.startsWith("- ") ? red(l) : dim(l))),
-      ...(shown.length < all.length ? [dim(`  … ${all.length - shown.length} more lines (stet show ${it.id} --full shows them all)`)] : []),
+      ...(more ? [dim(`  … ${more} more lines (stet show ${it.id} --full shows them all)`)] : []),
     ].join("\n");
   }
   if (it.kind !== "modify") {
     const lines: string[] = [];
-    // Whole files with --full; else the first 40 lines of each side, and how many more there are
+    // Whole files with --full; else the first lines of each side, and how many more there are
     // (security report 5e4c6af, S8: the rest was cut without a word).
     const side = (text: string, mark: (s: string) => string, sign: string) => {
-      const all = text.split("\n");
-      const shown = opt.full ? all : all.slice(0, 40);
+      const { shown, more } = firstLines(text.split("\n"), opt.full ? Infinity : SHOWN_LINES);
       lines.push(...shown.map((l) => mark(sign + l)));
-      if (shown.length < all.length) lines.push(dim(`  … ${all.length - shown.length} more lines (stet show ${it.id} --full shows them all)`));
+      if (more) lines.push(dim(`  … ${more} more lines (stet show ${it.id} --full shows them all)`));
     };
     if (it.oldText) side(it.oldText, red, "- ");
     if (it.newText) side(it.newText, green, "+ ");
@@ -369,14 +369,14 @@ function need(v: string | undefined, what: string): string {
 }
 
 /** A group (G3) or a part of one (G3.2). */
-const isGroupId = (s: string) => /^G\d+(\.\d+)?$/i.test(s);
-const isRoundId = (s: string) => /^C\d+$/i.test(s);
+const isGroupId = (s: string) => ["group", "part"].includes(parseId(s).kind);
+const isRoundId = (s: string) => parseId(s).kind === "round";
 
 /** A round's (C3) pending changes, for accepting or rejecting it whole (test report UX: "Unknown item 'C1'"). */
 async function roundItems(stet: Stet, id: string): Promise<string[]> {
-  const cs = (await stet.listChangesets()).find((c) => c.id === id.toUpperCase());
-  if (!cs) throw notFound(`Unknown changeset ${id.toUpperCase()}.`);
-  const ids = (await stet.listItems({ changeset: cs.id })).filter((i) => isLive(i.status)).map((i) => i.id);
+  const cs = (await stet.listChangesets()).find((c) => c.id === parseId(id).id);
+  if (!cs) throw notFound(`Unknown changeset ${parseId(id).id}.`);
+  const ids = pendingInRound(await stet.listItems({ changeset: cs.id }), cs.id).map((i) => i.id);
   if (!ids.length) throw new StetError(`${cs.id} has no pending changes.`);
   return ids;
 }
@@ -580,18 +580,14 @@ async function main() {
 
   if (cmd === "init") {
     // A second run only refreshes the setup: say so, instead of the first-time message (test report UX).
-    const already = await Stet.open(cwd).then(
-      () => true,
-      () => false,
-    );
+    const { setUp: already, languages } = await Stet.inspectSetup(cwd);
     const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), ...(opt.language ? { language: opt.language } : {}), cli: SELF });
     const cfg = await stet.config();
     // Files of both languages: which has more, and how to choose the other (test report 5e4c6af).
-    const counts = languageCounts(((await stet.repo.tryRun(["ls-files", "-z"])) ?? "").split("\0").filter(Boolean), cfg.files);
-    const mixed = !opt.language && !already && Object.keys(counts).length > 1;
+    const mixed = !opt.language && !already && languages.length > 1;
     const hooks = await hookStatus(stet.repo, stet.commonDir);
     // Agents start from the last commit: edits not committed yet are not theirs to see.
-    const dirty = (await stet.repo.tryRun(["status", "--porcelain", "--untracked-files=no"])) ?? "";
+    const dirty = await stet.uncommittedEdits();
     return out(
       () =>
         (already
@@ -601,7 +597,7 @@ async function main() {
         `Language: ${documentProfile(cfg).name} (agents' instructions follow it; set "language" in .git/stet/config.json to change it).\n` +
         (mixed
           ? yellow(
-              `! The project has files of both languages (${Object.entries(counts)
+              `! The project has files of both languages (${languages
                 .map(([id, n]) => `${n} ${DOCUMENT_LANGUAGES.find((p) => p.id === id)?.name ?? id}`)
                 .join(", ")}); Stet took the one with more. \`stet init --language <${DOCUMENT_LANGUAGES.map((p) => p.id).join("|")}>\` chooses.`,
             ) + "\n"
@@ -616,7 +612,7 @@ async function main() {
         (already
           ? ""
           : `Next: stet agent new <name>. Optional, once per machine: stet setup claude (or codex) registers Stet with the agent tool for every folder; each workspace already has its own config.`),
-      { mainPath: stet.mainPath, mainBranch: cfg.mainBranch, hooks, alreadySetUp: already, uncommittedEdits: !!dirty },
+      { mainPath: stet.mainPath, mainBranch: cfg.mainBranch, hooks, alreadySetUp: already, uncommittedEdits: dirty },
     );
   }
 
@@ -626,7 +622,7 @@ async function main() {
   const reviewerOnly =
     ["accept", "reject", "undo", "commit", "revise", "comment", "share", "group", "ungroup", "note", "hooks"].includes(cmd) ||
     (cmd === "agent" && args[0] !== "list");
-  if (reviewerOnly && foldPath(located.toplevel) !== foldPath(located.mainPath)) {
+  if (reviewerOnly && located.agentWorkspace) {
     throw new StetError(
       `\`stet ${cmd}\` is for the reviewer, and this is an agent's workspace (${located.toplevel}). Run it in your project folder, ${located.mainPath}.`,
     );
@@ -806,8 +802,9 @@ async function main() {
     }
 
     case "show": {
-      const id = need(args[0], "id").toUpperCase();
-      if (isNoteId(id)) {
+      const ref = parseId(need(args[0], "id"));
+      const id = ref.id.toUpperCase();
+      if (ref.kind === "note") {
         const n = await stet.getNote(id);
         return out(
           () =>
@@ -819,7 +816,7 @@ async function main() {
           n,
         );
       }
-      if (id.startsWith("G")) {
+      if (ref.kind === "group" || ref.kind === "part") {
         const { group: g, part } = await stet.groupTarget(id);
         const items = (await Promise.all((part ?? g).items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
         if (part)
@@ -838,7 +835,7 @@ async function main() {
         } else lines.push(...items.map((i) => itemSummary(i)));
         return out(() => lines.filter(Boolean).join("\n"), { group: g, items });
       }
-      if (id.startsWith("C")) {
+      if (ref.kind === "round") {
         const cs = (await stet.listChangesets()).find((x) => x.id === id);
         if (!cs) throw notFound(`Unknown changeset ${id}.`);
         const items = await stet.listItems({ changeset: id });
@@ -853,39 +850,38 @@ async function main() {
       const it = await stet.getItem(id);
       if (!it) throw notFound(`Unknown item ${id}.`);
       const { line } = await stet.locateInWorkingCopy(it);
-      const moveItems = it.move ? await Promise.all([...moveFrom(it.move), ...moveTo(it.move)].map((id) => stet.getItem(id))) : [];
-      const moved = it.move ? moveTexts(it.move, (id) => moveItems.find((m) => m?.id === id) ?? undefined) : null;
-      // A revision: what it revises, and what the reviewer asked for there (test report B4).
-      const prev = it.supersedes ? await stet.getItem(it.supersedes) : null;
-      const asked = prev ? [...prev.thread].reverse().find((t) => t.author === "user") : undefined;
-      // The text that went in (accepted with your wording) or would (your wording): test report B11.
-      const yours = it.status === "accepted" && it.resolution?.edited ? it.resolution.appliedText : it.draft;
+      // What it revises and the rest of its move, for the description.
+      const related = await Promise.all([...(it.supersedes ? [it.supersedes] : []), ...moveOthers(it)].map((r) => stet.getItem(r)));
+      const d = describeItem(it, (r) => related.find((x) => x?.id === r) ?? undefined);
       return out(
         () => {
           const lines = [itemSummary(it, line)];
           if (it.note) lines.push(`${dim("note:")} ${it.note}`);
-          if (prev) {
-            lines.push(`${dim("revises:")} ${prev.id} (${prev.status})${asked ? `, where you asked: ${asked.text}` : ""}`);
-            if (prev.kind === "modify") lines.push(`  ${dim("it proposed:")} ${itemDiff(prev)}`);
+          // A revision: what it revises, and what the reviewer asked for there (test report B4).
+          if (d.revises) {
+            const prev = d.revises.item;
+            lines.push(`${dim("revises:")} ${d.revises.id}${prev ? ` (${prev.status})` : ""}${d.revises.asked ? `, where you asked: ${d.revises.asked}` : ""}`);
+            if (prev?.kind === "modify") lines.push(`  ${dim("it proposed:")} ${itemDiff(prev)}`);
           }
-          if (yours !== undefined && it.kind === "modify") {
+          // The text that went in (accepted with your wording) or would (your wording): test report B11.
+          if (d.yours) {
             lines.push(
-              `${dim(it.status === "accepted" ? "accepted with your wording:" : "your wording (not accepted yet):")} ${itemDiff({ ...it, newText: yours })}`,
+              `${dim(d.yours.accepted ? "accepted with your wording:" : "your wording (not accepted yet):")} ${itemDiff({ ...it, newText: d.yours.text })}`,
             );
             lines.push(`${dim("the agent proposed:")} ${itemDiff(it)}`);
           }
-          if (it.move) {
+          if (d.move) {
             lines.push(
-              `${dim("move:")} ${moveFrom(it.move).join(", ")} remove the text, ${moveTo(it.move).join(", ")} insert it; accepting or rejecting one decides the whole move.`,
+              `${dim("move:")} ${d.move.from.join(", ")} remove the text, ${d.move.to.join(", ")} insert it; accepting or rejecting one decides the whole move.`,
             );
-            if (it.move.changed && moved) {
-              lines.push(yellow(`Changed on the way (${it.move.changed} word(s)):`));
-              for (const c of moveChanges(moved.from, moved.to)) lines.push(`  ${red(`"${c.was}"`)} → ${green(`"${c.now}"`)}`);
+            if (d.move.changed && d.move.changes.length) {
+              lines.push(yellow(`Changed on the way (${d.move.changed} word(s)):`));
+              for (const c of d.move.changes) lines.push(`  ${red(`"${c.was}"`)} → ${green(`"${c.now}"`)}`);
             }
           }
           if (it.groups.length) lines.push(`${dim("groups:")} ${it.groups.join(", ")}`);
           if (it.conflictsWith.length) lines.push(`${yellow("conflicts with:")} ${it.conflictsWith.join(", ")}`);
-          if (yours === undefined || it.kind !== "modify") lines.push("", itemDiff(it));
+          if (!d.yours) lines.push("", itemDiff(it));
           // Without colours, the markers need a word (test report UX).
           if (!color && it.kind === "modify") lines.push(dim("([-…-] is removed, {+…+} is added)"));
           if (it.thread.length) lines.push("", ...it.thread.map((t) => `${dim(localTime(t.at))} ${bold(t.author)}: ${indented(t.text)}`));

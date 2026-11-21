@@ -1,5 +1,6 @@
 export { anchor } from "./anchor.js";
 export * from "./config.js";
+export { describeItem, firstLines, type ItemDescription, SHOWN_LINES } from "./describe.js";
 export { type DoctorCheck, doctor } from "./doctor.js";
 export { effectOf, itemEffect } from "./effects.js";
 export { type ErrorCode, notFound, StetError, usageError } from "./errors.js";
