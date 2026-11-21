@@ -4,7 +4,8 @@
  * change offers the same actions under the same names wherever you meet it.
  */
 import { canUndo, hasPreview, type Item, isLiveItem, movesOut, oneLine, profileByName } from "@stet/core";
-import { linkTitle, type Ref, type TreeModel } from "./model.js";
+import type { Ref, TreeModel } from "./model.js";
+import { linkTitle } from "./text.js";
 
 export interface ChangeAction {
   /** Shown text, without icon. */

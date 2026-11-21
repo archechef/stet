@@ -1,10 +1,11 @@
 /** What the panel's rows say, and its menu entries. */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Agent, Changeset, Group, Item } from "@stet/core";
+import type { Agent, Changeset, Group, Item, Note } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { changeActions } from "../src/actions.js";
-import { behindAgents, itemRow, itemSpoken, type Snapshot, TreeModel, threadText, unreadReplies } from "../src/model.js";
+import { behindAgents, type Snapshot, TreeModel, unreadReplies } from "../src/model.js";
+import { contextValueOf, itemSpoken, rowView, threadText } from "../src/rows.js";
 import { makeItem as item } from "./fixtures.js";
 
 const agent: Agent = {
@@ -130,7 +131,7 @@ describe("a change's row gets the menu entries that fit it", () => {
   const entries = pkg.contributes.menus["view/item/context"] as { command: string; when?: string }[];
   /** The commands in a row's context menu: each `when` read as VS Code reads it (the terms used here). */
   const menu = (view: string, row: Item) => {
-    const { contextValue } = itemRow(row, model({}), { line: 1, found: true }, { history: view === "stet.history", unread: 0 });
+    const contextValue = contextValueOf({ type: "item", item: row, parent: "C1" }, model({}));
     const holds = (term: string) => {
       const [, key, op, want] = term.match(/^(view|viewItem) (==|=~) (.*)$/) ?? [];
       if (!want) throw new Error(`unexpected when clause term: ${term}`);
@@ -159,5 +160,87 @@ describe("a change's row gets the menu entries that fit it", () => {
     expect(open).not.toContain("stet.accept");
     expect(menu("stet.history", accepted("abc123"))).not.toContain("stet.undo");
     expect(menu("stet.history", item("1.1", { status: "rejected" }))).toContain("stet.undo");
+  });
+});
+
+describe("the menus' when clauses and the rows' contextValue (code quality report 6a517ae, hidden contracts)", () => {
+  const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf8"));
+  const menus = Object.values(pkg.contributes.menus).flat() as { command: string; when?: string }[];
+  /** Every kind of contextValue a row can have, as `contextValueOf` makes them. */
+  const values = (() => {
+    const out = new Set<string>();
+    for (const notify of ["now", "batched", "off"] as const) out.add(contextValueOf({ type: "agent", agent: { ...agent, notify } }, model({})));
+    out.add(contextValueOf({ type: "agent", agent: { ...agent, state: "archived" } }, model({})));
+    for (const state of ["open", "resolved"] as const) out.add(contextValueOf({ type: "note", note: { state } as Note }, model({})));
+    for (const status of ["pending", "accepted"] as const) {
+      const items = ["1.1", "1.2"].map((i) => item(i, { status, groups: ["G1"] }));
+      for (const kind of ["linked", "related", "atomic"] as const) {
+        const m = model({ kind, parts: [{ title: "p", items: ["1.1"] }] }, items);
+        const g = m.group("G1")!;
+        out.add(contextValueOf({ type: "group", group: g }, m));
+        out.add(contextValueOf({ type: "part", group: g, index: 0 }, m));
+        out.add(contextValueOf({ type: "changeset", changeset: cs }, m));
+      }
+    }
+    for (const kind of ["modify", "add-file", "delete-file", "rename-file", "binary"] as const)
+      for (const file of ["main.tex", "main.typ"])
+        for (const extra of [
+          {},
+          { status: "accepted", resolution: { appliedText: "x", edited: false, committed: null } },
+          { status: "accepted", resolution: { appliedText: "x", edited: false, committed: "c" } },
+          { status: "rejected" },
+        ] as Partial<Item>[])
+          out.add(contextValueOf({ type: "item", item: item("1.1", { kind, file, ...extra }), parent: "C1" }, model({})));
+    return [...out];
+  })();
+
+  it("makes values of the documented form", () => {
+    const form =
+      /^(agent\.active\.notify-(now|batched|off)|agent\.archived|note\.(open|resolved)|changeset\.(live|done)|group\.(live|done)\.(linked|related|atomic)|part\.(live|done)|item\.live\.[a-z-]+(\.pdf)?|item\.done\.[a-z-]+(\.pdf)?(\.undo)?)$/;
+    for (const v of values) expect(v).toMatch(form);
+    expect(values).toContain("item.done.modify.pdf.undo");
+    expect(values).toContain("item.live.modify");
+  });
+
+  it("every viewItem test in a menu matches some row (a typo leaves its entry nowhere)", () => {
+    const tests = new Set(menus.flatMap((m) => (m.when ?? "").match(/viewItem (==|=~) (\/(?:\\.|[^/])+\/|[\w.-]+)/g) ?? []));
+    expect(tests.size).toBeGreaterThan(10);
+    for (const t of tests) {
+      const [, op, want] = t.match(/^viewItem (==|=~) (.*)$/)!;
+      const holds = (v: string) => (op === "==" ? v === want : new RegExp(want!.slice(1, -1)).test(v));
+      expect(values.some(holds), t).toBe(true);
+    }
+  });
+});
+
+describe("rowView (code quality report 6a517ae, long functions)", () => {
+  it("an agent without proposals says what to do, and has no children to open", () => {
+    const m = new TreeModel(
+      { agents: [agent], changesets: [], groups: [], items: [], notes: [], syncNeeded: new Set(), uncommitted: [], unshared: false, missing: [] },
+      "review",
+    );
+    const row = rowView({ type: "agent", agent }, m, { history: false, unread: 0 });
+    expect(row).toMatchObject({
+      label: "a",
+      description: "no proposals yet",
+      icon: { id: "hubot" },
+      contextValue: "agent.active.notify-batched",
+      expand: "none",
+    });
+    expect(row.tooltip).toContain("give it a task");
+  });
+
+  it("a change Stet can't find warns in its icon, tooltip and spoken text", () => {
+    const it1 = item("1.1");
+    const row = rowView({ type: "item", item: it1, parent: "C1" }, model({}), { history: false, unread: 0, place: { line: 3, found: false } });
+    expect(row.icon).toEqual({ id: "warning", color: "problemsWarningIcon.foreground" });
+    expect(row.tooltip).toMatch(/^⚠ \*\*can't be found in your file\.\*\*/);
+    expect(row.spoken).toContain("can't be found in your file");
+    expect(row.description).toMatch(/^⚠ not found in main\.tex/);
+  });
+
+  it("a round stays closed in History and open in the panel", () => {
+    expect(rowView({ type: "changeset", changeset: cs }, model({}), { history: true, unread: 0 }).expand).toBe("collapsed");
+    expect(rowView({ type: "changeset", changeset: cs }, model({}), { history: false, unread: 0 }).expand).toBe("expanded");
   });
 });

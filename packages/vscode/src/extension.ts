@@ -26,22 +26,19 @@ import { ReviewCommands } from "./commands/review.js";
 import { ViewOptions } from "./commands/view.js";
 import { Threads } from "./comments.js";
 import type { El } from "./common.js";
-import { DiffContent, EditorIntegration, esc, type Host, inlineProblems, Locator } from "./editor.js";
+import { DiffContent, EditorIntegration, type Host, inlineProblems, Locator } from "./editor.js";
 import { EDIT_SCHEME, EditFiles } from "./edits.js";
 import { clearOutput, errorText, output, warn } from "./log.js";
 import {
   behindAgents,
   CANCELLED,
-  changeAt,
-  changesAt,
+  type Cancelled,
+  type CommandTarget,
   chooseTarget,
-  isRef,
-  itemLabel,
-  noLinks,
-  oneLine,
+  commandTarget,
+  isCancelled,
   type PanelFilter,
   projectOfQuery,
-  statusView,
   type TreeMode,
   TreeModel,
 } from "./model.js";
@@ -49,9 +46,11 @@ import { inPreviewCache, PreviewPanel, previewPlace } from "./preview.js";
 import { PreviewCommands } from "./previews.js";
 import { Project } from "./project.js";
 import { REVIEW_SCHEME, ReviewFiles, type ReviewHost } from "./review.js";
+import { itemLabel, statusView } from "./rows.js";
 import { cliCommand, installCli, isManaged } from "./runtime.js";
 import { LONG_MODES, NEW_TEXT_STYLES, PREVIEW_PLACES, setting, type Toggle } from "./settings.js";
 import { SetupWizard } from "./setup.js";
+import { changeAt, changesAt, esc, noLinks, oneLine } from "./text.js";
 import { ReviewTree } from "./tree.js";
 import { UndoStack } from "./undo.js";
 import { UnreadReplies } from "./unread.js";
@@ -448,51 +447,55 @@ export class StetExtension implements Host, vscode.Disposable {
     return undefined;
   }
 
+  /** The row a command acts on (see `CommandTarget`); undefined also when "which one?" was cancelled. */
   async target(arg: unknown): Promise<El | undefined> {
-    if (isRef(arg)) {
-      // Resolve strictly within the given project.
-      const p = this.projects.get(foldPath(arg.path));
-      if (!p) return undefined;
-      const model = this.model(p);
-      const ref = parseId(arg.id);
-      if (ref.kind === "part") {
-        const owner = model.group(ref.group);
-        return owner?.parts?.[ref.index] ? { project: p, node: { type: "part", group: owner, index: ref.index } } : undefined;
-      }
-      if (ref.kind === "group") {
-        const group = model.group(ref.id);
-        return group && { project: p, node: { type: "group", group } };
-      }
-      const item = model.item(arg.id);
-      return item && { project: p, node: { type: "item", item, parent: "" } };
-    }
-    // A key pressed in the panel or in History: that view's selection, whatever else was picked last.
-    if (arg === "panel") return this.panel.panelSelection();
-    if (arg === "history") return this.history.selection[0];
-    if (typeof arg === "string") {
-      const ref = parseId(arg);
-      if (ref.kind === "group") {
-        for (const p of this.allProjects()) {
-          const group = this.model(p).group(ref.id);
-          if (group) return { project: p, node: { type: "group", group } };
-        }
-        return undefined;
-      }
-      const f = this.findItem(arg);
-      return f && { project: f.project, node: { type: "item", item: f.item, parent: "" } };
-    }
-    if (arg && typeof arg === "object" && "project" in arg) return arg as El;
-    const sel = this.tree.visible ? this.panel.panelSelection() : undefined;
-    const { target, cancelled } = await chooseTarget(sel, this.lastPick, () => this.atCursor());
-    this.pickCancelled = cancelled;
-    return target;
+    const t = await this.resolve(commandTarget<El>(arg));
+    return isCancelled(t) ? undefined : t;
   }
 
-  /** The last `target` call ended in a cancelled "which one?": nothing more to ask or say. */
-  private pickCancelled = false;
+  private async resolve(t: CommandTarget<El>): Promise<El | Cancelled | undefined> {
+    switch (t.kind) {
+      case "ref": {
+        // Resolve strictly within the given project.
+        const p = this.projects.get(foldPath(t.ref.path));
+        if (!p) return undefined;
+        const model = this.model(p);
+        const ref = parseId(t.ref.id);
+        if (ref.kind === "part") {
+          const owner = model.group(ref.group);
+          return owner?.parts?.[ref.index] ? { project: p, node: { type: "part", group: owner, index: ref.index } } : undefined;
+        }
+        if (ref.kind === "group") {
+          const group = model.group(ref.id);
+          return group && { project: p, node: { type: "group", group } };
+        }
+        const item = model.item(t.ref.id);
+        return item && { project: p, node: { type: "item", item, parent: "" } };
+      }
+      // A key pressed in the panel or in History: that view's selection, whatever else was picked last.
+      case "view":
+        return t.view === "panel" ? this.panel.panelSelection() : this.history.selection[0];
+      case "id": {
+        const ref = parseId(t.id);
+        if (ref.kind === "group") {
+          for (const p of this.allProjects()) {
+            const group = this.model(p).group(ref.id);
+            if (group) return { project: p, node: { type: "group", group } };
+          }
+          return undefined;
+        }
+        const f = this.findItem(t.id);
+        return f && { project: f.project, node: { type: "item", item: f.item, parent: "" } };
+      }
+      case "row":
+        return t.row;
+      case "none":
+        return chooseTarget(this.tree.visible ? this.panel.panelSelection() : undefined, this.lastPick, () => this.atCursor());
+    }
+  }
 
   /** The change under the cursor of the active editor. */
-  private async atCursor(): Promise<El | typeof CANCELLED | undefined> {
+  private async atCursor(): Promise<El | Cancelled | undefined> {
     const ed = vscode.window.activeTextEditor;
     const p = ed && this.projectFor(ed.document.uri);
     if (!ed || !p) return undefined;
@@ -528,14 +531,14 @@ export class StetExtension implements Host, vscode.Disposable {
   private lastPick: "panel" | "editor" = "panel";
 
   async targetItem(arg: unknown): Promise<{ project: Project; item: Item } | undefined> {
-    this.pickCancelled = false;
-    let t = await this.target(arg);
-    if (this.pickCancelled) return undefined;
+    const target = commandTarget<El>(arg);
+    let t = await this.resolve(target);
+    if (isCancelled(t)) return undefined;
     // From the palette or a key binding, with a round or group selected in the panel: the change
     // under the cursor.
-    if (t?.node?.type !== "item" && arg === undefined) {
+    if (t?.node?.type !== "item" && target.kind === "none") {
       const here = await this.atCursor();
-      if (here === CANCELLED) return undefined;
+      if (isCancelled(here)) return undefined;
       t = here ?? t;
     }
     if (t?.node?.type === "item") return { project: t.project, item: t.node.item };
@@ -662,11 +665,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   const ext = new StetExtension(ctx);
   const editor = new EditorIntegration(ext, ext.locator);
   const threads = new Threads(ext, ext.locator, () => ext.allProjects());
+  // Arguments are `unknown`: a command can be run from anywhere (a menu, a key, a link, another
+  // extension). Targets are read with `commandTarget`; the casts below are for arguments only
+  // Stet's own CodeLenses and the comments API pass.
   // A command that fails says why, and the failure is kept in the output channel. Unhandled, VS
   // Code showed only "running the command failed" from the Command Palette, and nothing from menus.
-  const reg = (id: string, fn: (...a: any[]) => unknown) =>
+  const reg = (id: string, fn: (...a: unknown[]) => unknown) =>
     ctx.subscriptions.push(
-      vscode.commands.registerCommand(id, async (...a: any[]) => {
+      vscode.commands.registerCommand(id, async (...a: unknown[]) => {
         try {
           return await fn(...a);
         } catch (e) {
@@ -680,8 +686,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   // would otherwise act on the old selection, i.e. the change just accepted.
   let queue: Promise<unknown> = Promise.resolve();
   const inOrder =
-    (fn: (...a: any[]) => Promise<unknown>) =>
-    (...a: any[]) =>
+    (fn: (...a: unknown[]) => Promise<unknown>) =>
+    (...a: unknown[]) =>
       (queue = queue.then(
         () => fn(...a),
         () => fn(...a),
@@ -705,16 +711,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
     "stet.undoLast",
     inOrder(() => ext.undos.undoLast()),
   );
-  reg("stet.filter", (f?: PanelFilter | null) => (f !== undefined ? ext.panel.setFilter(f) : ext.panel.pickFilter()));
+  reg("stet.filter", (f) => (f !== undefined ? ext.panel.setFilter(f as PanelFilter | null) : ext.panel.pickFilter()));
   reg("stet.clearFilter", () => ext.panel.setFilter(null));
   reg("stet.reviewFile", (a) => ext.reviewing.reviewFile(a));
   reg(
     "stet.reviewAccept",
-    inOrder((u, a) => ext.reviewing.reviewAccept(u, a)),
+    inOrder((u, a) => ext.reviewing.reviewAccept(u as vscode.Uri, a)),
   );
   // Not in order itself: the command it runs is (it would wait for itself).
-  reg("stet.reviewRun", (u, c, a) => ext.reviewing.reviewRun(u, c, a));
-  reg("stet.editSave", (u) => ext.reviewing.editSave(u));
+  reg("stet.reviewRun", (u, c, a) => ext.reviewing.reviewRun(u as string, c as string, a as unknown[] | undefined));
+  reg("stet.editSave", (u) => ext.reviewing.editSave(u as string));
   reg("stet.editReset", (u) => ext.reviewing.editReset(u));
   reg("stet.editAccept", (u) => ext.reviewing.editAccept(u));
   ext.hoverFor = (p, item, route) => editor.hoverMarkdown(p, item, route);
@@ -778,7 +784,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
     "stet.previous",
     inOrder(() => ext.panel.step(-1)),
   );
-  reg("stet.replyThread", (r: vscode.CommentReply) => ext.notes.replyThread(r, threads));
+  reg("stet.replyThread", (r) => ext.notes.replyThread(r as vscode.CommentReply, threads));
   reg("stet.noteForAgent", () => ext.notes.noteForAgent());
   reg("stet.resolveNote", (a) => ext.notes.resolveNote(a));
   reg("stet.reopenNote", (a) => ext.notes.reopenNote(a));

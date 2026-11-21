@@ -14,8 +14,9 @@ import * as vscode from "vscode";
 import { acceptAction, type ChangeAction, changeActions, withIcon } from "./actions.js";
 import { announce } from "./announce.js";
 import { warn } from "./log.js";
-import { positionIn, projectOfQuery, projectQuery, type Ref, type TreeModel, toLf } from "./model.js";
+import { projectOfQuery, projectQuery, type Ref, type TreeModel } from "./model.js";
 import type { Project } from "./project.js";
+import { positionIn, toLf } from "./text.js";
 
 export const REVIEW_SCHEME = "stet-review";
 

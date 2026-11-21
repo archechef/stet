@@ -7,25 +7,13 @@ import { inProject } from "../comments.js";
 import type { El } from "../common.js";
 import { EDIT_SCHEME, EditFiles } from "../edits.js";
 import type { StetExtension } from "../extension.js";
-import {
-  actionsTitle,
-  bulkQuestion,
-  dissolveQuestion,
-  editedPart,
-  editFrame,
-  FINISH_SAVE,
-  failedAcceptActions,
-  finishQuestion,
-  fromPanel,
-  manyQuestion,
-  noLinks,
-  oneLine,
-  type Ref,
-  toLf,
-} from "../model.js";
+import { fromPanel, type Ref } from "../model.js";
 import { previewPlace } from "../preview.js";
 import type { Project } from "../project.js";
+import { bulkQuestion, dissolveQuestion, FINISH_SAVE, failedAcceptActions, finishQuestion, manyQuestion } from "../questions.js";
 import { ReviewFiles } from "../review.js";
+import { actionsTitle } from "../rows.js";
+import { editedPart, editFrame, noLinks, oneLine, toLf } from "../text.js";
 
 /** Longest change (one line) edited in an input box; that box shows about this many characters. */
 const SHORT_EDIT = 80;

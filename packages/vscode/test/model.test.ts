@@ -1,33 +1,11 @@
 import type { Agent, Changeset, Group, Item } from "@stet/core";
 import { describe, expect, it } from "vitest";
-import {
-  archiveChoices,
-  bulkQuestion,
-  changeAt,
-  diffBlock,
-  dissolveQuestion,
-  filterIsEmpty,
-  filterText,
-  fitLabel,
-  fitsInline,
-  ghostText,
-  groupDescription,
-  itemLabel,
-  itemSpoken,
-  LineIndex,
-  matchesFilter,
-  moveNote,
-  type Node,
-  nodeMajor,
-  projectOfQuery,
-  projectQuery,
-  proposalMarkdown,
-  roundLabel,
-  type Snapshot,
-  suggestAgentId,
-  TreeModel,
-} from "../src/model.js";
-import { isManaged, managedCliPath } from "../src/runtime.js";
+import { diffBlock, proposalMarkdown } from "../src/markdown.js";
+import { filterIsEmpty, filterText, matchesFilter, type Node, projectOfQuery, projectQuery, type Snapshot, TreeModel } from "../src/model.js";
+import { archiveChoices, bulkQuestion, dissolveQuestion, suggestAgentId } from "../src/questions.js";
+import { groupDescription, itemLabel, itemSpoken, moveNote, roundLabel } from "../src/rows.js";
+import { isManaged, managedCliPath, nodeMajor } from "../src/runtime.js";
+import { changeAt, fitLabel, fitsInline, ghostText, LineIndex } from "../src/text.js";
 import { makeItem } from "./fixtures.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({

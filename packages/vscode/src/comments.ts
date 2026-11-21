@@ -4,9 +4,10 @@ import type { Item, Note } from "@stet/core";
 import * as vscode from "vscode";
 import { type Host, inlineMax, type Locator } from "./editor.js";
 import { warn } from "./log.js";
-import { fitsInline, itemDiff, LineIndex, proposalMarkdown, toLf } from "./model.js";
+import { proposalMarkdown } from "./markdown.js";
 import type { Project } from "./project.js";
 import { type Settings, setting } from "./settings.js";
+import { fitsInline, itemDiff, LineIndex, toLf } from "./text.js";
 
 export type LongMode = Settings["longChanges"];
 

@@ -1,42 +1,24 @@
 /**
- * View model for the Stet panel and editor integration. No `vscode` import here,
- * so it can be unit-tested with vitest.
+ * The panel's view model: the snapshot of a project, its tree of agents, rounds, groups and changes,
+ * the filter, and which change a command acts on. No `vscode` import here, so it can be unit-tested.
  */
 import {
   type Agent,
   type Changeset,
-  canUndo,
-  changeSummary,
   compareItemIds,
   type Group,
-  hasPreview,
-  type InlineDiff,
   type Item,
   type ItemStatus,
-  inlineDiff,
-  isAccepted,
   isLiveItem,
-  itemEffect,
-  lineDiff,
   linkedRest,
-  moveChangesOf,
   moveFrom,
   moveOthers,
-  movesOut,
   moveTo,
   type Note,
-  numberInRound,
-  oneLine,
-  paragraphChange,
   partId,
   partIndexOf,
-  printable,
-  profileByName,
-  roundOf,
-  StetError,
-  spokenChange,
-  summaryTexts,
 } from "@stet/core";
+import { noLinks, STATUS_TEXT } from "./text.js";
 
 export interface Snapshot {
   agents: Agent[];
@@ -77,15 +59,50 @@ export interface Ref {
 
 export const isRef = (v: unknown): v is Ref => !!v && typeof v === "object" && typeof (v as Ref).path === "string" && typeof (v as Ref).id === "string";
 
+/** A row of the panel or History, as VS Code passes it to a row's button or menu entry. */
+export interface Row {
+  project: { mainPath: string };
+  node?: Node;
+}
+
 /**
- * Whether a command's argument means it came from the Review panel (a key there, or a row's
- * button or menu), so the focus stays there for the next change. From the palette or a key
- * binding of the user's the argument is undefined: the focus stays where it is.
+ * What a command was given to act on:
+ * - `row`: a row's button or menu entry, in the panel or History;
+ * - `ref`: a change, group or part with its project, from a CodeLens or a hover link;
+ * - `view`: a key pressed in the panel or History ("panel", "history"): that view's selection;
+ * - `id`: an id alone ("12.3", "G1"), from a link or a test;
+ * - `none`: the Command Palette or a key binding of the user's: the selection or the cursor.
  */
-export const fromPanel = (arg: unknown): boolean => arg === "panel" || (!!arg && typeof arg === "object" && "project" in arg && !isRef(arg));
+export type CommandTarget<R extends Row = Row> =
+  | { kind: "row"; row: R }
+  | { kind: "ref"; ref: Ref }
+  | { kind: "view"; view: "panel" | "history" }
+  | { kind: "id"; id: string }
+  | { kind: "none" };
+
+/** A command's argument as a `CommandTarget`. Anything else (a URI, a number) counts as none. */
+export function commandTarget<R extends Row = Row>(arg: unknown): CommandTarget<R> {
+  if (isRef(arg)) return { kind: "ref", ref: arg };
+  if (arg === "panel" || arg === "history") return { kind: "view", view: arg };
+  if (typeof arg === "string") return { kind: "id", id: arg };
+  if (arg && typeof arg === "object" && "project" in arg) return { kind: "row", row: arg as R };
+  return { kind: "none" };
+}
+
+/**
+ * Whether a command came from the Review panel (a key there, or a row's button or menu), so the
+ * focus stays there for the next change. From the palette or a key binding of the user's the
+ * focus stays where it is.
+ */
+export const fromPanel = (arg: unknown): boolean => {
+  const t = commandTarget(arg);
+  return t.kind === "row" || (t.kind === "view" && t.view === "panel");
+};
 
 const num = (id: string) => Number(id.slice(1));
+
 const byNum = (a: { id: string }, b: { id: string }) => num(a.id) - num(b.id);
+
 const byId = (a: { id: string }, b: { id: string }) => compareItemIds(a.id, b.id);
 
 /** Which changes a tree shows: the Review panel the open ones, the History view the decided ones. */
@@ -357,219 +374,6 @@ export class TreeModel {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Labels
-
-export { oneLine };
-
-/** How a change is numbered in the panel: 3 for 12.3 (its round shows 12), the full id for old ones. */
-export const shortId = (id: string): string => String(numberInRound(id) ?? id);
-
-/** Words a list of move changes touches (the longer side of each). */
-const changedCount = (cs: { was: string; now: string }[]) => cs.reduce((n, c) => n + Math.max(words(c.was), words(c.now)), 0);
-const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
-
-/** Title of a change's More… list: its id, then its label without the number again ("1.1: 1 …"). */
-export function actionsTitle(it: Item, get?: (id: string) => Item | undefined): string {
-  return `${it.id}: ${itemLabel(it, get).slice(shortId(it.id).length).trim()}`;
-}
-
-export function itemLabel(it: Item, get?: (id: string) => Item | undefined): string {
-  const n = shortId(it.id);
-  switch (it.kind) {
-    case "add-file":
-      return `${n}  new file ${it.file}`;
-    case "delete-file":
-      return `${n}  delete ${it.file}`;
-    case "rename-file":
-      return `${n}  rename ${it.oldFile} → ${it.file}`;
-    case "binary":
-      return `${n}  binary ${it.file}`;
-    default:
-      if (it.move) {
-        if (movesOut(it)) return `${n}  ⇣ moved out: “${oneLine(it.oldText, 40)}”`;
-        const k = get ? changedCount(moveChangesOf(it, get)) : it.move.changed;
-        return `${n}  ⇡ moved in: “${oneLine(it.newText, 40)}”${k ? ` · ${k} word${k > 1 ? "s" : ""} changed` : ""}`;
-      }
-      {
-        const [o, nw] = changeSummary(...summaryTexts(it), it.oldText && it.newText ? 28 : 50);
-        const breaks = paragraphChange(it.oldText, it.newText);
-        const revises = (breaks ? `  · ${breaks}` : "") + (it.supersedes ? `  · revises ${it.supersedes}` : "");
-        if (!it.oldText) return `${n}  + “${nw}”${revises}`;
-        if (!it.newText) return `${n}  − “${o}”${revises}`;
-        return `${n}  “${o}” → “${nw}”${revises}`;
-      }
-  }
-}
-
-/**
- * A label cut to `max` characters at a word, with "…": long agent names and round titles pushed
- * the counts and line numbers out of a narrow panel. Tooltips keep it whole.
- */
-export function fitLabel(s: string, max: number): string {
-  if (s.length <= max) return s;
-  const cut = s.slice(0, max - 1);
-  const sp = cut.lastIndexOf(" ");
-  return (sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:.-]+$/, "") + "…";
-}
-
-/** Label of a round (changeset): its number and the agent's title. */
-export const roundLabel = (cs: Changeset): string => `Round ${roundOf(cs.id)}: ${fitLabel(cs.title, 40)}`;
-
-export const STATUS_TEXT: Record<ItemStatus, string> = {
-  pending: "pending",
-  needs_revision: "revision requested",
-  accepted: "accepted",
-  rejected: "rejected",
-  withdrawn: "withdrawn",
-  superseded: "superseded",
-  stale: "stale",
-};
-
-export function groupLabel(g: Group): string {
-  return g.title;
-}
-
-export function groupDescription(g: Group, shown: number, move = false): string {
-  if (move) return g.state === "broken" ? "move · broken" : "move";
-  const parts = [g.kind === "linked" ? "linked" : g.kind];
-  if (g.parts) parts.push(`${g.parts.length} parts`);
-  if (g.source === "auto") parts.push("auto");
-  if (g.state === "broken") parts.push("broken");
-  parts.push(`${shown}`);
-  return parts.join(" · ");
-}
-
-/** Label of a part of a linked group: "Part 2: Section 3". */
-export function partLabel(g: Group, k: number): string {
-  return `Part ${k + 1}: ${g.parts?.[k]?.title ?? ""}`;
-}
-
-/** "line 40", "lines 12 and 40", "appendix.tex", "elsewhere": where other items of a move are. */
-function places(others: Item[], file: string, lineOf: (id: string) => number | null): string {
-  const lines = others.map((o) => lineOf(o.id)).filter((l): l is number => l !== null);
-  const files = [...new Set(others.filter((o) => lineOf(o.id) === null && o.file !== file).map((o) => o.file))];
-  const parts = [...(lines.length ? [`line${lines.length > 1 ? "s" : ""} ${andList(lines.map(String))}`] : []), ...files];
-  return parts.length ? andList(parts) : "elsewhere";
-}
-const andList = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
-
-/**
- * The note shown for an item of a move (spec §6.4.7) instead of its text: where the text goes or
- * comes from, and for a moved-in item whether it arrives word for word or with which changes.
- * `lineOf`: the line of another item in the same document, if it is shown there.
- */
-export function moveNote(item: Item, get: (id: string) => Item | undefined, lineOf: (id: string) => number | null): { text: string; changed: boolean } | null {
-  if (!item.move) return null;
-  const out = movesOut(item);
-  const others = (out ? moveTo(item.move) : moveFrom(item.move)).map(get).filter((o): o is Item => !!o);
-  const where = places(others, item.file, lineOf);
-  const ids = (out ? moveTo(item.move) : moveFrom(item.move)).join(", ");
-  if (out) return { text: `⇣ moved to ${where} (${ids})`, changed: false };
-  const changes = moveChangesOf(item, get);
-  if (!changes.length) return { text: `⇡ moved here from ${where} (${ids}), word for word`, changed: false };
-  const n = changedCount(changes);
-  const list = changes.map((c) => `“${c.was}” → “${c.now}”`).join(", ");
-  return { text: `⇡ moved here from ${where} (${ids}) with ${n} word${n > 1 ? "s" : ""} changed: ${list}`, changed: true };
-}
-
-/**
- * Text for a notification: VS Code turns `[text](command:…)` in one into a working link, so agent
- * text in it must not keep that form.
- */
-export const noLinks = (s: string): string => printable(s).replace(/\]\s*\(/g, "] (");
-
-/** Short text for ghost-text decorations (no newlines, bounded length). */
-export function ghostText(s: string, max = 80): string {
-  // Whitespace alone (a paragraph split or joined) would be invisible: shown as ¶ and ␣.
-  if (s && !s.trim())
-    return s
-      .replace(/\r?\n[ \t]*\r?\n\s*/g, "¶")
-      .replace(/\r?\n/g, "↵")
-      .replace(/[ \t]/g, "␣");
-  const t = printable(s).replace(/\n/g, " ⏎ ");
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
-}
-
-/** What changes inside an item (removed spans, inserted text), cached: computed on every redraw. */
-const diffs = new Map<string, InlineDiff>();
-export function itemDiff(item: Pick<Item, "oldText" | "newText" | "file">): InlineDiff {
-  // Diffed by the tokens of the file's language (LaTeX: `\alpha` is one).
-  const profile = profileByName(item.file);
-  const syntax = profile.syntax;
-  const key = profile.id + "\0" + item.oldText + "\0" + item.newText;
-  let d = diffs.get(key);
-  if (!d) {
-    if (diffs.size > 500) diffs.clear();
-    diffs.set(key, (d = inlineDiff(item.oldText, item.newText, syntax?.tokenize)));
-  }
-  return d;
-}
-
-/** Line/character of `offset` in `text`, when `text` starts at line/character `start`. */
-export function positionIn(start: { line: number; character: number }, text: string, offset: number): { line: number; character: number } {
-  const before = text.slice(0, offset);
-  const nl = before.lastIndexOf("\n");
-  if (nl < 0) return { line: start.line, character: start.character + offset };
-  return { line: start.line + (before.match(/\n/g)?.length ?? 0), character: offset - nl - 1 };
-}
-
-/**
- * The words around a change on its line, for editing it in an input box: the box holds
- * `pre + text + post` with the change selected, so its bounds are visible and the words next to
- * it aren't typed twice ("relies on a simplea simple idea"). At most
- * about `max` characters each side, cut at a space.
- */
-export function editFrame(item: Pick<Item, "context">, max = 60): { pre: string; post: string } {
-  let pre = item.context.before.slice(item.context.before.lastIndexOf("\n") + 1);
-  if (pre.length > max) {
-    const cut = pre.indexOf(" ", pre.length - max);
-    pre = cut < 0 ? "" : pre.slice(cut + 1).trimStart();
-  }
-  const nl = item.context.after.indexOf("\n");
-  let post = nl < 0 ? item.context.after : item.context.after.slice(0, nl);
-  if (post.length > max) {
-    const cut = post.lastIndexOf(" ", max);
-    post = cut < 0 ? "" : post.slice(0, cut).trimEnd();
-  }
-  return { pre, post };
-}
-
-/** The change's new wording in an edited `pre + text + post`, or null if the edit reaches the words around it. */
-export function editedPart(frame: { pre: string; post: string }, value: string): string | null {
-  if (value.length < frame.pre.length + frame.post.length || !value.startsWith(frame.pre) || !value.endsWith(frame.post)) return null;
-  return value.slice(frame.pre.length, value.length - frame.post.length);
-}
-
-/** The button of Finish review's question that saves unsaved editors into the commit. */
-export const FINISH_SAVE = "Save and commit";
-
-/**
- * Finish review's question: which files are committed, which hold edits of yours that go along,
- * which have unsaved text (not committed unless saved), and that undo ends with the commit.
- */
-export function finishQuestion(
-  count: number,
-  files: string[],
-  yourEdits: string[],
-  unsaved: string[],
-  project = "",
-): { message: string; detail: string; buttons: string[] } {
-  const list = (xs: string[]) => xs.join(", ");
-  const detail = [`Files: ${list(files)}.`];
-  if (yourEdits.length) detail.push(`Your own edits in ${list(yourEdits)} are committed too (Stet commits whole files).`);
-  if (unsaved.length)
-    detail.push(
-      `${list(unsaved)} ${unsaved.length === 1 ? "has" : "have"} unsaved edits: “Commit” leaves them out, “${FINISH_SAVE}” saves them into the commit.`,
-    );
-  detail.push("After the commit, Undo no longer takes these changes back (git revert can).");
-  return {
-    message: `Commit ${count} accepted change${count === 1 ? "" : "s"}${project ? ` in ${project}` : ""}?`,
-    detail: detail.join("\n"),
-    buttons: unsaved.length ? ["Commit", FINISH_SAVE] : ["Commit"],
-  };
-}
-
 /**
  * `j` / `k`: the row of the next (dir 1) or previous (-1) change after row `cur` of the panel's
  * rows (`isItem` tells changes from rounds, groups, …); from no row, the first or last change.
@@ -601,237 +405,10 @@ export function unreadReplies(thread: readonly { author: string }[], seen: numbe
   return thread.slice(seen).filter((e) => e.author === "agent").length;
 }
 
-/** "💬 3 (1 new)", for a row's description; "" without messages. */
-export function threadText(count: number, unread: number): string {
-  return count ? `💬 ${count}${unread ? ` (${unread} new)` : ""}` : "";
-}
-
 /** Changes in document order: by project, file and line, then id (`stet.navigationOrder`: "document"). */
 export function documentOrder<T extends { project: string; file: string; line: number; id: string }>(xs: T[]): T[] {
   return [...xs].sort((a, b) => a.project.localeCompare(b.project) || a.file.localeCompare(b.file) || a.line - b.line || compareItemIds(a.id, b.id));
 }
-
-/**
- * What to ask when several selected changes are linked with others not selected: take those
- * along (recommended), or decide only the selected ones, which breaks their linked groups.
- */
-export function manyQuestion(
-  verb: "Accept" | "Reject",
-  count: number,
-  rest: string[],
-  /** Pending changes in other parts of their linked groups: asked about too. */
-  otherParts: string[] = [],
-): { title: string; choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] } {
-  const choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] = [];
-  if (rest.length)
-    choices.push({ label: `${verb} the ${count} selected and the ${rest.length} linked with them`, detail: "Linked changes belong together.", withRest: true });
-  if (otherParts.length)
-    choices.push({
-      label: `${verb} the ${count} selected and all ${otherParts.length + rest.length} other changes of their linked groups`,
-      detail: "Every part at once.",
-      withRest: true,
-      withGroups: true,
-    });
-  if (rest.length)
-    choices.push({
-      label: `${verb} only the ${count} selected (breaks their linked groups)`,
-      detail: "The agent is asked to repair the document.",
-      withRest: false,
-    });
-  else
-    choices.push({
-      label: `${verb} only the ${count} selected`,
-      detail: `The other parts of their linked groups (${otherParts.join(", ")}) stay pending: the document is inconsistent until they are accepted too.`,
-      withRest: true,
-    });
-  return { title: `The ${count} selected changes are linked with ${[...rest, ...otherParts].join(", ")}`, choices };
-}
-
-/** Whether inline text can show `s` in full: one line, at most `max` characters. */
-export const fitsInline = (s: string, max = 80): boolean => !/[\r\n]/.test(s) && s.length <= max;
-
-/** The full new text of a proposal, for the editor's inline widget. Agent text: fenced, never rendered. */
-export function proposalMarkdown(item: Item): string {
-  const lang = profileByName(item.file).fence;
-  return `*Proposed text, replacing the struck-through text above:*\n\n${fence(item.newText, lang)}`;
-}
-
-/** The reviewer's wording of a change, for hovers: the code block on lines of its own. */
-export function draftMarkdown(item: Pick<Item, "draft" | "file">): string {
-  return `✎ **Your wording** (from the review of this file), which Accept uses:\n\n${fence(item.draft ?? "", profileByName(item.file).fence)}`;
-}
-
-/** Markdown fenced block that is safe for any content. */
-export function fence(text: string, lang = ""): string {
-  // Agent text: a lone CR would end a line for Markdown inside the fence, and direction overrides
-  // would reorder what is shown.
-  text = printable(text);
-  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((m) => m.length));
-  const f = "`".repeat(longest + 1);
-  return `${f}${lang}\n${text}\n${f}`;
-}
-
-/** A unified-style diff for hovers. */
-export function diffBlock(oldText: string, newText: string): string {
-  // Several lines on both sides (a .bib entry whose key alone changed): the changed lines with one
-  // line around them, not the whole entry twice.
-  if (oldText.split("\n").length >= 3 && newText.split("\n").length >= 3) return fence(lineDiff(printable(oldText), printable(newText), 1).join("\n"), "diff");
-  const lines = [
-    ...(oldText
-      ? printable(oldText)
-          .split("\n")
-          .map((l) => "- " + l)
-      : []),
-    ...(newText
-      ? printable(newText)
-          .split("\n")
-          .map((l) => "+ " + l)
-      : []),
-  ];
-  return fence(lines.join("\n"), "diff");
-}
-
-// ---------------------------------------------------------------------------
-// Text positions
-
-/** Line/column of an offset in LF text. Line/column are the same in the CRLF version of the text. */
-export class LineIndex {
-  private starts: number[] = [0];
-  constructor(readonly text: string) {
-    for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) this.starts.push(i + 1);
-  }
-  /** Offset of a line/character position (clamped to the text). */
-  offset(line: number, character: number): number {
-    const start = this.starts[Math.max(0, Math.min(line, this.starts.length - 1))]!;
-    return Math.min(start + character, this.text.length);
-  }
-
-  position(offset: number): { line: number; character: number } {
-    let lo = 0;
-    let hi = this.starts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (this.starts[mid]! <= offset) lo = mid;
-      else hi = mid - 1;
-    }
-    return { line: lo, character: offset - this.starts[lo]! };
-  }
-}
-
-export const toLf = (s: string) => s.replace(/\r\n/g, "\n");
-
-// ---------------------------------------------------------------------------
-// Agents
-
-export function suggestAgentId(kind: "claude-code" | "codex" | "other", existing: string[]): string {
-  const prefix = kind === "claude-code" ? "claude" : kind === "codex" ? "codex" : "agent";
-  for (let n = 1; ; n++) if (!existing.includes(`${prefix}-${n}`)) return `${prefix}-${n}`;
-}
-
-export const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-/** Parse `node --version` output; returns the major version or null. */
-export function nodeMajor(version: string): number | null {
-  const m = /^v?(\d+)\./.exec(version.trim());
-  return m ? Number(m[1]) : null;
-}
-
-type Pos = { line: number; character: number };
-
-/**
- * Of changes located in a file, the one a command at `pos` means: the one the cursor is in, else
- * the nearest on its line, not the line's first, which may be another change in the same
- * paragraph.
- */
-export function changeAt<T extends { range: { start: Pos; end: Pos } }>(located: T[], pos: Pos): T | undefined {
-  const before = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && a.character <= b.character);
-  const inside = (r: { start: Pos; end: Pos }) => before(r.start, pos) && before(pos, r.end);
-  const gap = (r: { start: Pos; end: Pos }) =>
-    inside(r)
-      ? 0
-      : 1 +
-        Math.min(
-          r.start.line === pos.line ? Math.abs(r.start.character - pos.character) : Infinity,
-          r.end.line === pos.line ? Math.abs(r.end.character - pos.character) : Infinity,
-        );
-  return located
-    .filter((l) => inside(l.range) || l.range.start.line === pos.line || l.range.end.line === pos.line)
-    .sort((a, b) => gap(a.range) - gap(b.range))[0];
-}
-
-/**
- * The changes the cursor is inside of, when there are several (overlapping changes of two agents):
- * commands ask which one rather than pick one silently. Empty otherwise.
- */
-export function changesAt<T extends { range: { start: Pos; end: Pos } }>(located: T[], pos: Pos): T[] {
-  const before = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && a.character <= b.character);
-  const inside = located.filter((l) => before(l.range.start, pos) && before(pos, l.range.end));
-  return inside.length > 1 ? inside : [];
-}
-
-/**
- * The buttons of the archive dialog, the safe one first (Enter takes it): archiving can't be
- * undone, and deleting the folder came first. `unsubmitted`: files
- * the agent changed and didn't submit, named on the delete button.
- */
-export function archiveChoices(unsubmitted: number): { keep: string; del: string; order: string[] } {
-  const keep = "Archive, keep folder";
-  const del = unsubmitted ? `Archive and delete folder, with ${unsubmitted} unsubmitted file${unsubmitted === 1 ? "" : "s"}` : "Archive and delete folder";
-  return { keep, del, order: [keep, del] };
-}
-
-/**
- * The question to ask before deciding several changes at once, or null to go ahead. A round
- * always asks; a group or part asks unless it is linked (its changes must go together anyway).
- * Shift+A asked for a round only, and Shift+R never did.
- */
-export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what: string; changeset: boolean; linked: boolean }): string | null {
-  if (s.count < 2 || (s.linked && !s.changeset)) return null;
-  return `${verb} all ${s.count} changes of ${s.what}?`;
-}
-
-/** The question before dissolving a group, or null: a linked group's changes can then be decided apart, which can break the document. */
-export function dissolveQuestion(g: { id: string; kind: string; title: string }): string | null {
-  if (g.kind === "linked")
-    return `Dissolve linked group ${g.id} “${g.title}”? Its changes can then be accepted one by one, which can break the document. This can't be undone.`;
-  // A related group too: dissolving it can't be undone either.
-  if (g.kind === "related") return `Dissolve group ${g.id} “${g.title}”? Its changes are then listed one by one in their round. This can't be undone.`;
-  return null;
-}
-
-/**
- * A change as a screen reader reads it: what, where and its state in words, with no symbols or
- * colour (decorations aren't read).
- */
-export function itemSpoken(it: Item, line?: number, unread = 0): string {
-  const where = `in ${it.file}${line && it.kind === "modify" ? ` line ${line}` : ""}`;
-  // As the row says it: "revision requested", your wording,
-  // the conversation.
-  const extra = [
-    ...(it.draft !== undefined && isLiveItem(it) ? ["your wording"] : []),
-    ...(it.thread.length ? [`${it.thread.length} message${it.thread.length === 1 ? "" : "s"}${unread ? `, ${unread} new` : ""}`] : []),
-  ];
-  const state = [STATUS_TEXT[it.status], ...extra].join(", ");
-  if (it.kind !== "modify") return `Change ${it.id}, ${it.kind.replace("-", " ")} ${where}, ${state}`;
-  // What it says: your wording if you have one, or the text it was accepted with.
-  const text = isAccepted(it) ? it.resolution.appliedText : isLiveItem(it) ? (it.draft ?? it.newText) : it.newText;
-  const [o, n] = changeSummary(it.oldText, text, 60);
-  const breaks = paragraphChange(it.oldText, text);
-  const what = breaks
-    ? `${breaks}, “${o}” to “${n}”`
-    : (spokenChange(it.oldText, text) ?? (!it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`));
-  return `Change ${it.id}, ${what}, ${where}, ${state}${it.supersedes ? `, revises ${it.supersedes}` : ""}`;
-}
-
-/** Escape agent-written text for Markdown, so it cannot add links or formatting. */
-export const esc = (s: string) => printable(s).replace(/[\\`*_{}[\]()#+\-.!|<>~=:]/g, "\\$&");
-
-/**
- * A link's tooltip in trusted Markdown: one line, its quotes and backslashes escaped. A blank line
- * in a group title used to end the link, and the rest became trusted Markdown with Stet's command
- * links in it.
- */
-export const linkTitle = (s: string) => oneLine(s, 400).replace(/["\\]/g, "\\$&");
 
 /**
  * Agent-written titles, rationales and replies as the panel, hovers, pickers and notifications
@@ -855,17 +432,6 @@ export function shownAgentText(s: { changesets: Changeset[]; groups: Group[]; it
   };
 }
 
-/** A panel row's text as words: its symbols spelled out. */
-export function spokenRow(s: string): string {
-  return s
-    .replace(/💬\s*(\d+)/g, (_, n: string) => `${n} message${n === "1" ? "" : "s"}`)
-    .replace(/⚠\s*/g, "warning: ")
-    .replace(/\s*·\s*/g, ", ")
-    .replace(/[↻✎🔗▣⇅]\s*/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 /**
  * The `p=` query of Stet's own documents (diffs, the Review file, the edit tab): the project's
  * folder, encoded once. `URLSearchParams` decodes it once on the way back, so a folder named
@@ -880,108 +446,25 @@ export function projectOfQuery(query: string): string {
   return new URLSearchParams(query).get("p") ?? "";
 }
 
-/** A change that can't be found in your file any more: what its row and hover say, and what to do. */
-export const LOST_TEXT = "can't be found in your file";
-export const LOST_NEXT =
-  "You edited this text or the text around it since it was proposed, so Stet can't tell where it goes. Reject it, or ask the agent for a revision against your current text.";
-
-/**
- * A change's row in the panel: its label, the line under it, what a screen reader says, and its
- * `contextValue`, which the menus in package.json match:
- * `item.live.<kind>[.pdf]` for an open change, `item.done.<kind>[.pdf][.undo]` for a decided one
- * (`.pdf`: it has a PDF preview; `.undo`: its decision can still be undone).
- * `found`: Stet located it in your file; `history`: shown in History, where that doesn't matter.
- */
-export function itemRow(
-  it: Item,
-  model: TreeModel,
-  place: { line: number; found: boolean },
-  opts: { history: boolean; unread: number },
-): { label: string; description: string; spoken: string; lost: boolean; contextValue: string } {
-  const lost = !place.found && !opts.history;
-  const description =
-    `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${place.line}` : ""}` +
-    `${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLiveItem(it) ? " · your wording" : ""}` +
-    `${itemEffect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, opts.unread)}` : ""}`;
-  const undo = canUndo(it);
-  // ".pdf": the change has a PDF preview (not in a Typst file).
-  const pdf = it.kind === "modify" && hasPreview(it.file) ? ".pdf" : "";
-  return {
-    label: itemLabel(it, model.get),
-    description,
-    spoken: itemSpoken(it, lost ? undefined : place.line, opts.unread) + (lost ? `, ${LOST_TEXT}` : ""),
-    lost,
-    contextValue: isLiveItem(it) ? `item.live.${it.kind}${pdf}` : `item.done.${it.kind}${pdf}${undo ? ".undo" : ""}`,
-  };
+/** "Which one?" was cancelled (Escape): nothing to act on, and nothing more to ask or say. */
+export interface Cancelled {
+  cancelled: true;
 }
-
-/**
- * The status bar item: counts as icons, and the same in words for its tooltip and for screen
- * readers, which would read the icons' numbers alone as "3 2".
- */
-export function statusView(s: {
-  pending: number;
-  unread: number;
-  uncommitted: number;
-  /** Agents behind your latest text. */
-  behind: string[];
-  /** Projects whose saved edits agents don't see (named when there are several). */
-  unshared: string[];
-  missing: { id: string; reason: string }[];
-  /** Each project's counts, when the window has several. */
-  projects: { name: string; pending: number; uncommitted: number }[];
-}): { text: string; tooltip: string; spoken: string } {
-  const text =
-    `$(checklist) ${s.pending}` +
-    (s.unread ? ` $(comment-unresolved) ${s.unread}` : "") +
-    (s.uncommitted ? ` $(git-commit) ${s.uncommitted}` : "") +
-    (s.behind.length ? " $(sync)" : "") +
-    (s.unshared.length ? " $(cloud-upload)" : "") +
-    (s.missing.length ? " $(warning)" : "");
-  const tip = [`Stet: ${s.pending} change${s.pending === 1 ? "" : "s"} to review`];
-  if (s.unread) tip.push(`${s.unread} new repl${s.unread === 1 ? "y" : "ies"} from agents (marked in the panel; read when you go to the change or note)`);
-  if (s.projects.length > 1) {
-    for (const p of s.projects) tip.push(`  ${p.name}: ${p.pending} to review${p.uncommitted ? `, ${p.uncommitted} to commit` : ""}`);
-  }
-  if (s.uncommitted) tip.push(`${s.uncommitted} accepted, not committed yet (Finish review)`);
-  if (s.unshared.length) tip.push(`Agents don't see your latest saved edits${s.projects.length > 1 ? ` in ${s.unshared.join(", ")}` : ""} (Share my edits)`);
-  if (s.behind.length) tip.push(`Behind your latest text: ${s.behind.join(", ")}. Agents catch up the next time they sync with your text.`);
-  for (const m of s.missing) tip.push(`Agents don't get accepted ${m.id}: ${m.reason}. Finish the review or share your edits.`);
-  return { text, tooltip: tip.join("\n"), spoken: tip.join(". ") };
-}
-
-/**
- * Whether to offer the highlighted style: once, in a High Contrast theme, for a file of a Stet
- * project whose proposed text wraps with the line (an inlay hint, which gets no border there).
- */
-export function offerContrastStyle(s: { highContrast: boolean; inProject: boolean; wrapsWithLine: boolean; askedBefore: boolean }): boolean {
-  return s.highContrast && s.inProject && s.wrapsWithLine && !s.askedBefore;
-}
-
-/**
- * What a failed accept offers instead: Reject… and Revise… when the one change accepted can't be
- * found in your file any more, as its More… list does; nothing for other failures.
- */
-export function failedAcceptActions(ids: readonly string[], e: unknown): string[] {
-  return ids.length === 1 && e instanceof StetError && e.lost.includes(ids[0]!) ? ["Reject…", "Revise…"] : [];
-}
-
-/** "Which one?" was cancelled (Escape). */
-export const CANCELLED: unique symbol = Symbol("cancelled");
+export const CANCELLED: Cancelled = { cancelled: true };
+export const isCancelled = (v: unknown): v is Cancelled => v === CANCELLED;
 
 /**
  * What a command acts on, when it isn't given a change: the panel's selection if the user picked
  * there last, else the change at the cursor (`atCursor`, which may ask "which one?"), else the
- * panel's selection. Escape in "which one?" decides nothing: undefined, not the panel's selection,
- * which may be a change in another file.
+ * panel's selection. Escape in "which one?" decides nothing: `CANCELLED`, not the panel's
+ * selection, which may be a change in another file.
  */
 export async function chooseTarget<T>(
   selected: T | undefined,
   lastPick: "panel" | "editor",
-  atCursor: () => Promise<T | typeof CANCELLED | undefined>,
-): Promise<{ target: T | undefined; cancelled: boolean }> {
-  if (selected && lastPick !== "editor") return { target: selected, cancelled: false };
+  atCursor: () => Promise<T | Cancelled | undefined>,
+): Promise<T | Cancelled | undefined> {
+  if (selected && lastPick !== "editor") return selected;
   const here = await atCursor();
-  if (here === CANCELLED) return { target: undefined, cancelled: true };
-  return { target: here ?? selected, cancelled: false };
+  return isCancelled(here) ? here : (here ?? selected);
 }

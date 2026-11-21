@@ -14,8 +14,8 @@ import * as vscode from "vscode";
 import { announce } from "../announce.js";
 import { type El, NOTIFY_PICKS } from "../common.js";
 import type { StetExtension } from "../extension.js";
-import { AGENT_ID, archiveChoices, suggestAgentId } from "../model.js";
 import type { Project } from "../project.js";
+import { AGENT_ID, archiveChoices, suggestAgentId } from "../questions.js";
 
 /** Put a folder path on the clipboard, in the form the platform's apps expect (backslashes on Windows). */
 const copyPath = (p: string) => vscode.env.clipboard.writeText(process.platform === "win32" ? p.replace(/\//g, "\\") : p);

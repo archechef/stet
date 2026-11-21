@@ -373,7 +373,11 @@ Development setup, tests and packaging: [CONTRIBUTING.md](../CONTRIBUTING.md).
   - `runtime.ts`: bundled CLI and runtime choice
   - `log.ts`: the output channel, where handled failures are noted
   - `settings.ts`: the `stet.*` settings, their values and defaults (a test checks them against `package.json`)
-  - `model.ts`: view model, free of `vscode`, unit-tested
+  - free of `vscode`, unit-tested:
+    - `model.ts`: the panel's view model (a project's snapshot as a tree), the filter, and what a command acts on (`CommandTarget`)
+    - `rows.ts`: what each row of the panel and History shows (`rowView`), and the `contextValue` its menus match (`contextValueOf`)
+    - `markdown.ts`, `text.ts`: hover and tooltip Markdown; escaping, cutting and positions in text
+    - `questions.ts`: the questions asked before accepting, finishing or archiving
 - **Build:** `npm run build` (the TypeScript type check plus esbuild bundles `dist/extension.js` and `dist/stet.mjs`).
 - **Tests:**
   - `npm test` for the unit tests.

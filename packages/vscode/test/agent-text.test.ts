@@ -2,7 +2,9 @@
 import type { Changeset, Group } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { actionRow } from "../src/actions.js";
-import { diffBlock, esc, fence, linkTitle, noLinks, shownAgentText } from "../src/model.js";
+import { diffBlock } from "../src/markdown.js";
+import { shownAgentText } from "../src/model.js";
+import { esc, fence, linkTitle, noLinks } from "../src/text.js";
 import { makeTypItem as typItem } from "./fixtures.js";
 
 const typCs: Changeset = { id: "C1", agent: "a", title: "t", rationale: "", submittedAt: "", items: [], baseCommit: "b" } as unknown as Changeset;

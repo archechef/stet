@@ -1,6 +1,7 @@
 /** Moving between changes, and which change a command acts on. */
 import { describe, expect, it } from "vitest";
-import { CANCELLED, changesAt, chooseTarget, documentOrder, fromPanel, nextItemIndex } from "../src/model.js";
+import { CANCELLED, chooseTarget, commandTarget, documentOrder, fromPanel, isCancelled, nextItemIndex } from "../src/model.js";
+import { changesAt } from "../src/text.js";
 
 describe("j/k from a round or group row (test report v0.16, B4)", () => {
   // agent, round, change, change, group, change, change
@@ -61,16 +62,28 @@ describe("overlapping changes at the cursor (test report v0.16)", () => {
 describe("which one?", () => {
   it('Escape in "which one?" decides nothing (test report 5e4c6af, D3)', async () => {
     // The panel's selection is a change in another file; the cursor is in two changes.
-    expect(await chooseTarget("2.1", "editor", async () => CANCELLED)).toEqual({ target: undefined, cancelled: true });
-    expect(await chooseTarget("2.1", "editor", async () => "1.4")).toEqual({ target: "1.4", cancelled: false });
+    expect(isCancelled(await chooseTarget("2.1", "editor", async () => CANCELLED))).toBe(true);
+    expect(await chooseTarget("2.1", "editor", async () => "1.4")).toBe("1.4");
     // No change at the cursor: the panel's selection; picked in the panel last: that, without asking.
-    expect(await chooseTarget("2.1", "editor", async () => undefined)).toEqual({ target: "2.1", cancelled: false });
+    expect(await chooseTarget("2.1", "editor", async () => undefined)).toBe("2.1");
     let asked = false;
     const r = await chooseTarget("2.1", "panel", async () => {
       asked = true;
       return CANCELLED;
     });
-    expect(r).toEqual({ target: "2.1", cancelled: false });
+    expect(r).toBe("2.1");
     expect(asked).toBe(false);
+  });
+});
+
+describe("what a command is given (code quality report 6a517ae, command arguments)", () => {
+  it("reads each kind of argument once", () => {
+    const row = { project: { mainPath: "/p" }, node: undefined };
+    expect(commandTarget(row)).toEqual({ kind: "row", row });
+    expect(commandTarget({ path: "/p", id: "G1.2" })).toEqual({ kind: "ref", ref: { path: "/p", id: "G1.2" } });
+    expect(commandTarget("panel")).toEqual({ kind: "view", view: "panel" });
+    expect(commandTarget("history")).toEqual({ kind: "view", view: "history" });
+    expect(commandTarget("12.3")).toEqual({ kind: "id", id: "12.3" });
+    for (const nothing of [undefined, null, 3, {}, { scheme: "file", path: "/p/main.tex" }]) expect(commandTarget(nothing)).toEqual({ kind: "none" });
   });
 });

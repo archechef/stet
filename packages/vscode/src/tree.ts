@@ -1,43 +1,13 @@
 /** The Review panel and the History view: their rows, their order, moving through them, and the panel's filter. */
-import {
-  foldPath,
-  type Item,
-  isLiveItem,
-  NOTIFY_TRIGGER_TEXT,
-  NOTIFY_TRIGGERS,
-  notifyMode,
-  notifyTriggers,
-  parsePartId,
-  partId,
-  profileByName,
-  roundOf,
-} from "@stet/core";
+import { foldPath, type Item, isLiveItem, parsePartId, partId } from "@stet/core";
 import * as vscode from "vscode";
-import { type El, NOTIFY_PICKS } from "./common.js";
-import { esc, itemMarkdown } from "./editor.js";
+import type { El } from "./common.js";
 import type { StetExtension } from "./extension.js";
-import {
-  behindAgents,
-  documentOrder,
-  fence,
-  filterIsEmpty,
-  filterText,
-  fitLabel,
-  groupDescription,
-  groupLabel,
-  itemRow,
-  LOST_NEXT,
-  LOST_TEXT,
-  nextItemIndex,
-  oneLine,
-  type PanelFilter,
-  partLabel,
-  roundLabel,
-  spokenRow,
-  type TreeMode,
-} from "./model.js";
+import { documentOrder, filterIsEmpty, filterText, nextItemIndex, type PanelFilter, type TreeMode } from "./model.js";
 import type { Project } from "./project.js";
+import { rowView } from "./rows.js";
 import { setting } from "./settings.js";
+import { spokenRow } from "./text.js";
 
 /** Stable id of a tree element (VS Code uses it to keep selection and to reveal elements). */
 function elId(el: El): string {
@@ -57,27 +27,6 @@ function elId(el: El): string {
       return `${p}|part|${partId(n.group.id, n.index)}`;
     case "item":
       return `${p}|${n.parent}|${n.item.id}`;
-  }
-}
-
-/** The notification modes as offered in the panel. */
-function itemIcon(it: Item): vscode.ThemeIcon {
-  const c = (id: string) => new vscode.ThemeColor(id);
-  switch (it.status) {
-    case "pending":
-      return new vscode.ThemeIcon(
-        it.kind === "modify" ? "diff-modified" : it.kind === "add-file" ? "diff-added" : it.kind === "delete-file" ? "diff-removed" : "diff-renamed",
-      );
-    case "needs_revision":
-      return new vscode.ThemeIcon("sync", c("problemsWarningIcon.foreground"));
-    case "accepted":
-      return new vscode.ThemeIcon("check", c("testing.iconPassed"));
-    case "rejected":
-      return new vscode.ThemeIcon("close", c("testing.iconFailed"));
-    case "stale":
-      return new vscode.ThemeIcon("warning", c("problemsWarningIcon.foreground"));
-    default:
-      return new vscode.ThemeIcon("circle-slash");
   }
 }
 
@@ -256,151 +205,46 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
   }
 
   private async buildTreeItem(el: El, mode: TreeMode): Promise<vscode.TreeItem> {
-    const E = vscode.TreeItemCollapsibleState.Expanded;
+    const model = this.ext.model(el.project, mode);
     if (!el.node) {
-      const t = new vscode.TreeItem(el.project.name, E);
+      const t = new vscode.TreeItem(el.project.name, vscode.TreeItemCollapsibleState.Expanded);
       t.iconPath = new vscode.ThemeIcon("repo");
       t.tooltip = el.project.mainPath;
       // Each project's own counts: the status bar adds them up.
-      const model = this.ext.model(el.project, mode);
       const done = el.project.snapshot.uncommitted.length;
       t.description = mode === "history" ? model.outcome(() => true) : [model.openText(() => true), ...(done ? [`${done} to commit`] : [])].join(" · ");
       return t;
     }
     const n = el.node;
-    const model = this.ext.model(el.project, mode);
     const history = mode === "history";
-    const snap = el.project.snapshot;
-    switch (n.type) {
-      case "agent": {
-        // An agent that hasn't proposed anything yet says what to do, not "0 pending".
-        const fresh = !history && n.agent.state === "active" && !snap.changesets.some((c) => c.agent === n.agent.id);
-        const t = new vscode.TreeItem(fitLabel(n.agent.id, 28), fresh && !model.children(n).length ? vscode.TreeItemCollapsibleState.None : E);
-        const parts = [history ? model.outcome((i) => i.agent === n.agent.id) : fresh ? "no proposals yet" : model.openText((i) => i.agent === n.agent.id)];
-        const behind = behindAgents(snap).includes(n.agent.id);
-        if (behind) parts.push("behind your text");
-        if (n.agent.state === "archived") parts.push("archived");
-        const replies = this.ext.replies.unreadOf(el.project, (x) => x.agent === n.agent.id);
-        if (replies && !history) parts.push(`${replies} new repl${replies === 1 ? "y" : "ies"}`);
-        const notify = notifyMode(n.agent);
-        if (n.agent.state === "active" && notify === "off") parts.push("not notified");
-        t.description = parts.join(" · ");
-        t.iconPath = new vscode.ThemeIcon(n.agent.kind === "codex" ? "terminal" : "hubot");
-        t.tooltip = new vscode.MarkdownString(
-          `**${esc(n.agent.id)}** (${n.agent.kind})\n\nWorkspace: ${esc(n.agent.worktree)}` +
-            (fresh
-              ? `\n\nOpen this folder in ${n.agent.kind === "codex" ? "Codex" : n.agent.kind === "claude-code" ? "the Claude desktop app (Code tab) or Claude Code" : "your agent"} and give it a task: its proposals appear here. *Open agent workspace…* (the folder button on the row) copies the path.`
-              : "") +
-            (behind ? "\n\nThe agent works on an older version of your text; it catches up the next time it syncs with your text." : "") +
-            (n.agent.state === "active"
-              ? `\n\nNotifications: ${NOTIFY_PICKS.find((x) => x.mode === notify)!.label}` +
-                (notifyTriggers(n.agent).length < NOTIFY_TRIGGERS.length
-                  ? `, for ${
-                      notifyTriggers(n.agent)
-                        .map((t) => NOTIFY_TRIGGER_TEXT[t].toLowerCase())
-                        .join(", ") || "nothing"
-                    }`
-                  : "") +
-                " (bell button). The megaphone wakes it now."
-              : ""),
-        );
-        t.contextValue = n.agent.state === "active" ? `agent.active.notify-${notify}` : "agent.archived";
-        return t;
-      }
-      case "note": {
-        const nt = n.note;
-        const t = new vscode.TreeItem(`${nt.id}  ${oneLine(nt.body, 50)}`, vscode.TreeItemCollapsibleState.None);
-        const fresh = this.ext.replies.unread(el.project, nt);
-        const replies = nt.thread.length ? ` · ${nt.thread.length} repl${nt.thread.length === 1 ? "y" : "ies"}${fresh ? ` (${fresh} new)` : ""}` : "";
-        t.description = `${nt.file}${nt.deliveredAt ? "" : " · not delivered yet"}${replies}`;
-        t.iconPath = fresh
-          ? new vscode.ThemeIcon("comment-unresolved", new vscode.ThemeColor("notificationsInfoIcon.foreground"))
-          : new vscode.ThemeIcon("note");
-        t.tooltip = new vscode.MarkdownString(
-          `**${nt.id}** note for ${esc(nt.agent)} on ${esc(nt.file)}${nt.deliveredAt ? "" : " (the agent receives it at its next sync)"}\n\n${esc(nt.body)}\n\n${fence(nt.text, profileByName(nt.file).fence)}` +
-            nt.thread
-              .slice(-3)
-              .map((r) => `\n\n> **${r.author === "user" ? "You" : esc(nt.agent)}:** ${esc(r.text)}`)
-              .join(""),
-        );
-        t.contextValue = nt.state === "resolved" ? "note.resolved" : "note.open";
-        if (nt.state === "resolved") t.description = `${t.description} · resolved`;
-        t.command = { command: "stet.showNote", title: "Go to note", arguments: [el] };
-        return t;
-      }
-      case "changeset": {
-        const cs = n.changeset;
-        // Old rounds stay closed in History, so it reads as a list of rounds.
-        const t = new vscode.TreeItem(roundLabel(cs), history ? vscode.TreeItemCollapsibleState.Collapsed : E);
-        const live = model.liveCount((i) => i.changeset === cs.id);
-        t.description = history ? model.outcome((i) => i.changeset === cs.id) : model.openText((i) => i.changeset === cs.id);
-        t.iconPath = new vscode.ThemeIcon("layers");
-        t.tooltip = new vscode.MarkdownString(
-          `**Round ${roundOf(cs.id)}** (${cs.id}) ${esc(cs.title)}\n\n${cs.stetNote ? `⚠ ${esc(cs.stetNote)}\n\n` : ""}${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`,
-        );
-        t.contextValue = live ? "changeset.live" : "changeset.done";
-        return t;
-      }
-      case "group": {
-        const g = n.group;
-        const members = model.members(g);
-        const t = new vscode.TreeItem(groupLabel(g), E);
-        const move = model.isMove(g);
-        t.description = groupDescription(g, members.length, move);
-        t.iconPath =
-          g.state === "broken"
-            ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
-            : new vscode.ThemeIcon(move ? "arrow-swap" : g.kind === "linked" ? "link" : "symbol-namespace");
-        t.tooltip = new vscode.MarkdownString(
-          `**${g.id}** ${g.kind}${g.source === "auto" ? " (detected by Stet)" : ""}: ${esc(g.title)}` +
-            (g.rationale ? `\n\n${esc(g.rationale)}` : "") +
-            (g.kind === "linked"
-              ? g.parts
-                ? `\n\n${g.parts.length} parts: each can be accepted or rejected on its own; the changes within a part go together.`
-                : "\n\nAccept or reject these together: accepting only some can break the document."
-              : "") +
-            (g.state === "broken" ? "\n\n⚠ Some members were resolved differently; the agent was asked to repair the document." : ""),
-        );
-        t.contextValue = members.some(isLiveItem) ? `group.live.${g.kind}` : `group.done.${g.kind}`;
-        return t;
-      }
-      case "part": {
-        const g = n.group;
-        const members = model.partMembers(g, n.index);
-        const t = new vscode.TreeItem(partLabel(g, n.index), E);
-        t.description = history ? model.outcome((i) => members.includes(i)) : `${members.length}`;
-        t.iconPath = new vscode.ThemeIcon("symbol-field");
-        t.tooltip = new vscode.MarkdownString(
-          `**${partId(g.id, n.index)}** part ${n.index + 1} of ${g.parts?.length ?? 1} of ${g.id} “${esc(g.title)}”` +
-            "\n\nAccept or reject this part on its own: the document still compiles without the other parts, " +
-            "which stay acceptable. Its own changes go together.",
-        );
-        t.contextValue = members.some(isLiveItem) ? "part.live" : "part.done";
-        return t;
-      }
-      case "item": {
-        const it = n.item;
-        const unread = this.ext.replies.unread(el.project, it);
-        const row = itemRow(it, model, await this.placeOf(el.project, it), { history, unread });
-        const lost = row.lost;
-        const t = new vscode.TreeItem(row.label, vscode.TreeItemCollapsibleState.None);
-        t.description = row.description;
-        t.iconPath = lost
-          ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
-          : unread
-            ? new vscode.ThemeIcon("comment-unresolved", new vscode.ThemeColor("notificationsInfoIcon.foreground"))
-            : itemIcon(it);
-        t.accessibilityInformation = { label: row.spoken };
-        const md = new vscode.MarkdownString((lost ? `⚠ **${LOST_TEXT}.** ${LOST_NEXT}\n\n` : "") + itemMarkdown(it, model));
-        t.tooltip = md;
-        t.contextValue = row.contextValue;
-        // Decided changes open as a diff of the change itself; open ones are shown in the file.
-        t.command = history
-          ? { command: "stet.showDiff", title: "Show diff", arguments: [el] }
-          : { command: "stet.showItem", title: "Go to change", arguments: [el, true] };
-        return t;
-      }
-    }
+    const unread =
+      n.type === "agent"
+        ? this.ext.replies.unreadOf(el.project, (x) => x.agent === n.agent.id)
+        : n.type === "note"
+          ? this.ext.replies.unread(el.project, n.note)
+          : n.type === "item"
+            ? this.ext.replies.unread(el.project, n.item)
+            : 0;
+    const place = n.type === "item" ? await this.placeOf(el.project, n.item) : undefined;
+    const row = rowView(n, model, { history, unread, ...(place ? { place } : {}) });
+    const expand = {
+      none: vscode.TreeItemCollapsibleState.None,
+      expanded: vscode.TreeItemCollapsibleState.Expanded,
+      collapsed: vscode.TreeItemCollapsibleState.Collapsed,
+    };
+    const t = new vscode.TreeItem(row.label, expand[row.expand]);
+    t.description = row.description;
+    t.tooltip = new vscode.MarkdownString(row.tooltip);
+    t.iconPath = new vscode.ThemeIcon(row.icon.id, row.icon.color ? new vscode.ThemeColor(row.icon.color) : undefined);
+    t.contextValue = row.contextValue;
+    if (row.spoken) t.accessibilityInformation = { label: row.spoken };
+    if (n.type === "note") t.command = { command: "stet.showNote", title: "Go to note", arguments: [el] };
+    // Decided changes open as a diff of the change itself; open ones are shown in the file.
+    if (n.type === "item")
+      t.command = history
+        ? { command: "stet.showDiff", title: "Show diff", arguments: [el] }
+        : { command: "stet.showItem", title: "Go to change", arguments: [el, true] };
+    return t;
   }
 
   async lineOf(p: Project, it: Item): Promise<number> {

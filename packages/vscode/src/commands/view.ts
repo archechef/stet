@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import { announce } from "../announce.js";
 import { usesHints } from "../editor.js";
 import type { StetExtension } from "../extension.js";
-import { offerContrastStyle } from "../model.js";
+import { offerContrastStyle } from "../questions.js";
 import type { Settings } from "../settings.js";
 
 /**

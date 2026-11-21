@@ -1,7 +1,8 @@
 /** Hovers, the More… menu and diffs. */
 
 import { describe, expect, it } from "vitest";
-import { actionsTitle, diffBlock, draftMarkdown } from "../src/model.js";
+import { diffBlock, draftMarkdown } from "../src/markdown.js";
+import { actionsTitle } from "../src/rows.js";
 import { makeItem as item } from "./fixtures.js";
 
 describe("hovers with your wording (test report v0.16, B12)", () => {

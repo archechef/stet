@@ -5,11 +5,12 @@ import { announce } from "../announce.js";
 import { inProject } from "../comments.js";
 import type { El } from "../common.js";
 import type { StetExtension } from "../extension.js";
-import { projectOfQuery, projectQuery, toLf } from "../model.js";
+import { projectOfQuery, projectQuery } from "../model.js";
 import { previewPlace } from "../preview.js";
 import type { Project } from "../project.js";
 import { ReviewFiles } from "../review.js";
 import { setting } from "../settings.js";
+import { toLf } from "../text.js";
 
 export class Navigation {
   constructor(private readonly ext: StetExtension) {}

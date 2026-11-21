@@ -1,7 +1,7 @@
 /** Edit & accept: the input box shows the change in the words around it. */
 
 import { describe, expect, it } from "vitest";
-import { editedPart, editFrame } from "../src/model.js";
+import { editedPart, editFrame } from "../src/text.js";
 import { makeItem as item } from "./fixtures.js";
 
 describe("Edit & accept in the input box shows where the change is (test report v0.16, D2)", () => {

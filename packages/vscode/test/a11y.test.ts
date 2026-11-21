@@ -5,8 +5,11 @@ import type { PreviewResult } from "@stet/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { announce } from "../src/announce.js";
 import { insertedTextStyle } from "../src/editor.js";
-import { itemRow, itemSpoken, LOST_TEXT, offerContrastStyle, type Snapshot, spokenRow, statusView, TreeModel } from "../src/model.js";
+import { type Snapshot, TreeModel } from "../src/model.js";
 import { frameKey, pageAlt, previewPage, viewerKey } from "../src/previewPage.js";
+import { offerContrastStyle } from "../src/questions.js";
+import { itemRow, itemSpoken, LOST_TEXT, statusView } from "../src/rows.js";
+import { spokenRow } from "../src/text.js";
 import { fake } from "./fake-vscode.js";
 import { makeItem as item } from "./fixtures.js";
 

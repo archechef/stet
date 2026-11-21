@@ -5,8 +5,8 @@ import { announce } from "../announce.js";
 import type { Threads } from "../comments.js";
 import type { El } from "../common.js";
 import type { StetExtension } from "../extension.js";
-import { LineIndex, toLf } from "../model.js";
 import type { Project } from "../project.js";
+import { LineIndex, toLf } from "../text.js";
 
 export class NoteCommands {
   constructor(private readonly ext: StetExtension) {}

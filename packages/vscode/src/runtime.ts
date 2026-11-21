@@ -7,7 +7,6 @@ import { execFile } from "node:child_process";
 import { copyFile, mkdir, readFile, rename, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { CliCommand } from "@stet/core";
-import { nodeMajor } from "./model.js";
 import type { Settings } from "./settings.js";
 
 export type RuntimeMode = Settings["runtime"];
@@ -76,4 +75,10 @@ export async function cliCommand(mode: RuntimeMode, script: string): Promise<Cli
   }
   // VS Code's own Electron binary behaves like Node with ELECTRON_RUN_AS_NODE.
   return { command: process.execPath.replace(/\\/g, "/"), args: [script.replace(/\\/g, "/")], env: { ELECTRON_RUN_AS_NODE: "1" } };
+}
+
+/** Parse `node --version` output; returns the major version or null. */
+export function nodeMajor(version: string): number | null {
+  const m = /^v?(\d+)\./.exec(version.trim());
+  return m ? Number(m[1]) : null;
 }

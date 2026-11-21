@@ -1,6 +1,6 @@
 /** Finish review: what it says it commits. */
 import { describe, expect, it } from "vitest";
-import { FINISH_SAVE, finishQuestion } from "../src/model.js";
+import { FINISH_SAVE, finishQuestion } from "../src/questions.js";
 
 describe("Finish review says what it commits (test report v0.16, D6)", () => {
   it("names your own edits, unsaved text, and that undo ends", () => {

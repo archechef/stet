@@ -2,7 +2,8 @@
 import { type Agent, type Changeset, type Group, type Item, StetError } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { acceptAction, acceptQuestion, changeActions } from "../src/actions.js";
-import { failedAcceptActions, manyQuestion, type Snapshot, TreeModel } from "../src/model.js";
+import { type Snapshot, TreeModel } from "../src/model.js";
+import { failedAcceptActions, manyQuestion } from "../src/questions.js";
 import { makeItem as item, makeTypItem as typItem } from "./fixtures.js";
 
 function model(g: Partial<Group>, items: Item[] = ["1.1", "1.2", "1.3"].map((i) => item(i))): TreeModel {
