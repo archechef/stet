@@ -1,18 +1,21 @@
 name: Release
 
 # Push a tag vX.Y.Z (after `node scripts/release.mjs set X.Y.Z` and a commit) to publish a GitHub release
-# with the VS Code extension and the standalone CLI. The .vsix is uploaded to the VS Code
-# Marketplace by hand (see CONTRIBUTING.md). Open VSX publishing runs once the OVSX_PAT secret exists.
+# with the VS Code extension and the standalone CLI, then the same .vsix to the VS Code Marketplace
+# (Trusted Publishing: no stored token; see CONTRIBUTING.md). Open VSX publishing runs once the
+# OVSX_PAT secret exists.
 on:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
@@ -42,6 +45,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" out/* --verify-tag --title "Stet $VERSION" --notes-file notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: out/stet-vscode-${{ env.VERSION }}.vsix
+          if-no-files-found: error
       - name: Publish to Open VSX
         if: env.OVSX_PAT != ''
         run: npx --yes ovsx publish "out/stet-vscode-$VERSION.vsix" -p "$OVSX_PAT"
+
+  # The .vsix the release job built and tested, to the VS Code Marketplace. The Marketplace trusts
+  # this workflow file of this repository (a Trusted Publishing policy on the publisher), so only
+  # this job gets an OIDC token; it runs no tests or build scripts. --skip-duplicate: a re-run
+  # after the version is already live succeeds.
+  marketplace:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: out
+      - name: Publish to the VS Code Marketplace
+        run: npm exec -w stet-vscode -- vsce publish --oidc --skip-duplicate --packagePath "$GITHUB_WORKSPACE/out/stet-vscode-${GITHUB_REF_NAME#v}.vsix"

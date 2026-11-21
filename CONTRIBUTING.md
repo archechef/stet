@@ -93,12 +93,9 @@ The tag starts `.github/workflows/release.yml`. It checks that every version mat
 - `SHA256SUMS.txt`;
 - the changelog section as release notes.
 
-**VS Code Marketplace** (publisher `archechef`): upload by hand.
-1. Download `stet-vscode-<version>.vsix` from the GitHub release.
-2. At [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage), open the extension's **⋯** menu → **Update**, and upload the file. (The very first upload was **+ New extension → Visual Studio Code**.)
-3. Microsoft checks the package; the new version is live a few minutes later.
+**VS Code Marketplace** (publisher `archechef`): the workflow's `marketplace` job publishes the same `.vsix` once the GitHub release exists, with `vsce publish --oidc`. It uses the Marketplace's Trusted Publishing: the publisher has a policy (Marketplace → *Manage* → `archechef` → **Trusted Publishing**) that trusts `release.yml` of `archechef/stet`, with no GitHub environment, so no token is stored anywhere. Only that job may request GitHub's OIDC token (`id-token: write`); it runs no tests or build scripts. Renaming the workflow file or the repository needs a new policy. A re-run after the version is already live succeeds (`--skip-duplicate`); Microsoft checks a new version for a few minutes before it is live.
 
-Automatic publishing would need a Marketplace token. The tokens Azure DevOps offered for this ("all accessible organizations") are retired on 2026-12-01; their replacement, signing in with Microsoft Entra ID (`vsce publish --azure-credential`), needs an Azure subscription. Not worth it for occasional releases.
+If the job fails, upload by hand: download `stet-vscode-<version>.vsix` from the GitHub release, then at [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) open the extension's **⋯** menu → **Update** and upload the file.
 
 **Open VSX** (VSCodium, Cursor and others): the release workflow publishes there by itself once the repository secret `OVSX_PAT` exists (Settings → Secrets and variables → Actions), a token from open-vsx.org.
 
