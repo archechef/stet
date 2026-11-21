@@ -24,9 +24,9 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants, existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, posix, sep } from "node:path";
+import { basename, delimiter, dirname, join, sep } from "node:path";
 import { filterOverrides, Repo } from "./git.js";
 import { diffArrays } from "diff";
 import { inlineDiff } from "./inline.js";
@@ -515,7 +515,7 @@ export class PreviewBuilder {
     const beforeAt = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), target.file, lines(target.baseText, target.range.start, target.range.end), join(itemDir, "before.png"), spansBefore);
     const [afterImg, beforeImg] = [afterAt.img, beforeAt?.img ?? null];
     // Whole pages with the changed words marked (a word diff of the two versions, where the changes are).
-    const pages = await this.pageView(work, built.pdf, afterImg.page, base, beforeImg?.page ?? null, req, itemDir, baseDir, afterAt.found, beforeAt?.found ?? []).catch(() => undefined);
+    const pages = await this.pageView(built.pdf, afterImg.page, base, beforeImg?.page ?? null, req, itemDir, baseDir, afterAt.found, beforeAt?.found ?? []).catch(() => undefined);
     await rm(work, { recursive: true, force: true }); // keep the images and this version's PDF only
     await utimes(baseDir, new Date(), new Date()).catch(() => undefined);
     // Errors only this version has: the PDF is there, but the reviewer should know.
@@ -542,7 +542,6 @@ export class PreviewBuilder {
 
   /** Keep this version's PDF, and make the page view: the change's page in each version, with marks. */
   private async pageView(
-    work: string,
     afterPdf: string,
     aPage: number,
     base: { dir: string; pdf: string | null },

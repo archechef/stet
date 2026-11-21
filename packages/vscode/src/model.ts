@@ -800,3 +800,16 @@ export function spokenRow(s: string): string {
     .trim();
 }
 
+/**
+ * The `p=` query of Stet's own documents (diffs, the Review file, the edit tab): the project's
+ * folder, encoded once. `URLSearchParams` decodes it once on the way back, so a folder named
+ * `50% done` or holding `%20` comes back as it is.
+ */
+export function projectQuery(mainPath: string): string {
+  return `p=${encodeURIComponent(mainPath)}`;
+}
+
+/** The project folder in a `projectQuery`. */
+export function projectOfQuery(query: string): string {
+  return new URLSearchParams(query).get("p") ?? "";
+}

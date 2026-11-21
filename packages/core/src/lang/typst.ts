@@ -9,7 +9,7 @@
  */
 import type { Item } from "../model.js";
 import { tokenizeWords, type Token, type TokenType } from "../tokenizer.js";
-import { CITATION, LABEL } from "./latex.js";
+import { LABEL } from "./latex.js";
 import type { DefinitionRules, IncludeRules, LanguageProfile, PartRules, ReferenceRules, SyntaxRules } from "./profile.js";
 
 // ---------------------------------------------------------------------------

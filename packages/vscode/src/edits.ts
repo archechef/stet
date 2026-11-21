@@ -8,7 +8,7 @@ import { basename } from "node:path";
 import * as vscode from "vscode";
 import { foldPath, type Item } from "@stet/core";
 import { acceptAction, withIcon, type ChangeAction } from "./actions.js";
-import { isLive, type Ref } from "./model.js";
+import { isLive, projectOfQuery, projectQuery, type Ref } from "./model.js";
 import type { Project } from "./project.js";
 import { viaReview, type ReviewHost } from "./review.js";
 
@@ -33,12 +33,12 @@ export class EditFiles implements vscode.FileSystemProvider, vscode.CodeLensProv
 
   /** The editor document for a change's wording (its file's name, so it gets the file's language). */
   static uriFor(p: Project, item: Item): vscode.Uri {
-    return vscode.Uri.from({ scheme: EDIT_SCHEME, path: `/${item.id}/${basename(item.file)}`, query: `p=${encodeURIComponent(p.mainPath)}` });
+    return vscode.Uri.from({ scheme: EDIT_SCHEME, path: `/${item.id}/${basename(item.file)}`, query: projectQuery(p.mainPath) });
   }
 
   /** The project and change of an edit document. */
   target(uri: vscode.Uri): { project: Project; id: string; item: Item | undefined } {
-    const project = this.host.project(foldPath(decodeURIComponent(new URLSearchParams(uri.query).get("p") ?? "")));
+    const project = this.host.project(foldPath(projectOfQuery(uri.query)));
     const id = uri.path.split("/")[1] ?? "";
     if (!project) throw vscode.FileSystemError.FileNotFound(uri);
     return { project, id, item: this.host.model(project).item(id) };

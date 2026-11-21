@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { applyItems, conflicts, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
 import { anchor, anchorNear, captureContext, chainInsertions, type Neighbour, type Span } from "./anchor.js";
-import { matchesAny, validateConfig, type StetConfig } from "./config.js";
+import { validateConfig, type StetConfig } from "./config.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import {
   autoGroups,

@@ -56,6 +56,7 @@ Decisions on the open points of the 5e4c6af reports.
 - **Shorter summaries:** a change's row starts at the argument or field that changed, a key-only change of a `.bib` entry shows only its key line, and a changed call names the call. Diffs of long changes show the changed lines with a little context.
 - **Spoken maths says only what differs**, with labels and references read out in words.
 - **A failed accept of a change that can't be found** offers *Reject…* and *Revise…* in its message.
+- **A project folder with `%` in its name** (`50% done`) broke diffs, the Review file and the edit tab in VS Code: its path was decoded twice.
 
 Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code focus).
 

@@ -47,6 +47,8 @@ import {
   partLabel,
   roundLabel,
   STATUS_TEXT,
+  projectOfQuery,
+  projectQuery,
   suggestAgentId,
   toLf,
   TreeModel,
@@ -1225,7 +1227,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
    * becomes the changes' wording, as a save would. False if a save failed (it said why).
    */
   private async saveWording(p: Project, ids: string[], files: string[]): Promise<boolean> {
-    const of = (uri: vscode.Uri) => this.projects.get(foldPath(decodeURIComponent(new URLSearchParams(uri.query).get("p") ?? "")));
+    const of = (uri: vscode.Uri) => this.projects.get(foldPath(projectOfQuery(uri.query)));
     for (const d of vscode.workspace.textDocuments) {
       if (!d.isDirty || of(d.uri) !== p) continue;
       const mine =
@@ -1873,8 +1875,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const right = ReviewFiles.uriFor(p, item.file, ids);
       return void (await vscode.commands.executeCommand("vscode.diff", this.diffLeft(p, item.file), right, title, { preview: true, viewColumn: this.columnFor(right) }));
     }
-    const key = encodeURIComponent(p.mainPath);
-    const mk = (side: string) => vscode.Uri.from({ scheme: "stet-diff", path: `/${item.file}`, query: `p=${key}&id=${item.id}&side=${side}` });
+    const key = projectQuery(p.mainPath);
+    const mk = (side: string) => vscode.Uri.from({ scheme: "stet-diff", path: `/${item.file}`, query: `${key}&id=${item.id}&side=${side}` });
     await vscode.commands.executeCommand("vscode.diff", mk("before"), mk("after"), `${item.id} ${item.file}${inProject(p)} (current ↔ proposed)`, { preview: true, viewColumn: this.columnFor(mk("after")) });
   }
 
@@ -1884,12 +1886,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
    */
   private diffLeft(p: Project, file: string): vscode.Uri {
     if (vscode.workspace.getConfiguration("stet").get<boolean>("diffShowsProposals", false)) return p.fileUri(file);
-    return vscode.Uri.from({ scheme: "stet-diff", path: `/${file}`, query: `p=${encodeURIComponent(p.mainPath)}&side=current` });
+    return vscode.Uri.from({ scheme: "stet-diff", path: `/${file}`, query: `${projectQuery(p.mainPath)}&side=current` });
   }
 
   /** The file a `stet-diff:` document of your current text shows. */
   private currentOf(uri: vscode.Uri): vscode.Uri | undefined {
-    const p = this.projects.get(foldPath(decodeURIComponent(new URLSearchParams(uri.query).get("p") ?? "")));
+    const p = this.projects.get(foldPath(projectOfQuery(uri.query)));
     return p?.fileUri(uri.path.replace(/^\//, ""));
   }
 
@@ -1903,7 +1905,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** Content of `stet-diff:` documents. */
   async diffSide(uri: vscode.Uri): Promise<string> {
     const q = new URLSearchParams(uri.query);
-    const p = this.projects.get(foldPath(decodeURIComponent(q.get("p") ?? "")));
+    const p = this.projects.get(foldPath(projectOfQuery(uri.query)));
     if (p && q.get("side") === "current") return this.currentText(p, uri.path.replace(/^\//, ""));
     const item = p && this.model(p).item(q.get("id") ?? "");
     if (!p || !item) return "";
@@ -2260,7 +2262,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const pending = a.project.snapshot.items.filter((i) => i.agent === a.agent.id && isLive(i)).length;
     const unsubmitted = await a.project.stet.unsubmittedFiles(a.agent).catch(() => [] as string[]);
     // Keeping the folder comes first, so Enter never deletes anything (test report D5).
-    const { keep, del, order } = archiveChoices(unsubmitted.length);
+    const { del, order } = archiveChoices(unsubmitted.length);
     const ok = await vscode.window.showWarningMessage(
       `Archive agent ${a.agent.id}?`,
       {

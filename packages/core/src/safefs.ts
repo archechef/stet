@@ -4,7 +4,7 @@
  * elsewhere if `alias` is a link. Like git, Stet does not write beyond a link.
  */
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { isInside, samePath } from "./paths.js";
 

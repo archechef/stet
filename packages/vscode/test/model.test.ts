@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
 import { archiveChoices, bulkQuestion, changeAt, filterIsEmpty, filterText, fitLabel, matchesFilter, diffBlock, dissolveQuestion, itemSpoken, fitsInline, ghostText, groupDescription, itemLabel, moveNote, proposalMarkdown, roundLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
+import { projectOfQuery, projectQuery } from "../src/model.js";
 import { isManaged, managedCliPath } from "../src/runtime.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
@@ -362,5 +363,13 @@ describe("filters and labels (test report v0.14)", () => {
     expect(fitLabel("short", 28)).toBe("short");
     expect(fitLabel("Polish the introduction and the related work section", 40)).toBe("Polish the introduction and the…");
     expect(fitLabel("an-extremely-long-agent-name-without-spaces", 20)).toBe("an-extremely-long-a…");
+  });
+});
+
+describe("the project in a Stet document's address", () => {
+  it("comes back as it was, with % and an encoded space in the folder name (code quality report 6a517ae)", () => {
+    for (const path of ["/home/u/50% done", "/home/u/a%20b", "C:\\Users\\u\\thesis & notes+1"]) {
+      expect(projectOfQuery(`${projectQuery(path)}&side=current`)).toBe(path);
+    }
   });
 });

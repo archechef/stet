@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { hasPreview, moveOthers, movesOut, oneLine, partId, profileByName, type Item } from "@stet/core";
+import { hasPreview, movesOut, oneLine, profileByName, type Item } from "@stet/core";
 import { isLive, type Ref, type TreeModel } from "./model.js";
 
 export interface ChangeAction {

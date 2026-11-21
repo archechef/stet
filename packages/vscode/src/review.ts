@@ -11,7 +11,7 @@
 import * as vscode from "vscode";
 import { foldPath, type Item, type ReviewDocument } from "@stet/core";
 import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
-import { positionIn, toLf, type Ref, type TreeModel } from "./model.js";
+import { positionIn, projectOfQuery, projectQuery, toLf, type Ref, type TreeModel } from "./model.js";
 import type { Project } from "./project.js";
 
 export const REVIEW_SCHEME = "stet-review";
@@ -52,12 +52,12 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
 
   /** The review document's URI for a file of a project; `ids`: only these changes (else all pending ones). */
   static uriFor(p: Project, file: string, ids?: string[]): vscode.Uri {
-    return vscode.Uri.from({ scheme: REVIEW_SCHEME, path: `/${file}`, query: `p=${encodeURIComponent(p.mainPath)}${ids ? `&ids=${ids.join(",")}` : ""}` });
+    return vscode.Uri.from({ scheme: REVIEW_SCHEME, path: `/${file}`, query: `${projectQuery(p.mainPath)}${ids ? `&ids=${ids.join(",")}` : ""}` });
   }
 
   private target(uri: vscode.Uri): { project: Project; file: string; ids?: string[] } {
     const q = new URLSearchParams(uri.query);
-    const project = this.host.project(foldPath(decodeURIComponent(q.get("p") ?? "")));
+    const project = this.host.project(foldPath(projectOfQuery(uri.query)));
     const file = uri.path.replace(/^\//, "");
     if (!project) throw vscode.FileSystemError.FileNotFound(uri);
     const ids = q.get("ids");
