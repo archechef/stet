@@ -426,7 +426,7 @@ export class Store {
  * Order of records by id: items by round and number (1.2 before 1.10: as decimals, 1.10 was 1.1,
  * test report v0.16.0), the others (C3, G12, N4) by their number.
  */
-function byId(a: string, b: string): number {
+export function byId(a: string, b: string): number {
   if (/^\d+\.\d+$/.test(a) && /^\d+\.\d+$/.test(b)) return compareItemIds(a, b);
   const num = (x: string) => Number(x.replace(/^\D+/, "")) || 0;
   return num(a) - num(b) || a.localeCompare(b);

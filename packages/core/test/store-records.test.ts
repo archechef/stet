@@ -1,7 +1,7 @@
 /** Records written by older versions of Stet are read in today's shape. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type Item, upgradeItem } from "../src/model.js";
 import { edit, PAPER, setup } from "./helpers.js";
 
@@ -36,5 +36,27 @@ describe("items stored by an older Stet (code quality report 6a517ae)", () => {
     const undone = await stet.undo(ia!.id);
     expect(undone.restored.map((i) => i.id)).toEqual([ib!.id]);
     expect((await stet.getItem(ib!.id))!.status).toBe("pending");
+  });
+});
+
+describe("a submit is written in one step (code quality report 6a517ae, refactoring 5)", () => {
+  it("a submit that fails halfway leaves the store as it was", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem of reviewing", "the task of reviewing");
+    const { items } = await stet.submit("a", { title: "t" });
+    const before = await stet.listItems();
+
+    // The revision supersedes 1.1, then the submit fails before it is done.
+    edit(wt, "main.tex", "the task of reviewing", "the challenge of reviewing");
+    const fail = vi.spyOn(stet.decisionOps, "dissolveMoves").mockRejectedValueOnce(new Error("interrupted"));
+    await expect(stet.submit("a", { title: "revised" })).rejects.toThrow("interrupted");
+    fail.mockRestore();
+    expect(await stet.listItems()).toEqual(before);
+    expect((await stet.getItem(items[0]!.id))?.status).toBe("pending");
+
+    // Submitted again, it goes through as it would have.
+    const r = await stet.submit("a", { title: "revised" });
+    expect(r.superseded).toEqual([items[0]!.id]);
   });
 });
