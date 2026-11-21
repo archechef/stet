@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { compareItemIds, numberInRound } from "../src/model.js";
-import { edit, PAPER, setup } from "./helpers.js";
+import { edit, PAPER, read, setup, write } from "./helpers.js";
+
+const LINES = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} computes omega${i + 1} in every round.`).join("\n") + "\n";
 
 describe("item ids: round.number", () => {
   it("numbers the changes of each submission within its round", async () => {
@@ -35,5 +37,18 @@ describe("item ids: round.number", () => {
     expect(["12.10", "S7", "12.2", "3.1", "S12"].sort(compareItemIds)).toEqual(["S7", "S12", "3.1", "12.2", "12.10"]);
     expect(numberInRound("12.3")).toBe(3);
     expect(numberInRound("S12")).toBeNull();
+  });
+});
+
+describe("ids in order (test report v0.16, UX)", () => {
+  it("lists 1.2 before 1.10", async () => {
+    const { stet } = await setup({ "main.tex": LINES });
+    const { worktree: wt } = await stet.newAgent("a");
+    let t = read(wt, "main.tex");
+    for (let i = 1; i <= 12; i++) t = t.replace(`omega${i} in every round`, `omega${i} in all rounds`);
+    write(wt, "main.tex", t);
+    const { items } = await stet.submit("a", { title: "t" });
+    expect(items).toHaveLength(12);
+    expect((await stet.listItems()).map((i) => i.id)).toEqual(Array.from({ length: 12 }, (_, i) => `1.${i + 1}`));
   });
 });

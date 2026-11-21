@@ -55,7 +55,7 @@ Stet's promise: **an AI agent never changes your project without your approval.*
 
 ## Reviews
 
-The code went through several security reviews in September 2026: an independent audit, two reviews by Codex, and a pre-release pass for security, efficiency and code quality. All findings were fixed, each with a regression test (`packages/core/test/security.test.ts`, `review-findings.test.ts`). They are summarized in the spec (§16).
+The code went through several security reviews in September 2026: an independent audit, two reviews by Codex, and a pre-release pass for security, efficiency and code quality. All findings were fixed, each with a regression test in the test file of its topic (`packages/core/test/workspace-integrity.test.ts`, `safe-paths.test.ts`, `store-lock.test.ts`, `accept.test.ts`, …), named with the review and finding, such as *(Codex review 2026-09, F5)*. They are summarized in the spec (§16).
 
 ## Reporting a problem
 

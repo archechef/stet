@@ -1,8 +1,8 @@
-/** Findings of the test report of 2026-11-20 that are about the command line: run through the built CLI. */
+/** The command line, run through the built CLI: messages, exit codes, and what review, show and the other commands say. */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CLI_DIST, edit, git, PAPER, read, setup, write } from "./helpers.js";
+import { CLI_DIST, edit, git, PAPER, read, setup, write, LABELLED } from "./helpers.js";
 
 /** Run `stet` in `cwd`: exit code, output and errors (no colours: not a terminal). */
 function stet(cwd: string, ...args: string[]) {
@@ -10,10 +10,9 @@ function stet(cwd: string, ...args: string[]) {
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
-const LABELLED = PAPER.replace("The formula $a+b=c$ holds.", "The formula $a+b=c$ holds, see Section~\\ref{sec:intro}.");
 
-describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20)", () => {
-  it("B1: says what is wrong with the command line, without a stack trace, and has --version", async () => {
+describe.skipIf(!existsSync(CLI_DIST))("the command line", () => {
+  it("says what is wrong with the command line, without a stack trace, and has --version (test report v0.14, B1)", async () => {
     const { repo } = await setup({ "main.tex": PAPER });
     for (const args of [["review", "--frob"], ["reject", "1.1", "-m"], ["--nope"]]) {
       const r = stet(repo, ...args);
@@ -51,7 +50,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20
     expect(stet(repo, "undo", "9.9").code).toBe(3);
   });
 
-  it("B5: refuses a status or agent that doesn't exist instead of finding nothing", async () => {
+  it("refuses a status or agent that doesn't exist instead of finding nothing (test report v0.14, B5)", async () => {
     const { repo, stet: s } = await setup({ "main.tex": PAPER });
     await s.newAgent("a");
     const st = stet(repo, "review", "--status", "acepted");
@@ -64,7 +63,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20
     expect(stet(repo, "notes", "--agent", "nobody").code).toBe(3);
   });
 
-  it("B4: a revision says what it revises, and show gives the reviewer's request", async () => {
+  it("a revision says what it revises, and show gives the reviewer's request (test report v0.14, B4)", async () => {
     const { repo, stet: s } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await s.newAgent("a");
     edit(wt, "main.tex", "the problem", "the task");
@@ -79,7 +78,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20
     expect(show).toContain(`revises: ${first.id} (superseded), where you asked: Say 'the question' instead`);
   });
 
-  it("B11: show gives the wording that was accepted, and your wording before it is", async () => {
+  it("show gives the wording that was accepted, and your wording before it is (test report v0.14, B11)", async () => {
     const { repo, stet: s } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await s.newAgent("a");
     edit(wt, "main.tex", "the problem", "the task");
@@ -93,7 +92,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20
     expect(read(repo, "main.tex")).toContain("the riddle");
   });
 
-  it("D3: rejecting part of a linked group whose other part is accepted warns the reviewer, and show says so", async () => {
+  it("rejecting part of a linked group whose other part is accepted warns the reviewer, and show says so (test report v0.14, D3)", async () => {
     const { repo, stet: s } = await setup({ "main.tex": LABELLED });
     const { worktree: wt } = await s.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
@@ -108,7 +107,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20
     expect(stet(repo, "show", g.id).out).toMatch(/now partly accepted/);
   });
 
-  it("D8: commit names the files whose own edits it takes along", async () => {
+  it("commit names the files whose own edits it takes along (test report v0.14, D8)", async () => {
     const { repo, stet: s } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await s.newAgent("a");
     edit(wt, "main.tex", "the problem", "the task");
@@ -121,7 +120,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20
     expect(git(repo, "log", "-1", "--format=%B")).toMatch(/Also the reviewer's own edits in main\.tex\./);
   });
 
-  it("D4: archive --remove refuses unsubmitted changes unless --force", async () => {
+  it("archive --remove refuses unsubmitted changes unless --force (test report v0.14, D4)", async () => {
     const { repo, stet: s } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await s.newAgent("a");
     edit(wt, "main.tex", "the problem", "the task");
@@ -133,7 +132,7 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line (test report 2026-11-20
     expect(existsSync(wt)).toBe(false);
   });
 
-  it("D10 and UX: whole-file changes show their size; whitespace changes are visible", async () => {
+  it("whole-file changes show their size; whitespace changes are visible (test report v0.14, D10 and UX)", async () => {
     const { repo, stet: s } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await s.newAgent("a");
     write(wt, "chapters/new.tex", "x".repeat(3000) + "\n");

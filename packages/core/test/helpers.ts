@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +12,18 @@ const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5 });
 });
+
+/** A new folder outside every test project, removed after the test: for links that point out of the project. */
+export function outsideDir(): string {
+  const d = mkdtempSync(join(tmpdir(), "stet-outside-"));
+  dirs.push(d);
+  return d;
+}
+
+/** A directory link: a junction on Windows (no admin rights needed), a symlink elsewhere. */
+export function dirLink(target: string, path: string) {
+  symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+}
 
 export function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true }).trim();
@@ -141,3 +153,21 @@ export const TYPST_DOC: DocLang = {
 };
 
 export const DOC_LANGS: DocLang[] = [LATEX_DOC, TYPST_DOC];
+
+/** A stand-in for the stet command, for the workspace files that name it. */
+export const FAKE_CLI = { command: process.execPath, args: ["/opt/stet/cli.js"] };
+
+/** PAPER with a label referred to twice. */
+export const LABELLED = PAPER.replace("The formula $a+b=c$ holds.", "The formula $a+b=c$ holds, see Section~\\ref{sec:intro}.");
+
+/** The agent renames sec:intro everywhere: one auto linked group with a part per change. */
+export async function renamed() {
+  const { stet, repo } = await setup({ "main.tex": LABELLED });
+  const { worktree: wt } = await stet.newAgent("a");
+  write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
+  const r = await stet.submit("a", { title: "rename" });
+  const g = r.groups.find((x) => x.kind === "linked" && /Rename label/.test(x.title))!;
+  if (!g?.parts || g.parts.length < 2) throw new Error("expected a linked group with parts");
+  const label = r.items.find((i) => i.newText.includes("\\label") || i.context.before.endsWith("\\label{"))!;
+  return { stet, repo, wt, r, g, label, refs: r.items.filter((i) => i !== label) };
+}

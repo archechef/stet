@@ -19,11 +19,11 @@ import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config.js";
 import { autoGroups } from "../src/grouping.js";
 import { inlineDiff } from "../src/inline.js";
-import { documentProfile, hasPreview, LATEX, PROFILES, profileByName, profileFor } from "../src/lang/index.js";
+import { documentProfile, hasPreview, LATEX, profileByName, profileFor, PROFILES } from "../src/lang/index.js";
 import type { LanguageProfile } from "../src/lang/profile.js";
 import type { Item, MoveInfo } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
-import { splitText, type Edit } from "../src/split.js";
+import { type Edit, splitText } from "../src/split.js";
 import { normalizeWs, paragraphChange } from "../src/text.js";
 import { edit, git, read, setup, write } from "./helpers.js";
 
@@ -472,8 +472,8 @@ spec("Typst: labels across rounds, and in rewrites", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Prose in a Typst file: what the test reports found for LaTeX (test-report.test.ts D6, D7, and
-// paragraphs split and joined) holds here too. (scenarios.test.ts and moves.test.ts run in both
+// Prose in a Typst file: what the test reports found for LaTeX (split.test.ts: test report v0.14,
+// D6 and D7, and paragraphs split and joined) holds here too. (scenarios.test.ts and moves.test.ts run in both
 // languages.)
 
 spec("Typst: prose", () => {
@@ -1007,4 +1007,92 @@ spec("Typst: scripting", () => {
   it("every review it allows gives a well-formed document", async () => {
     await checkTyp(before, after);
   }, 120_000);
+});
+
+describe("labels, references and files read in (test report 5e4c6af)", () => {
+  it("B2: Typst comments and strings in code are neither labels nor references", () => {
+    const refs = T().references!;
+    const win = (it: Item, t: string) => it.context.before + t + it.context.after;
+    const comment = item("// a note about <intro> and @intro", "// a note about <start> and @start");
+    expect(refs.definitions(comment)[0]!.added).toEqual([]);
+    expect(refs.uses("label", win(comment, comment.oldText), win(comment, comment.newText), cfg.grouping).added).toEqual([]);
+    const str = item('#"see @intro"', '#"see @start"');
+    expect(refs.uses("label", str.oldText, str.newText, cfg.grouping).added).toEqual([]);
+    // Quotes in markup are text: a reference in them counts.
+    const quoted = item('He said "see @intro".', 'He said "see @start".');
+    expect(refs.uses("label", quoted.oldText, quoted.newText, cfg.grouping).added).toEqual(["start"]);
+  });
+
+  it("D1: in Typst a label rename and its references are one unit; in LaTeX a part each", () => {
+    const def = item("<intro>", "<start>");
+    const use = item("@intro", "@start");
+    const g = autoGroups([def, use], cfg.grouping).find((x) => x.kind === "linked")!;
+    expect(g.parts).toBeUndefined();
+    const ldef = item("\\label{intro}", "\\label{start}", { file: "main.tex" });
+    const luse = item("\\ref{intro}", "\\ref{start}", { file: "main.tex" });
+    expect(autoGroups([ldef, luse], cfg.grouping).find((x) => x.kind === "linked")!.parts).toHaveLength(2);
+  });
+
+  it("D1: Typst parts never put a label and its references apart", async () => {
+    const label = item("= Intro <intro>", "= Intro <start>");
+    const ref = item("See @intro.", "See @start.");
+    const other = item("is", "was");
+    const { parts, notes } = await settleParts([{ title: "label", items: [label.id] }, { title: "ref", items: [ref.id] }, { title: "o", items: [other.id] }], [label, ref, other], undefined, { grouping: cfg.grouping });
+    expect(parts?.map((p) => p.items)).toEqual([[label.id, ref.id], [other.id]]);
+    expect(notes.join()).toMatch(/stops the build/);
+  });
+
+  it("D1: a partial accept of a Typst linked group says the document may not compile", async () => {
+    const doc = "= Intro <intro>\nText.\n\nSee @intro.\n\nMore text here.\n";
+    const { stet } = await setup({ "main.typ": doc });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.typ", doc.replaceAll("intro", "start"));
+    const r = await stet.submit("a", { title: "rename" });
+    const g = r.groups.find((x) => x.kind === "linked")!;
+    const res = await stet.accept([g.items[0]!], { overrideLinked: true });
+    expect(res.warnings.join(" ")).toMatch(/may not compile/);
+  });
+
+  it("D8: a citation key renamed next to a maths edit is a change of its own", () => {
+    const o = "The damping is $alpha = 3 times 10^(-4)$ as measured in @chumak2015 for YIG films.\n";
+    const nw = "The damping is $alpha = (3.1 plus.minus 0.2) times 10^(-4)$ as measured in @chumak2015magnon for YIG films.\n";
+    expect(splitText(T(), o, nw, cfg.split).map((e) => e.newText)).toEqual(["$alpha = (3.1 plus.minus 0.2) times 10^(-4)$", "@chumak2015magnon"]);
+  });
+
+  it("D5: in Typst a new label and a new reference to it are linked", () => {
+    const def = item("= Method", "= Method <sec:method>");
+    const use = item("", "The method is in @sec:method.");
+    const g = autoGroups([def, use], cfg.grouping).find((x) => x.kind === "linked");
+    expect(g?.items.sort()).toEqual([def.id, use.id].sort());
+    expect(g?.parts).toBeUndefined();
+    // LaTeX: "??" until both are there, so nothing to link.
+    const ldef = item("\\section{Method}", "\\section{Method}\\label{sec:method}", { file: "main.tex" });
+    const luse = item("", "The method is in \\ref{sec:method}.", { file: "main.tex" });
+    expect(autoGroups([ldef, luse], cfg.grouping).find((x) => x.kind === "linked")).toBeUndefined();
+  });
+
+  it("D5: a new reference is linked with a pending rename of its label from an earlier round", async () => {
+    const doc = "= Intro <intro>\nText.\n\nSee @intro.\n\nMore text here.\n";
+    const { stet } = await setup({ "main.typ": doc });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.typ", doc.replaceAll("intro", "start"));
+    const r1 = await stet.submit("a", { title: "rename" });
+    edit(wt, "main.typ", "More text here.", "More text here, as in @start.");
+    const r2 = await stet.submit("a", { title: "use it" });
+    const g = (await stet.listGroups()).find((x) => x.kind === "linked" && x.items.includes(r2.items[0]!.id));
+    expect(g?.items).toEqual(expect.arrayContaining([...r1.items.map((i) => i.id), r2.items[0]!.id]));
+  });
+
+  it("D6: a new image read in by a relative path from a subfolder is grouped with the #image", async () => {
+    const doc = '#include "chapters/one.typ"\n';
+    const { stet } = await setup({ "main.typ": doc, "chapters/one.typ": "= One\nText.\n" });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "chapters/one.typ", "Text.", 'Text.\n#image("../figures/x.png")');
+    write(wt, "figures/x.png", "PNG");
+    const r = await stet.submit("a", { title: "figure" });
+    const fig = r.items.find((i) => i.file === "figures/x.png")!;
+    const use = r.items.find((i) => i.newText.includes("#image"))!;
+    expect(r.groups.find((g) => g.kind === "linked")?.items.sort()).toEqual([fig.id, use.id].sort());
+    expect(read(wt, "chapters/one.typ")).toContain("../figures/x.png");
+  });
 });

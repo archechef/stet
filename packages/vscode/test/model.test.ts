@@ -270,7 +270,7 @@ describe("moves (spec §6.4.7)", () => {
   });
 });
 
-describe("test report 2026-11-20", () => {
+describe("the change at the cursor, the archive dialog and revision labels (test report v0.14)", () => {
   const at = (l: number, c: number) => ({ line: l, character: c });
   const loc = (id: string, l: number, a: number, b: number, l2 = l) => ({ id, range: { start: at(l, a), end: at(l2, b) } });
 
@@ -308,7 +308,7 @@ describe("test report 2026-11-20", () => {
   });
 });
 
-describe("test report 2026-11-20: confirmations and screen readers", () => {
+describe("confirmations and screen readers (test report v0.14)", () => {
   it("asks before deciding several changes at once, except a linked group's", () => {
     const s = (count: number, changeset: boolean, linked: boolean) => ({ count, what: "C3 “Polish”", changeset, linked });
     expect(bulkQuestion("Reject", s(5, true, false))).toBe("Reject all 5 changes of C3 “Polish”?");
@@ -326,7 +326,7 @@ describe("test report 2026-11-20: confirmations and screen readers", () => {
   });
 });
 
-describe("test report 2026-11-20: filters and labels", () => {
+describe("filters and labels (test report v0.14)", () => {
   it("filters what the panel shows by agent, file, status and words, keeping the tree around matches", () => {
     const s = snap();
     s.items.push(item("S6", "C1", { file: "intro.tex", oldText: "estimator", newText: "statistic", thread: [{ at: "", author: "user", text: "Why the change?" }] }));

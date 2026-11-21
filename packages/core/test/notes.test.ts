@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeNote } from "../src/notes.js";
 import { describeFeedback } from "../src/mcp.js";
+import { describeNote } from "../src/notes.js";
 import { edit, PAPER, setup } from "./helpers.js";
 
 describe("reviewer notes", () => {
@@ -83,5 +83,23 @@ describe("reviewer notes", () => {
     await expect(stet.addNote("a", { file: "../x.tex", fromLine: 1 }, "x")).rejects.toThrow(/not a file in the project/);
     await expect(stet.addNote("a", { file: "missing.tex", fromLine: 1 }, "x")).rejects.toThrow(/does not exist/);
     await expect(stet.addNote("a", { file: "main.tex", fromLine: 1 }, "  ")).rejects.toThrow(/empty/);
+  });
+});
+
+describe("resolved notes can be opened again (test report v0.16)", () => {
+  it("reopenNote opens it and tells the agent", async () => {
+    const { describeFeedback } = await import("../src/mcp.js");
+    const { stet } = await setup({ "main.tex": PAPER });
+    await stet.newAgent("a");
+    const n = await stet.addNote("a", { file: "main.tex", fromLine: 4 }, "Too long.");
+    await stet.sync("a");
+    await stet.resolveNote(n.id);
+    expect((await stet.reopenNote(n.id)).state).toBe("open");
+    const fb = await stet.feedback("a");
+    expect(fb.map((e) => e.type)).toEqual(["note_resolved", "note_reopened"]);
+    expect(describeFeedback(fb[1]!)).toMatch(/^NOTE REOPENED N1 \(main\.tex\): the reviewer opened it again/);
+    // Open already: nothing happens.
+    await stet.reopenNote(n.id);
+    expect(await stet.feedback("a")).toEqual([]);
   });
 });

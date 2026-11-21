@@ -2,9 +2,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { Item } from "@stet/core";
+import { itemSpoken, spokenRow } from "../src/model.js";
 
 const src = (f: string) => readFileSync(join(__dirname, "..", "src", f), "utf8");
 const manifest = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
+
+const item = (id: string, extra: Partial<Item> = {}): Item => ({
+  id, agent: "a", changeset: "C1", file: "main.tex", kind: "modify", baseCommit: "b", range: { start: 0, end: 1 },
+  oldText: "old", newText: "new", context: { before: "", after: "" }, fingerprint: "", note: null, groups: ["G1"],
+  status: "pending", resolution: null, supersedes: null, conflictsWith: [], history: [], thread: [], ...extra,
+});
 
 describe("accessibility", () => {
   it("the PDF preview names its controls and pictures, and works from the keyboard", () => {
@@ -51,5 +59,23 @@ describe("accessibility", () => {
     const e = src("extension.ts");
     expect(e).toMatch(/t\.accessibilityInformation = \{ label: itemSpoken\(it, /);
     expect(e).toContain("this.status.accessibilityInformation");
+  });
+});
+
+describe("a change's spoken label says what its row shows (test report v0.16)", () => {
+  it("your wording, the conversation, and the status words of the row", () => {
+    const it2 = item("2.1", { oldText: "problem", newText: "task", draft: "hard task", thread: [{ at: "", author: "agent", text: "ok" }, { at: "", author: "user", text: "?" }] });
+    expect(itemSpoken(it2, 4)).toBe("Change 2.1, replace “problem” with “hard task”, in main.tex line 4, pending, your wording, 2 messages");
+    expect(itemSpoken(item("2.2", { status: "needs_revision" }))).toMatch(/, revision requested$/);
+  });
+  it("the wording a change was accepted with", () => {
+    const acc = item("2.3", { oldText: "problem", newText: "task", status: "accepted", resolution: { appliedText: "job", edited: true, committed: null } });
+    expect(itemSpoken(acc)).toBe("Change 2.3, replace “problem” with “job”, in main.tex, accepted");
+  });
+});
+
+describe("spoken rows (test report 5e4c6af)", () => {
+  it("accessibility: rows are read out in words", () => {
+    expect(spokenRow("G1 linked · 💬 3 (1 new) · ⚠ broken")).toBe("G1 linked, 3 messages (1 new), warning: broken");
   });
 });

@@ -1,7 +1,9 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
-import { applyChanges, changeMarks, containerArgs, findWords, findWordsIn, markRuns, parseWords, wordDiff, cropRegion, DEFAULT_PREVIEW, detectPreviewEnv } from "../src/preview.js";
+import { LATEX } from "../src/lang/index.js";
 import { detectEngine, detectRoot, errorsOf, excerpt, LATEX_TYPESETTER, missingFiles, parseSynctex, plainWords, previewExtrasContainerfile } from "../src/lang/latex-preview.js";
+import { applyChanges, changeMarks, containerArgs, cropRegion, DEFAULT_PREVIEW, detectPreviewEnv, findWords, findWordsIn, insideDir, markRuns, parseWords, PreviewBuilder, wordDiff } from "../src/preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
@@ -306,5 +308,37 @@ describe("preview: marking the changed words", () => {
   it("joins neighbouring marked words on a line, not across lines", () => {
     expect(markRuns([w("hard", 105, 0), w("TASK.", 140, 0)])).toEqual([{ x0: 105, y0: 0, x1: 170, y1: 10 }]);
     expect(markRuns([w("end", 140, 0), w("start", 0, 12)])).toHaveLength(2);
+  });
+});
+
+describe("isolation and the image cache (security review 2026-11-19)", () => {
+  it("runs previews only in the user's image, with limits, and never downloads one", () => {
+    const env = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][], memoryLimit: true };
+    const args = containerArgs(env, "localhost/stet-preview:1", "/w", "n", ["latexmk"]);
+    expect(args).toContain("--pull=never");
+    expect(args.join(" ")).toMatch(/--ulimit fsize=\d+:\d+/);
+    expect(args.join(" ")).toMatch(/--ulimit nofile=\d+:\d+/);
+    expect(args).toContain("--memory=2g");
+    expect(containerArgs({ ...env, memoryLimit: false }, "i", "/w", "n", ["x"])).not.toContain("--memory=2g");
+  });
+
+  it("trusts preview images only in the change's own cache folder, and only real commit names", async () => {
+    expect(insideDir("/c/abc/items/1.1-x/after.png", "/c/abc/items/1.1-x")).toBe(true);
+    expect(insideDir("/home/me/.ssh/id_ed25519", "/c/abc/items/1.1-x")).toBe(false);
+    expect(insideDir("/c/abc/items/1.1-x/../../x.png", "/c/abc/items/1.1-x")).toBe(false);
+    const { stet } = await setup({ "main.tex": PAPER });
+    const ready = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][] };
+    const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), DEFAULT_PREVIEW, ready, LATEX);
+    const req = { base: "../../../../tmp", key: "1.1-abc", target: 0, changes: [{ file: "main.tex", baseText: PAPER, eol: "lf" as const, range: { start: 0, end: 1 }, newText: "x" }] };
+    expect((await b.preview(req)).status).toBe("unavailable");
+    expect((await b.preview({ ...req, base: "a".repeat(40), key: "../x" })).status).toBe("unavailable");
+  });
+});
+
+describe("the document to compile", () => {
+  it("a file named with a leading '-' is never taken as the document to compile (security report 5e4c6af, S18)", () => {
+    const doc = "\\documentclass{article}\n\\begin{document}x\\end{document}\n";
+    expect(detectRoot(new Map([["-pvc.tex", doc]]), null)).toBeNull();
+    expect(detectRoot(new Map([["paper.tex", doc]]), null)).toBe("paper.tex");
   });
 });

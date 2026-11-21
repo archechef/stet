@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mapReviewEdits, reviewDocument } from "../src/review.js";
+import { PAPER, read, setup, write } from "./helpers.js";
 
 const TEXT = "We study the problem of reviewing changes. It scales to large documents.";
 const at = (s: string) => TEXT.indexOf(s);
@@ -135,5 +136,44 @@ describe("reviewing a whole file", () => {
     expect(await stet.saveReview(doc, doc.content.replace("the problem", "the task"))).toEqual({ error: expect.stringMatching(/outside the proposed changes/) });
     expect(await stet.saveReview(doc, doc.content.replace("$a+b=d$", "$a+b=e$"))).toEqual({ changed: [formula!.id] });
     expect((await stet.getItem(task!.id))!.draft).toBeUndefined();
+  });
+});
+
+describe("rewording a change as a whole in the Review file (test report v0.16, B9)", () => {
+  it("saves the wording, wider, and accepts it", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.tex", read(wt, "main.tex").replace("the problem of", "the task of"));
+    const { items } = await stet.submit("a", { title: "t" });
+    expect(items).toHaveLength(1);
+    const doc = await stet.reviewOf("main.tex", read(repo, "main.tex"));
+    expect(doc.content).toContain("we study the task of reviewing");
+    const r = await stet.saveReview(doc, doc.content.replace("study the task of", "study a hard task of"));
+    expect(r).toEqual({ changed: [items[0]!.id] });
+    const it = (await stet.getItem(items[0]!.id))!;
+    expect(it.draft).toBe("a hard task");
+    expect(it.oldText.endsWith("problem")).toBe(true);
+    expect(it.newText.endsWith("task")).toBe(true);
+    // The review document still shows it, wider, and an accept writes it.
+    const again = await stet.reviewOf("main.tex", read(repo, "main.tex"));
+    expect(again.content).toContain("we study a hard task of reviewing");
+    await stet.accept([it.id]);
+    expect(read(repo, "main.tex")).toContain("we study a hard task of reviewing changes.");
+    // Undo takes the whole wider change back.
+    await stet.undo(it.id);
+    expect(read(repo, "main.tex")).toBe(PAPER);
+  });
+
+  it("refuses words next to a change that the user changed in the file since", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.tex", read(wt, "main.tex").replace("the problem of", "the task of"));
+    const { items } = await stet.submit("a", { title: "t" });
+    write(repo, "main.tex", PAPER.replace("study the problem", "study this problem"));
+    const doc = await stet.reviewOf("main.tex", read(repo, "main.tex"));
+    expect(doc.content).toContain("study this task of");
+    const r = await stet.saveReview(doc, doc.content.replace("study this task", "study a hard task"));
+    expect(r).toHaveProperty("error");
+    expect((await stet.getItem(items[0]!.id))!.draft).toBeUndefined();
   });
 });

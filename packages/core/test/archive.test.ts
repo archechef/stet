@@ -73,3 +73,37 @@ describe("archiving an agent", () => {
     expect(blocked.err).toMatch(/archived this workspace \(agent a\)/);
   });
 });
+
+describe("archiving an agent with its folder (test report v0.14, D4)", () => {
+  it("refuses to delete changes the agent did not submit, unless told to", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    await expect(stet.archiveAgent("a", { removeWorktree: true })).rejects.toThrow(/did not submit \(main\.tex\)/);
+    expect(existsSync(wt)).toBe(true);
+    expect((await stet.listAgents())[0]!.state).toBe("active");
+    const r = await stet.archiveAgent("a", { removeWorktree: true, discardUnsubmitted: true });
+    expect(r.worktreeRemoved).toBe(true);
+  });
+
+  it("deletes a folder with nothing unsubmitted without asking", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    await stet.submit("a", { title: "t" });
+    expect((await stet.archiveAgent("a", { removeWorktree: true })).worktreeRemoved).toBe(true);
+  });
+});
+
+describe("an archived agent's name (test report v0.14, B2)", () => {
+  it("can be used again once its folder and branch are gone", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    await stet.newAgent("a2");
+    await stet.archiveAgent("a2");
+    await expect(stet.newAgent("a2")).rejects.toThrow(/archived, but its folder or branch is still there/);
+    await stet.archiveAgent("a2", { removeWorktree: true });
+    const again = await stet.newAgent("a2");
+    expect(again.state).toBe("active");
+    expect(existsSync(again.worktree)).toBe(true);
+  });
+});

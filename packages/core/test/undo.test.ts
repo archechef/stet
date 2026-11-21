@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { describeFeedback } from "../src/mcp.js";
-import { edit, PAPER, read, setup, write } from "./helpers.js";
+import { edit, LABELLED, PAPER, read, renamed, setup, write } from "./helpers.js";
+
+const LINES = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} computes omega${i + 1} in every round.`).join("\n") + "\n";
 
 describe("undo", () => {
   it("takes an accepted change out of the working copy again; the agent's copy keeps it as a proposal", async () => {
@@ -139,5 +141,107 @@ describe("accepted changes missing from the base", () => {
 
     await stet.commitAcceptedItems();
     expect(await stet.missingFromBase()).toEqual([]);
+  });
+});
+
+describe("undo after deciding a linked group (test report v0.14, D2)", () => {
+  it("undoes everything the group's accept took along, not just one part", async () => {
+    const { stet, repo, g, label } = await renamed();
+    await stet.acceptGroup(g.id);
+    expect(read(repo, "main.tex")).not.toContain("{sec:intro}");
+    const r = await stet.undo(label.id);
+    expect(r.reopened.length).toBe(g.items.length);
+    expect(read(repo, "main.tex")).toBe(LABELLED);
+  });
+
+  it("still undoes parts accepted one at a time on their own", async () => {
+    const { stet, repo, label, refs } = await renamed();
+    await stet.accept(refs.map((i) => i.id)); // the same \ref change twice: one part
+    await stet.accept([label.id]);
+    const r = await stet.undo(label.id);
+    expect(r.reopened.map((i) => i.id)).toEqual([label.id]);
+    expect(read(repo, "main.tex")).toContain("\\ref{sec:introduction}");
+  });
+
+  it("takes back the revision requests of a rejection undone (reject --revise-rest)", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", {
+      title: "together",
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "both", where: ["main.tex:4", "main.tex:8"] }],
+    });
+    await stet.reject([items[0]!.id], { mode: "revise-rest", reason: "no" });
+    expect((await stet.getItem(items[1]!.id))!.status).toBe("needs_revision");
+    const r = await stet.undo(items[0]!.id);
+    expect(r.reopened.map((i) => i.id).sort()).toEqual(items.map((i) => i.id).sort());
+    expect((await stet.getItem(items[1]!.id))!.status).toBe("pending");
+  });
+});
+
+describe("undo after editing an accepted change (test report v0.16, D1)", () => {
+  it("refuses instead of reverting another accepted change with the same words", async () => {
+    const { stet, repo } = await setup({ "main.tex": LINES });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.tex", read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds").replace("omega10 in every round", "omega10 in all rounds"));
+    const { items } = await stet.submit("a", { title: "t" });
+    expect(items).toHaveLength(2);
+    await stet.accept(items.map((i) => i.id));
+    // The user rewords the second accepted change, then undoes it.
+    const edited = read(repo, "main.tex").replace("omega10 in all rounds", "omega10 in all the rounds");
+    write(repo, "main.tex", edited);
+    const id = items.find((i) => i.range.start > LINES.indexOf("omega10"))!.id;
+    await expect(stet.undo(id)).rejects.toThrow(/no longer as accepted/);
+    // Nothing changed: line 3 keeps the other accepted change, line 10 the user's wording.
+    expect(read(repo, "main.tex")).toBe(edited);
+    expect((await stet.store.getItem(items.find((i) => i.id !== id)!.id))!.status).toBe("accepted");
+  });
+
+  it("still undoes an accepted change the user didn't touch, next to one they did", async () => {
+    const { stet, repo } = await setup({ "main.tex": LINES });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.tex", read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds").replace("omega10 in every round", "omega10 in all rounds"));
+    const { items } = await stet.submit("a", { title: "t" });
+    await stet.accept(items.map((i) => i.id));
+    write(repo, "main.tex", read(repo, "main.tex").replace("Line 10 computes", "Line ten computes"));
+    const first = items.find((i) => i.range.start < LINES.indexOf("omega10"))!;
+    await stet.undo(first.id);
+    expect(read(repo, "main.tex")).toContain("omega3 in every round");
+    expect(read(repo, "main.tex")).toContain("Line ten computes omega10 in all rounds");
+  });
+});
+
+describe("undoing a revision request (test report v0.16, B5)", () => {
+  it("makes the change pending again and tells the agent", async () => {
+    const { stet } = await setup({ "main.tex": LINES });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "main.tex", read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds"));
+    const { items } = await stet.submit("a", { title: "t" });
+    const id = items[0]!.id;
+    await stet.requestRevision(id, "shorter");
+    expect((await stet.getItem(id))!.status).toBe("needs_revision");
+    const r = await stet.undo(id);
+    expect(r.reopened.map((i) => i.id)).toEqual([id]);
+    expect((await stet.getItem(id))!.status).toBe("pending");
+    const fb = await stet.feedback("a");
+    expect(JSON.stringify(fb)).toMatch(/revision request taken back|reopened/);
+    // A pending change has nothing to undo.
+    await expect(stet.undo(id)).rejects.toThrow(/only accepted and rejected changes, and revision requests/);
+  });
+});
+
+describe("many changes at once", () => {
+  it("undoing many accepted changes at once restores the file (test report 5e4c6af, B5)", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    edit(wt, "main.tex", "reviewing changes", "reviewing edits");
+    const r = await stet.submit("a", { title: "t" });
+    expect(r.items.length).toBeGreaterThan(1);
+    await stet.accept(r.items.map((i) => i.id));
+    const res = await stet.undoMany(r.items.map((i) => i.id));
+    expect(res.reopened.map((i) => i.id).sort()).toEqual(r.items.map((i) => i.id).sort());
+    expect(read(repo, "main.tex")).toBe(PAPER);
   });
 });

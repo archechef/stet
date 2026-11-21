@@ -428,3 +428,18 @@ describe("project inside a submodule", () => {
     expect((await doctor(sub)).filter((c) => c.status === "error")).toEqual([]);
   });
 });
+
+describe("status of all agents at once (Codex review 2026-09)", () => {
+  it("matches the per-agent status", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const a = await stet.newAgent("a");
+    await stet.newAgent("b");
+    edit(a.worktree, "main.tex", "effective in practice", "effective in real use");
+    const [item] = (await stet.submit("a", { title: "t" })).items;
+    await stet.reject([item!.id], { reason: "no" });
+    const all = await stet.agentStatuses();
+    expect(all.map((s) => s.agent.id)).toEqual(["a", "b"]);
+    for (const s of all) expect(s).toEqual(await stet.agentStatus(s.agent.id));
+    expect(all[0]!.unreadFeedback).toBe(1);
+  });
+});

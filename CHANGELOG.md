@@ -106,6 +106,7 @@ Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code f
 - The PDF preview's title names the project in a window with several; the Reject… CodeLens has a tooltip.
 - Setting texts match what is shown (`stet.codeLens`, `stet.longChanges`, `stet.shareEdits`).
 
+- **Internal: tests sorted by topic.** Test files are named after what they test (undo, linked groups, paths and links, the MCP server, …) instead of the report that found a bug; each regression test names its report and finding.
 - **Internal: language profiles.** Everything Stet knows about LaTeX and BibTeX (tokens, structure, maths, labels, citations, macros, included files, and PDF previews with latexmk and SyncTeX) is now in one place per language, `packages/core/src/lang/`, and the rest of Stet asks the file's profile. Nothing changes in use: same items, groups, parts and previews, and `config.json` keeps its shape. This is the groundwork for other document languages (Typst).
 
 ## 0.16.0 — 2026-11-20
