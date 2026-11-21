@@ -257,18 +257,18 @@ spec("Typst: splitting a change into edits", () => {
 spec("Typst: references and citations", () => {
   const LONG = TYPST_PAPER + "\nSee @sec:intro again, and #ref(<sec:intro>) once more.\n";
 
-  it("links a label rename with its references, a part each", async () => {
+  it("links a label rename with its references as one unit: a reference to a missing label stops the build", async () => {
+    // Unlike LaTeX's \label, whose parts can be accepted alone ("??"): test report 5e4c6af, D1.
     const { stet, repo } = await setup({ "main.typ": LONG });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.typ", read(wt, "main.typ").replaceAll("sec:intro", "sec:introduction"));
     const r = await stet.submit("a", { title: "rename" });
     const g = r.groups.find((x) => x.kind === "linked")!;
-    expect(g.title).toMatch(/^Rename label sec:intro → sec:introduction/);
+    expect(g.title).toBe("Rename label sec:intro → sec:introduction");
     expect(g.items).toHaveLength(r.items.length);
-    expect(g.parts!.length).toBeGreaterThan(1);
-    // The label alone is a part of its own, as with \label.
+    expect(g.parts, `${JSON.stringify(g.parts)}\n${shown(r.items)}`).toBeUndefined();
     const label = r.items.find((i) => i.oldText.includes("<sec:intro>") && i.context.before.includes("= Introduction"))!;
-    expect(g.parts!.some((p) => p.items.length === 1 && p.items[0] === label.id), `${JSON.stringify(g.parts)}\n${shown(r.items)}`).toBe(true);
+    await expect(stet.accept([label.id])).rejects.toThrow(/linked/);
     await stet.accept(g.items);
     expect(read(repo, "main.typ")).toBe(read(wt, "main.typ"));
   });
@@ -319,7 +319,7 @@ spec("Typst: references and citations", () => {
 spec("Typst: what parts of a linked group must keep together", () => {
   const typ = (o: string, nw: string, extra: Partial<Item> = {}) => item(o, nw, { file: "main.typ", ...extra });
 
-  it("joins a #let definition with its uses, but not a label with its references", async () => {
+  it("joins a #let definition with its uses, and a label with its references", async () => {
     const def = typ("#let est = $hat(theta)$", "#let estim = $hat(theta)$");
     const use = typ("#est", "#estim");
     const inMath = typ("$est$", "$estim$");
@@ -329,7 +329,11 @@ spec("Typst: what parts of a linked group must keep together", () => {
     expect(notes.join()).toMatch(/defines .*est/);
     const label = typ("<a>", "<b>");
     const ref = typ("@a", "@b");
-    expect(ids((await settleParts(one(label, ref), [label, ref])).parts)).toEqual([[label.id], [ref.id]]);
+    // A reference to a missing label is an error in Typst (test report 5e4c6af, D1).
+    expect((await settleParts(one(label, ref), [label, ref])).parts).toBeUndefined();
+    const bib = item("@book{knuth84,", "@book{knuth1984,", { file: "refs.bib" });
+    const cite = typ("@knuth84", "@knuth1984");
+    expect((await settleParts(one(bib, cite, other), [bib, cite, other])).parts?.map((p) => p.items)).toEqual([[bib.id, cite.id], [other.id]]);
   });
 
   it("joins a function with parameters and its calls", async () => {

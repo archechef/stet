@@ -530,7 +530,7 @@
         },
         {
           "command": "stet.previewSetup",
-          "when": "view == stet.review && stet.active",
+          "when": "view == stet.review && stet.active && stet.previews",
           "group": "2_tools@2"
         },
         {
@@ -592,7 +592,7 @@
         },
         {
           "command": "stet.preview",
-          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify\\.pdf/",
           "group": "3_view@2"
         },
         {
@@ -632,7 +632,7 @@
         },
         {
           "command": "stet.preview",
-          "when": "view == stet.history && viewItem =~ /^item\\.done\\.modify/",
+          "when": "view == stet.history && viewItem =~ /^item\\.done\\.modify\\.pdf/",
           "group": "3_view@2"
         },
         {
@@ -742,6 +742,14 @@
         {
           "command": "stet.setup",
           "when": "!stet.agentWorkspace"
+        },
+        {
+          "command": "stet.reopenNote",
+          "when": "false"
+        },
+        {
+          "command": "stet.previewSetup",
+          "when": "stet.active && stet.previews"
         },
         {
           "command": "stet.replyThread",
@@ -1131,7 +1139,7 @@
             "Only in the Preview panel.",
             "Not at all: nothing is compiled."
           ],
-          "description": "Where PDF previews of changes are shown. They are built in the background; the change itself shows at once."
+          "description": "Where PDF previews of changes are shown (LaTeX projects; Typst has none yet). They are built in the background; the change itself shows at once."
         }
       }
     },

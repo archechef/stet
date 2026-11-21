@@ -1,4 +1,5 @@
 /** Grouping helpers (spec §6.4). */
+import { posix } from "node:path";
 import type { GroupingConfig } from "./config.js";
 import type { GroupKind, Item } from "./model.js";
 import { changedSides, changeTitle, combineParts, type PartDraft } from "./parts.js";
@@ -125,6 +126,9 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
     }
   }
 
+  /** Whether one of `users` is in a language where using a missing key is an error (Typst). */
+  const strict = (users: Item[]) => users.some((u) => !!profileOf(u.file).references?.strict);
+
   // Old/new text of an item including its context, so keys cut by the split are still visible.
   const oldWin = (it: Item) => it.context.before + it.oldText + it.context.after;
   const newWin = (it: Item) => it.context.before + it.newText + it.context.after;
@@ -146,7 +150,8 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
           return removed.includes(a) && added.includes(b);
         });
         if (users.length) {
-          // A missing label or citation key is only a warning: each change can be its own part.
+          // In LaTeX a missing label or citation key is only a warning: each change can be its own
+          // part. In Typst it is an error, so the rename is one unit (test report 5e4c6af, D1).
           const members = [def, ...users];
           groups.push({
             kind: "linked",
@@ -154,32 +159,45 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
             rationale: null,
             source: "auto",
             items: members.map((m) => m.id),
-            parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })),
+            ...(strict(users) ? {} : { parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })) }),
           });
         }
       }
     }
   };
 
-  // A new key (a bibliography entry, in a change of new entries only) with the changes that start using it.
+  // A new key with the changes that start using it: a bibliography entry, in a change of new
+  // entries only; and any key used where a use of a missing key is an error (Typst: a new
+  // `<label>` and a new `@label`, test report 5e4c6af, D5).
   const additions = (kind: KeyKind["id"]) => {
     for (const def of text) {
       for (const d of definitions(def, kind)) {
-        if (!d.kind.addTitle || d.added.length !== 1 || !d.fresh) continue;
-        const key = d.added[0]!;
-        const users = text.filter((it) => it !== def && uses(it, kind).added.includes(key));
-        if (users.length) {
+        const lenient = !!d.kind.addTitle && d.added.length === 1 && d.fresh;
+        for (const key of d.added) {
+          // Uses renamed along with a renamed key are the rename's own group.
+          const renamedFrom = d.removed.length === 1 && d.added.length === 1 ? d.removed[0]! : null;
+          const all = text.filter((it) => {
+            if (it === def) return false;
+            const u = uses(it, kind);
+            return u.added.includes(key) && !(renamedFrom !== null && u.removed.includes(renamedFrom));
+          });
+          const users = lenient ? all : all.filter((u) => strict([u]));
+          if (!users.length) continue;
           const members = [def, ...users];
           groups.push({
-            kind: "linked", title: d.kind.addTitle(key), rationale: null, source: "auto",
-            items: members.map((m) => m.id), parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })),
+            kind: "linked", title: d.kind.addTitle?.(key) ?? `Add ${d.kind.noun} ${key} and refer to it`, rationale: null, source: "auto",
+            items: members.map((m) => m.id),
+            ...(strict(users) ? {} : { parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })) }),
           });
         }
       }
     }
   };
 
-  if (cfg.autoDetect.includes("label")) renames("label");
+  if (cfg.autoDetect.includes("label")) {
+    renames("label");
+    additions("label");
+  }
 
   // A macro or environment renamed (or defined, or removed) with the changes that use it:
   // accepting some alone leaves a use undefined, which is an error, not a warning.
@@ -228,7 +246,7 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
         if (!inc) return false;
         const [was, is] = [inc.filesIn(oldWin(it)), inc.filesIn(newWin(it))];
         const [more, less] = added ? [is, was] : [was, is];
-        return [...more].some(([ref, n]) => n > (less.get(ref) ?? 0) && inc.names(ref, f.file));
+        return [...more].some(([ref, n]) => n > (less.get(ref) ?? 0) && namesFile(inc, ref, it.file, f.file));
       });
       if (!users.length) continue;
       groups.push({
@@ -287,9 +305,23 @@ export function normalizeGroups(drafts: GroupDraft[]): GroupDraft[] {
   });
 }
 
+/**
+ * Whether `ref`, read in by `from`, names `file`: as written, relative to `from`'s folder (Typst,
+ * where chapters in subfolders read `../figures/x.png`: test report 5e4c6af, D6), or from the
+ * project's root (Typst's `/figures/x.png`).
+ */
+function namesFile(inc: { names(ref: string, file: string): boolean }, ref: string, from: string, file: string): boolean {
+  if (inc.names(ref, file)) return true;
+  if (ref.startsWith("/")) return inc.names(ref.replace(/^\/+/, ""), file);
+  const dir = posix.dirname(from);
+  return dir !== "." && inc.names(posix.normalize(posix.join(dir, ref)), file);
+}
+
 /** Join two group titles, skipping near-duplicates ("a -> b" vs "a → b"). */
 export function joinTitles(a: string, b: string): string {
   const norm = (t: string) => t.toLowerCase().replace(/->|→/g, "→").replace(/\s+/g, " ").trim();
+  // Each title of b once: joined titles piled up with every revision (test report 5e4c6af, B1).
   const parts = a.split(" + ");
-  return parts.some((p) => norm(p) === norm(b)) ? a : `${a} + ${b}`;
+  for (const t of b.split(" + ")) if (!parts.some((p) => norm(p) === norm(t))) parts.push(t);
+  return parts.join(" + ");
 }

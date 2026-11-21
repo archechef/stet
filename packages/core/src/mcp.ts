@@ -329,14 +329,10 @@ export class StetMcpServer {
   private async context(): Promise<{ stet: Stet; agent: string }> {
     const where = this.opts.workspace ?? this.opts.cwd;
     // The project path lets the server explain what happened even when the workspace folder is gone.
-    if (!this.stet) {
-      try {
-        this.stet = await Stet.open(where);
-      } catch (e) {
-        if (!this.opts.project) throw e;
-        this.stet = await Stet.open(this.opts.project);
-      }
-    }
+    // Open the project from its recorded folder, never through the workspace's own git link: an
+    // agent can point that link at a repository of its own, whose hooks Stet's git calls would
+    // then run outside the agent's sandbox (security report 5e4c6af, S1).
+    if (!this.stet) this.stet = await Stet.open(this.opts.project ?? where);
     const known = this.opts.agentId ? await this.stet.store.getAgent(this.opts.agentId) : await this.stet.agentByWorktree(where);
     if (known?.state === "archived") throw new StetError(archivedMessage(known));
     if (!(await pathExists(where))) {

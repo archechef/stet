@@ -6,7 +6,7 @@ import { diffArrays, diffLines } from "diff";
 import { isBlank, type Token } from "./tokenizer.js";
 import type { LanguageProfile, SyntaxRules } from "./lang/profile.js";
 import type { SplitConfig } from "./config.js";
-import { paragraphSimilarity, sharedWordsMatrix, wordSimilarity } from "./text.js";
+import { commonWords, paragraphSimilarity, sharedWordsMatrix, wordSimilarity } from "./text.js";
 
 export interface Edit {
   /** Range in the old (base) text. */
@@ -209,7 +209,30 @@ function splitSyntax(rules: SyntaxRules, oldText: string, newText: string, cfg: 
       }
     }
   }
-  return shiftedBreaks(oldText, newText, edits);
+  return shiftedBreaks(oldText, newText, verbatimWhole(oldText, newText, edits, rules));
+}
+
+/**
+ * Changes inside one verbatim or raw block, joined: re-indenting a listing gave a change per line,
+ * and accepting one of them left broken code (test report 5e4c6af, D7).
+ */
+function verbatimWhole(oldText: string, newText: string, edits: Edit[], rules: SyntaxRules): Edit[] {
+  const [inOld, inNew] = [rules.verbatim(oldText), rules.verbatim(newText)];
+  // Every line between two places is verbatim (checked at each line start and both ends).
+  const verbatimFrom = (inside: (t: Token) => boolean, text: string, a: number, b: number) => {
+    const at = (p: number) => inside({ type: "word", text: "", start: p });
+    if (!at(a) || !at(Math.max(a, b - 1))) return false;
+    for (let p = text.indexOf("\n", a); p >= 0 && p < b; p = text.indexOf("\n", p + 1)) if (!at(p + 1)) return false;
+    return true;
+  };
+  const out: Edit[] = [];
+  for (const e of edits) {
+    const last = out[out.length - 1];
+    if (last && !last.halves && !e.halves && verbatimFrom(inOld, oldText, last.start, e.end) && verbatimFrom(inNew, newText, last.newStart, e.newEnd)) {
+      out[out.length - 1] = makeEdit(oldText, newText, last.start, e.end, last.newStart, e.newEnd);
+    } else out.push(e);
+  }
+  return out;
 }
 
 /**
@@ -320,7 +343,10 @@ function perBlock(oldText: string, newText: string, e: Edit, rules: SyntaxRules)
   const del = !e.newText.trim() && !!e.oldText.trim();
   if (!ins && !del) return [e];
   const t = ins ? e.newText : e.oldText;
-  const leading = /^\s*\n/.test(t) && !/\n\s*$/.test(t);
+  // Line breaks go before each piece when the text comes at the end of a line: after it, the
+  // last piece alone ran into the old line ("tight.Here it is:", test report 5e4c6af, D4).
+  const atLineEnd = /^[ \t]*(?:\n|$)/.test(ins ? oldText.slice(e.end) : newText.slice(e.newEnd));
+  const leading = (/^\s*\n/.test(t) || atLineEnd) && !/\n\s*$/.test(t);
   const cuts = blockCuts(t, leading, rules);
   if (!cuts.length) return [e];
   const out: Edit[] = [];
@@ -618,8 +644,44 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
       }
     }
   }
+  // A paragraph cut by a heading or other structure line inserted into it (or joined by removing
+  // one): the blocks across it belong to the pair when they hold clearly more of the paragraph's
+  // words, in order. Taking them in one at a time never paid, as the heading alone lowers the
+  // similarity; the sentence before it came out "replaced" by the one after it (test report
+  // 5e4c6af, D4).
+  const span = (ws: string[][], r: [number, number]) => ws.slice(r[0], r[1] + 1).flat();
+  const common = (p: BlockPair) => commonWords(span(ow, p.o), span(nw, p.n));
+  for (const p of pairs) {
+    for (let grown = true; grown; ) {
+      grown = false;
+      const base = common(p);
+      for (let step = 1; step <= 3 && !grown; step++) {
+        const tries: { t: BlockPair; side: "o" | "n"; add: number[] }[] = [
+          { t: { o: p.o, n: [p.n[0] - step, p.n[1]] }, side: "n", add: range(p.n[0] - step, p.n[0]) },
+          { t: { o: p.o, n: [p.n[0], p.n[1] + step] }, side: "n", add: range(p.n[1] + 1, p.n[1] + 1 + step) },
+          { t: { o: [p.o[0] - step, p.o[1]], n: p.n }, side: "o", add: range(p.o[0] - step, p.o[0]) },
+          { t: { o: [p.o[0], p.o[1] + step], n: p.n }, side: "o", add: range(p.o[1] + 1, p.o[1] + 1 + step) },
+        ];
+        for (const { t, side, add } of tries) {
+          const [used, size] = side === "n" ? [usedN, k] : [usedO, m];
+          if (add.some((x) => x < 0 || x >= size || used.has(x))) continue;
+          // The words gained are of the other side's paragraph: the old one's for new blocks taken in.
+          const of = span(side === "n" ? ow : nw, side === "n" ? p.o : p.n).length;
+          const gain = common(t) - base;
+          if (gain >= 3 && gain >= 0.3 * of) {
+            [p.o, p.n] = [t.o, t.n];
+            for (const x of add) used.add(x);
+            grown = true;
+            break;
+          }
+        }
+      }
+    }
+  }
   return pairs;
 }
+
+const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a) }, (_, i) => a + i);
 
 /**
  * The token alignment of a changed region. With several paragraphs on a side, paragraphs are
@@ -833,7 +895,14 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   // Edits inside a key argument (\label{...}, \ref{...}, \cite{...}) stay separate items,
   // so renames can be accepted or linked on their own.
   const keyU = [...os.keys.map(([a, b]) => [os.pos[a]!, os.pos[b]! + 1]), ...ns.keys.map(([a, b]) => [ns.pos[a]!, ns.pos[b]! + 1])];
-  const isKey = (r: [number, number]) => keyU.some(([a, b]) => a! <= r[0] && r[1] <= b!);
+  // Covered by key spans: a Typst key is one token, so `@a` → `@b` is a deletion in the old key's
+  // span next to an insertion in the new one's, and merged with any edit nearby, a maths value
+  // with it (test report 5e4c6af, D8).
+  const isKey = (r: [number, number]) => {
+    if (r[1] <= r[0]) return false;
+    for (let i = r[0]; i < r[1]; i++) if (!keyU.some(([a, b]) => a! <= i && i < b!)) return false;
+    return true;
+  };
   const hardIn = (a: number, b: number) => [...hard].some((h) => h >= a && h <= b);
   const structuralIn = (a: number, b: number) => {
     for (let i = a; i < b; i++) {

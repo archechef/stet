@@ -75,12 +75,21 @@ function splitBib(oldText: string, newText: string): Edit[] | null {
     if (ne) renamed.set(e.key, ne);
   }
   const edits: Edit[] = [];
-  for (const e of o.entries) {
+  // Deleted entries at the end of the file (nothing but whitespace after them) take the blank line
+  // before them, not the file's last line break: else the file ended in a blank line (test
+  // report 5e4c6af, B7).
+  const gone = (e: BibEntry) => !newByKey.has(e.key) && !renamed.has(e.key);
+  let tail = o.entries.length;
+  while (tail > 0 && gone(o.entries[tail - 1]!)) tail--;
+  const atEnd = tail < o.entries.length && !oldText.slice(o.entries[o.entries.length - 1]!.end).trim();
+  for (const [k, e] of o.entries.entries()) {
     const ne = newByKey.get(e.key) ?? renamed.get(e.key);
     if (!ne) {
-      // Deleted entry: also remove the whitespace after it.
-      const end = e.end + (/^\s*/.exec(oldText.slice(e.end))?.[0].length ?? 0);
-      edits.push({ start: e.start, end, newStart: 0, newEnd: 0, oldText: oldText.slice(e.start, end), newText: "" });
+      // Deleted entry: also remove the whitespace after it (before it, at the end of the file).
+      const before = atEnd && k >= tail ? (/\s*$/.exec(oldText.slice(0, e.start))?.[0].length ?? 0) : 0;
+      const start = e.start - before;
+      const end = before ? e.end : e.end + (/^\s*/.exec(oldText.slice(e.end))?.[0].length ?? 0);
+      edits.push({ start, end, newStart: 0, newEnd: 0, oldText: oldText.slice(start, end), newText: "" });
     } else if (ne.text !== e.text) {
       edits.push(makeEdit(oldText, newText, e.start, e.end, ne.start, ne.end));
     }

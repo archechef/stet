@@ -56,7 +56,7 @@ The rules, the tool configuration and the guardrails are rewritten after every s
 
 Ask for what you want, as usual:
 - *"Tighten the wording of the introduction."*
-- *"Rename the label `sec:intro` to `sec:introduction` everywhere."*
+- *"Rename the label `sec:intro` to `sec:introduction` everywhere."* (In Typst: the `<sec:intro>` label and its `@sec:intro` references.)
 - *"Check the related-work section for claims that need a citation."*
 
 The agent edits, then submits by itself. Some tips:
@@ -90,7 +90,7 @@ Every other tool's result also ends with a line when something arrived meanwhile
 **Grouping:**
 - **Locations** name changes by line (`main.tex:12`) or by line and a quoted snippet of the new text (`main.tex:12 "suggestion"`). A paragraph is often a single line, so the snippet is what lets an agent put two changes of one paragraph into different parts; agents are told to use it.
 - `linked` groups can only be accepted together, so they're kept for changes where accepting only some would break the document or lose text: a macro and its uses, a `\begin` and its `\end` in different changes, one symbol renamed across formulas, moves. Stet checks every linked group an agent declares: if it sees no such dependency between all of the changes, it makes the group *related* (you can still accept it all at once), links only the changes that need each other, and tells the agent. An agent can insist with a reason, which you see on the group as "Linked because: …".
-- A large linked group can come in **parts**, which you accept or reject one at a time. A part is only kept if accepting it alone still compiles (warnings such as `??` for a missing reference are fine) and blocks no other part. Stet keeps identical changes, a macro and its uses, and changes to the same text in one part. A label rename it detects is split into the label and its references. If you accept some parts and reject others, the agent is told, so it can make the paper consistent again.
+- A large linked group can come in **parts**, which you accept or reject one at a time. A part is only kept if accepting it alone still compiles and blocks no other part. In LaTeX, warnings such as `??` for a missing reference are fine, so a label rename Stet detects is split into the label and its references. In Typst a reference to a missing label or citation is an error, so a `<label>` (or a bibliography entry) and its `@` references always stay in one part, and a new label is linked with new references to it. Stet keeps identical changes, a macro or `#let` and its uses, and changes to the same text in one part. If you accept some parts and reject others, the agent is told, so it can make the paper consistent again.
 - Stet also detects label/ref renames, citation keys and repeated substitutions by itself.
 - **Moves:** a passage the agent moves (a sentence of 7 words or more, a paragraph, an environment) is shown as one move, also with up to one changed word in ten, which Stet shows. Moved and rewritten more than that, it is a deletion and an insertion, linked as *Moved and rewritten*. Agents are asked to move text word for word where they can and to edit it in a later round. This is a strong preference, not a rule: a move may need a few adjusted words (a "below" that is now "above"), and Stet then lists them.
 

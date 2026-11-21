@@ -360,9 +360,22 @@ const count = (keys: Iterable<string>) => {
   return out;
 };
 
+/**
+ * Text where keys count: without escapes, raw text, comments, and strings in code (after `#`, `(`,
+ * `,`, `:`, `=`, …). A comment about `<intro>` was taken into a rename, and `#"see @intro"` counted
+ * as a reference (test report 5e4c6af, B2). Quotes in markup are text, and keys in them count.
+ */
+const keyText = (s: string) =>
+  s
+    .replace(/\\./g, "")
+    .replace(/(`{3,})[\s\S]*?\1|`[^`\n]*`/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1")
+    .replace(/([#(,:={;+]\s*)"(?:[^"\\\n]|\\.)*"/g, '$1""');
+
 /** Labels `text` defines: `<a>` after markup, not a label value passed to a function (`#ref(<a>)`). */
 function labelsDefined(text: string): Map<string, number> {
-  const c = text.replace(/\\./g, "").replace(/(`{3,})[\s\S]*?\1|`[^`\n]*`/g, "");
+  const c = keyText(text);
   const keys: string[] = [];
   for (const m of c.matchAll(new RegExp(`<(${KEY})>`, "gu"))) {
     const before = c.slice(0, m.index).trimEnd();
@@ -378,7 +391,7 @@ const atRefs = (t: string) => [...t.matchAll(new RegExp(`(?<![\\p{L}\\p{N}_"/])@
 const passed = (t: string, fn: string) => [...t.matchAll(new RegExp(`\\b${fn}\\(\\s*<(${KEY})>`, "gu"))].map((m) => m[1]!);
 
 function used(kind: "label" | "citation", text: string): Map<string, number> {
-  const t = text.replace(/\\./g, "").replace(/(`{3,})[\s\S]*?\1|`[^`\n]*`/g, "");
+  const t = keyText(text);
   return count([...atRefs(t), ...passed(t, kind === "label" ? "ref" : "cite")]);
 }
 
@@ -391,6 +404,8 @@ function diffCounts(o: Map<string, number>, n: Map<string, number>): { removed: 
 }
 
 const references: ReferenceRules = {
+  // `@a` to a missing label, or a citation missing from the bibliography, stops the build.
+  strict: true,
   // `<a>` defines labels; citation keys are defined by the bibliography's own profile (BibTeX
   // now; a Hayagriva profile would define them the same way).
   definitions: (it: Item) => {
@@ -476,7 +491,7 @@ export const TYPST: LanguageProfile = {
   agentTerms: {
     location: 'main.typ:12 "suggestion"',
     linked: "a `#let` definition and its uses, an opening `[` or `(` and its closing one in different edits",
-    undefinedUse: "an unknown variable or function",
+    compiles: "in Typst a reference to a missing label or citation key is an error, as is an unknown variable or function",
     reference: "a `<label>` with its `@` references",
     dependencies: "a label or `#let` name and its uses, the same symbol renamed, brackets split across changes",
   },

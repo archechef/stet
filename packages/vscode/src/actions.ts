@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { hasPreview, moveOthers, movesOut, partId, type Item } from "@stet/core";
+import { hasPreview, moveOthers, movesOut, oneLine, partId, type Item } from "@stet/core";
 import { isLive, type Ref, type TreeModel } from "./model.js";
 
 export interface ChangeAction {
@@ -49,14 +49,14 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
   const choices: AcceptChoice[] = [];
   if (unit.length > own.length) {
     choices.push({
-      label: part ? `Accept part ${part.index + 1} “${part.group.parts![part.index]!.title}” (${unit.length} changes)` : `Accept all ${unit.length} linked changes`,
+      label: part ? `Accept part ${part.index + 1} “${oneLine(part.group.parts![part.index]!.title, 80)}” (${unit.length} changes)` : `Accept all ${unit.length} linked changes`,
       detail: `${unit.join(", ")} belong together.${others.length ? ` The other parts of ${g!.id} stay pending.` : ""}`,
       ids: unit,
       overrideLinked: false,
     });
   }
   if (g && others.length) {
-    choices.push({ label: `Accept all ${unit.length + others.length} changes of ${g.id}`, detail: `“${g.title}”, every part at once.`, ids: [...unit, ...others], overrideLinked: false });
+    choices.push({ label: `Accept all ${unit.length + others.length} changes of ${g.id}`, detail: `“${oneLine(g.title, 80)}”, every part at once.`, ids: [...unit, ...others], overrideLinked: false });
   }
   choices.push({
     label: `Accept only ${own.join(" + ")}`,
@@ -68,7 +68,7 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
     overrideLinked: unit.length > own.length,
   });
   const linked = [...unit, ...others].filter((id) => !own.includes(id));
-  return { title: `${own.join(" + ")} ${own.length > 1 ? "are" : "is"} linked with ${linked.join(", ")} (${g?.id ?? "a move"} “${g?.title ?? ""}”)`, choices };
+  return { title: `${own.join(" + ")} ${own.length > 1 ? "are" : "is"} linked with ${linked.join(", ")} (${g?.id ?? "a move"} “${oneLine(g?.title ?? "", 80)}”)`, choices };
 }
 
 /**

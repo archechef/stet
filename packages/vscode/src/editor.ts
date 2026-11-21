@@ -1,8 +1,10 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
 import * as vscode from "vscode";
 import { moveChanges, movesOut, moveTexts, partIndexOf, profileByName, type Item } from "@stet/core";
-import { diffBlock, draftMarkdown, fence, ghostText, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
+import { diffBlock, draftMarkdown, esc, fence, ghostText, linkTitle, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
 import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
+
+export { esc, linkTitle };
 import type { Project } from "./project.js";
 
 export interface Located {
@@ -342,7 +344,7 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     md.appendMarkdown(itemMarkdown(item, model));
     const pdf = this.host.previewHover?.(p, item);
     if (pdf) md.appendMarkdown(`\n\n${pdf}`);
-    md.appendMarkdown(`\n\n${actions.map((a) => `[${withIcon(a)}](${cmd(a.command, a.args)}${a.detail ? ` "${a.detail.replace(/"/g, "'")}"` : ""})`).join(" · ")}`);
+    md.appendMarkdown(`\n\n${actions.map((a) => `[${withIcon(a)}](${cmd(a.command, a.args)}${a.detail ? ` "${linkTitle(a.detail)}"` : ""})`).join(" · ")}`);
     return md;
   }
 
@@ -376,8 +378,6 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   }
 }
 
-/** Escape agent-written text for Markdown, so it cannot add links or formatting. */
-export const esc = (s: string) => s.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, "\\$&");
 
 /** Markdown description of an item (hover, tooltips). */
 export function itemMarkdown(item: Item, model: TreeModel): string {

@@ -355,7 +355,7 @@ export const LATEX: LanguageProfile = {
   agentTerms: {
     location: 'main.tex:12 "suggestion"',
     linked: "a macro or environment definition and its uses, a `\\begin` and its `\\end` in different edits",
-    undefinedUse: "an undefined macro",
+    compiles: "warnings such as undefined references are fine; an undefined macro is not",
     reference: "a `\\label` with its references",
     dependencies: "a label or macro and its uses, the same symbol renamed, braces or environments split across changes",
   },

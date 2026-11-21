@@ -3,7 +3,7 @@
  * Best effort: blocks writes outside the agent workspace and git commands that
  * would bypass review. It guards against accidents, not against an adversary.
  */
-import { realpathSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isInside } from "./paths.js";
@@ -44,15 +44,27 @@ function nativePath(p: string): string {
  * The real path of `p`: links and alternative spellings resolved (macOS `/var` → `/private/var`,
  * Windows 8.3 names such as `RUNNER~1`), for the longest part of it that exists.
  */
-function real(p: string): string {
+function real(p: string, depth = 0): string {
   const tail: string[] = [];
   for (let cur = resolve(p); ; cur = dirname(cur)) {
     try {
       return join(realpathSync.native(cur), ...tail.reverse());
     } catch {
+      // A link whose target doesn't exist yet: a write through it creates the target, so the
+      // target is what counts (security report 5e4c6af, S6).
+      const link = depth < 40 ? linkTarget(cur) : null;
+      if (link !== null) return real(join(resolve(dirname(cur), link), ...tail.reverse()), depth + 1);
       if (dirname(cur) === cur) return resolve(p);
       tail.push(basename(cur));
     }
+  }
+}
+
+function linkTarget(p: string): string | null {
+  try {
+    return lstatSync(p).isSymbolicLink() ? readlinkSync(p) : null;
+  } catch {
+    return null;
   }
 }
 

@@ -36,7 +36,7 @@ describe("accessibility", () => {
     // Every result goes through announce(), which a screen reader hears as a notification.
     expect(e.match(/setStatusBarMessage\(/g)).toHaveLength(1);
     expect(e).toMatch(/function announce[\s\S]*accessibilitySupport|accessibilitySupport[\s\S]*function announce/);
-    for (const m of ["Comment on ${t.item.id} sent", "Revision of ${t.item.id} requested", "Note ${t.note.id} resolved", "Reply on note ${note.id} sent", "Reply on ${hit.item.id} sent"]) expect(e).toContain(m);
+    for (const m of ["Comment on ${t.item.id} sent", "Revision of ${t.item.id}${this.inWhich(t.project)} requested", "Note ${t.note.id} resolved", "Reply on note ${note.id} sent", "Reply on ${hit.item.id} sent"]) expect(e).toContain(m);
   });
 
   it("offers the bordered style once in High Contrast themes when proposed text wraps (test report v0.16.0)", () => {

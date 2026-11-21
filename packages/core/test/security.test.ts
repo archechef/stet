@@ -188,11 +188,15 @@ describe("review before 0.10 (2026-11-19)", () => {
     await quick(stet.refreshWorkspace("a").catch(() => null));
   });
 
-  it("strips terminal escapes and direction overrides from agent text it shows", () => {
-    const evil = "fine\u001b[2J\u001b]0;pwned\u0007 text‮ txet⁦";
-    expect(printable(evil)).toBe("fine[2J]0;pwned text txet");
-    expect(oneLine("a\u001b[31mred\nb")).toBe("a[31mred b");
+  it("shows terminal escapes, direction overrides and invisible characters in agent text as markers", () => {
+    // Shown, not dropped: dropped, the file still got them unseen (security report 5e4c6af, S11).
+    const evil = "fine\u001b[2J\u001b]0;pwned\u0007 text\u202e txet\u2066";
+    expect(printable(evil)).toBe("fine⟨U+001B⟩[2J⟨U+001B⟩]0;pwned⟨U+0007⟩ text⟨U+202E⟩ txet⟨U+2066⟩");
+    expect(oneLine("a\u001b[31mred\nb")).toBe("a⟨U+001B⟩[31mred b");
     expect(printable("line\nbreak\ttab")).toBe("line\nbreak\ttab");
+    expect(printable("\\ref{a\u200b} \u00ad\ufeff\u{e0041}")).toBe("\\ref{a⟨U+200B⟩} ⟨U+00AD⟩⟨U+FEFF⟩⟨U+E0041⟩");
+    // A lone CR is the line break TeX and Markdown see; a terminal would print over the line (S10).
+    expect(printable("shown\rhidden\r\nnext")).toBe("shown\nhidden\nnext");
   });
 
   it("runs previews only in the user's image, with limits, and never downloads one", () => {

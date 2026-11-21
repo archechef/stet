@@ -13,6 +13,7 @@ import {
   moveTo,
   numberInRound,
   oneLine,
+  printable,
   changeSummary,
   paragraphChange,
   profileByName,
@@ -288,6 +289,23 @@ export class TreeModel {
     return [...out.values()].sort(byId);
   }
 
+  /** Pending items in other parts of the linked groups of `ids`: neither `ids` nor what `linkedRest` adds. */
+  otherParts(ids: string[]): Item[] {
+    const rest = new Set([...ids, ...this.linkedRest(ids).map((i) => i.id)]);
+    const out = new Map<string, Item>();
+    for (const id of ids) {
+      for (const gid of this.item(id)?.groups ?? []) {
+        const g = this.groups.get(gid);
+        if (g?.kind !== "linked") continue;
+        for (const m of g.items) {
+          const mi = this.items.get(m);
+          if (mi && isLive(mi) && !rest.has(mi.id)) out.set(mi.id, mi);
+        }
+      }
+    }
+    return [...out.values()].sort(byId);
+  }
+
   /** The other items of an item's move that are still pending. */
   private moveRest(item: Item | undefined): Item[] {
     return item ? moveOthers(item).map((o) => this.items.get(o)).filter((o): o is Item => !!o && isLive(o)) : [];
@@ -437,10 +455,16 @@ export function moveNote(item: Item, get: (id: string) => Item | undefined, line
 }
 
 /** Short text for ghost-text decorations (no newlines, bounded length). */
+/**
+ * Text for a notification: VS Code turns `[text](command:…)` in one into a working link, so agent
+ * text in it must not keep that form (security report 5e4c6af, S4).
+ */
+export const noLinks = (s: string): string => printable(s).replace(/\]\s*\(/g, "] (");
+
 export function ghostText(s: string, max = 80): string {
   // Whitespace alone (a paragraph split or joined) would be invisible: shown as ¶ and ␣.
   if (s && !s.trim()) return s.replace(/\r?\n[ \t]*\r?\n\s*/g, "¶").replace(/\r?\n/g, "↵").replace(/[ \t]/g, "␣");
-  const t = s.replace(/\r?\n/g, " ⏎ ");
+  const t = printable(s).replace(/\n/g, " ⏎ ");
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
@@ -502,13 +526,13 @@ export const FINISH_SAVE = "Save and commit";
  * Finish review's question: which files are committed, which hold edits of yours that go along,
  * which have unsaved text (not committed unless saved), and that undo ends with the commit.
  */
-export function finishQuestion(count: number, files: string[], yourEdits: string[], unsaved: string[]): { message: string; detail: string; buttons: string[] } {
+export function finishQuestion(count: number, files: string[], yourEdits: string[], unsaved: string[], project = ""): { message: string; detail: string; buttons: string[] } {
   const list = (xs: string[]) => xs.join(", ");
   const detail = [`Files: ${list(files)}.`];
   if (yourEdits.length) detail.push(`Your own edits in ${list(yourEdits)} are committed too (Stet commits whole files).`);
   if (unsaved.length) detail.push(`${list(unsaved)} ${unsaved.length === 1 ? "has" : "have"} unsaved edits: “Commit” leaves them out, “${FINISH_SAVE}” saves them into the commit.`);
   detail.push("After the commit, Undo no longer takes these changes back (git revert can).");
-  return { message: `Commit ${count} accepted change${count === 1 ? "" : "s"}?`, detail: detail.join("\n"), buttons: unsaved.length ? ["Commit", FINISH_SAVE] : ["Commit"] };
+  return { message: `Commit ${count} accepted change${count === 1 ? "" : "s"}${project ? ` in ${project}` : ""}?`, detail: detail.join("\n"), buttons: unsaved.length ? ["Commit", FINISH_SAVE] : ["Commit"] };
 }
 
 /**
@@ -556,14 +580,20 @@ export function documentOrder<T extends { project: string; file: string; line: n
  * What to ask when several selected changes are linked with others not selected: take those
  * along (recommended), or decide only the selected ones, which breaks their linked groups.
  */
-export function manyQuestion(verb: "Accept" | "Reject", count: number, rest: string[]): { title: string; choices: { label: string; detail: string; withRest: boolean }[] } {
-  return {
-    title: `The ${count} selected changes are linked with ${rest.join(", ")}`,
-    choices: [
-      { label: `${verb} the ${count} selected and the ${rest.length} linked with them`, detail: "Linked changes belong together.", withRest: true },
-      { label: `${verb} only the ${count} selected`, detail: "Breaks their linked groups; the agent is asked to repair the document.", withRest: false },
-    ],
-  };
+export function manyQuestion(
+  verb: "Accept" | "Reject",
+  count: number,
+  rest: string[],
+  /** Pending changes in other parts of their linked groups: asked about too (test report 5e4c6af, D2). */
+  otherParts: string[] = [],
+): { title: string; choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] } {
+  const choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] = [];
+  if (rest.length) choices.push({ label: `${verb} the ${count} selected and the ${rest.length} linked with them`, detail: "Linked changes belong together.", withRest: true });
+  if (otherParts.length)
+    choices.push({ label: `${verb} the ${count} selected and all ${otherParts.length + rest.length} other changes of their linked groups`, detail: "Every part at once.", withRest: true, withGroups: true });
+  if (rest.length) choices.push({ label: `${verb} only the ${count} selected`, detail: "Breaks their linked groups; the agent is asked to repair the document.", withRest: false });
+  else choices.push({ label: `${verb} only the ${count} selected`, detail: `The other parts of their linked groups (${otherParts.join(", ")}) stay pending: the document is inconsistent until they are accepted too.`, withRest: true });
+  return { title: `The ${count} selected changes are linked with ${[...rest, ...otherParts].join(", ")}`, choices };
 }
 
 export const fitsInline = (s: string, max = 80): boolean => !/[\r\n]/.test(s) && s.length <= max;
@@ -581,6 +611,9 @@ export function draftMarkdown(item: Pick<Item, "draft" | "file">): string {
 }
 
 export function fence(text: string, lang = ""): string {
+  // Agent text: a lone CR would end a line for Markdown inside the fence, and direction overrides
+  // would reorder what is shown (security report 5e4c6af, S3 and S9).
+  text = printable(text);
   const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((m) => m.length));
   const f = "`".repeat(longest + 1);
   return `${f}${lang}\n${text}\n${f}`;
@@ -589,8 +622,8 @@ export function fence(text: string, lang = ""): string {
 /** A unified-style diff for hovers. */
 export function diffBlock(oldText: string, newText: string): string {
   const lines = [
-    ...(oldText ? oldText.split("\n").map((l) => "- " + l) : []),
-    ...(newText ? newText.split("\n").map((l) => "+ " + l) : []),
+    ...(oldText ? printable(oldText).split("\n").map((l) => "- " + l) : []),
+    ...(newText ? printable(newText).split("\n").map((l) => "+ " + l) : []),
   ];
   return fence(lines.join("\n"), "diff");
 }
@@ -717,3 +750,47 @@ export function itemSpoken(it: Item, line?: number, unread = 0): string {
     : !it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`;
   return `Change ${it.id}, ${what}, ${where}, ${state}${it.supersedes ? `, revises ${it.supersedes}` : ""}`;
 }
+
+/** Escape agent-written text for Markdown, so it cannot add links or formatting. */
+export const esc = (s: string) => printable(s).replace(/[\\`*_{}[\]()#+\-.!|<>~=:]/g, "\\$&");
+
+/**
+ * A link's tooltip in trusted Markdown: one line, its quotes and backslashes escaped. A blank line
+ * in a group title used to end the link, and the rest became trusted Markdown with Stet's command
+ * links in it (security report 5e4c6af, S2).
+ */
+export const linkTitle = (s: string) => oneLine(s, 400).replace(/["\\]/g, "\\$&");
+
+/**
+ * Agent-written titles, rationales and replies as the panel, hovers, pickers and notifications
+ * show them: titles on one line, and control, direction and invisible characters as visible
+ * markers. They reached labels and hovers raw, so a change could show reordered compared with what
+ * is applied (security report 5e4c6af, S9). The changes' own text is left as it is.
+ */
+export function shownAgentText(s: { changesets: Changeset[]; groups: Group[]; items: Item[]; notes: Note[] }) {
+  const line = (t: string) => noLinks(t).replace(/\s+/g, " ").trim();
+  const thread = <T extends { thread: { text: string }[] }>(x: T): T => ({ ...x, thread: x.thread.map((t) => ({ ...t, text: noLinks(t.text) })) });
+  return {
+    changesets: s.changesets.map((cs) => ({ ...cs, title: line(cs.title), ...(cs.rationale ? { rationale: noLinks(cs.rationale) } : {}) })),
+    groups: s.groups.map((g) => ({
+      ...g,
+      title: line(g.title),
+      ...(g.rationale ? { rationale: noLinks(g.rationale) } : {}),
+      ...(g.parts ? { parts: g.parts.map((p) => ({ ...p, title: line(p.title) })) } : {}),
+    })),
+    items: s.items.map((i) => ({ ...thread(i), ...(i.note ? { note: noLinks(i.note) } : {}) })),
+    notes: s.notes.map(thread),
+  };
+}
+
+/** A panel row's text as words: its symbols spelled out. */
+export function spokenRow(s: string): string {
+  return s
+    .replace(/💬\s*(\d+)/g, (_, n: string) => `${n} message${n === "1" ? "" : "s"}`)
+    .replace(/⚠\s*/g, "warning: ")
+    .replace(/\s*·\s*/g, ", ")
+    .replace(/[↻✎🔗▣⇅]\s*/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+

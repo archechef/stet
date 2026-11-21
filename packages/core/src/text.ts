@@ -180,8 +180,19 @@ export function isSafeRepoPath(p: string): boolean {
  * reorder what they see. Line breaks and tabs stay.
  */
 export function printable(s: string): string {
-  return s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+  // A lone CR is a line break to TeX, Typst and Markdown, but moves a terminal's cursor back over
+  // what it printed: shown as the line break it is (security report 5e4c6af, S10). Control,
+  // direction and invisible characters are shown as visible markers, not dropped: dropped, the
+  // file still got them unseen (S11).
+  return s.replace(/\r\n?/g, "\n").replace(INVISIBLE, (ch) => `⟨U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`);
 }
+
+/**
+ * Characters that are invisible or change how the text around them is shown: controls (but line
+ * breaks and tabs), direction marks and overrides, zero-width characters, the soft hyphen, the
+ * byte-order mark, fillers and tag characters.
+ */
+const INVISIBLE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]/gu;
 
 /** Text on one line (whitespace collapsed), cut to `max` characters with an ellipsis. */
 export function oneLine(s: string, max = 120): string {

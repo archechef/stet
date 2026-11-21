@@ -57,8 +57,8 @@ export interface AgentTerms {
   location: string;
   /** Edits that break the document unless accepted together: "a macro or environment definition and its uses, …". */
   linked: string;
-  /** A use without its definition, which is an error: "an undefined macro". */
-  undefinedUse: string;
+  /** What may and may not be left behind by a part accepted alone: "warnings such as undefined references are fine; an undefined macro is not". */
+  compiles: string;
   /** A part that can be accepted alone: "a `\label` with its references". */
   reference: string;
   /** What Stet sees depending on each other: "a label or macro and its uses, …, braces or environments split across changes". */
@@ -121,6 +121,11 @@ export interface KeyChange {
 
 /** Labels, citation keys and other keys defined in one place and used in others (spec §6.4). */
 export interface ReferenceRules {
+  /**
+   * A use of a key that is not defined is an error (Typst), not a warning that prints "??"
+   * (LaTeX): a key's definition and its uses are then never in separately acceptable parts.
+   */
+  strict?: boolean;
   /** The keys an item stops and starts defining. */
   definitions(it: Item): KeyChange[];
   /** The keys of `kind` an item stops and starts using, from its old and new text in context. */

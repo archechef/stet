@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { relative, resolve } from "node:path";
 import * as vscode from "vscode";
 import { CHANGED_FILE, foldPath, isSafeRepoPath, Stet } from "@stet/core";
-import type { Snapshot } from "./model.js";
+import { shownAgentText, type Snapshot } from "./model.js";
 
 export class Project implements vscode.Disposable {
   snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], notes: [], syncNeeded: new Set(), uncommitted: [], unshared: false, missing: [] };
@@ -27,8 +27,10 @@ export class Project implements vscode.Disposable {
     return this.stet.store.root;
   }
 
+  /** The workspace folder's name ("paper-typst"), else the folder's own ("typ"): test report 5e4c6af. */
   get name(): string {
-    return this.mainPath.replace(/\\/g, "/").split("/").pop() ?? this.mainPath;
+    const f = vscode.workspace.workspaceFolders?.find((w) => foldPath(w.uri.fsPath) === foldPath(this.mainPath));
+    return f?.name ?? this.mainPath.replace(/\\/g, "/").split("/").pop() ?? this.mainPath;
   }
 
   /** Path of `uri` relative to the project (forward slashes), or null if outside. */
@@ -91,8 +93,9 @@ export class Project implements vscode.Disposable {
       this.stet.listItems(),
       this.stet.listNotes(),
     ]);
-    const uncommitted = items.filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
-    this.snapshot = { ...this.snapshot, agents, changesets, groups, items, notes, uncommitted };
+    const shown = shownAgentText({ changesets, groups, items, notes });
+    const uncommitted = shown.items.filter((i) => i.status === "accepted" && i.resolution && !i.resolution.committed);
+    this.snapshot = { ...this.snapshot, agents, ...shown, uncommitted };
     this.changed.fire();
     this.scheduleChecks();
   }
@@ -178,3 +181,4 @@ export class Project implements vscode.Disposable {
     this.changed.dispose();
   }
 }
+

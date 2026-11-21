@@ -432,9 +432,10 @@ place();
  * Tell the user once per state what PDF previews need, without nagging: nothing when they work
  * in a container, a one-time note otherwise. Returns true when the user asked to set them up.
  */
-export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, projectName: string): Promise<boolean> {
+export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, projectName: string, projectKey: string): Promise<boolean> {
   if (env.status === "ready" && env.isolation === "container") return false;
-  const key = `stet.previewNotice:${env.status}:${env.isolation ?? ""}`;
+  // Per project and reason: one "Don't show again" silenced every project (test report 5e4c6af, B8).
+  const key = `stet.previewNotice:${projectKey}:${env.status}:${env.isolation ?? ""}:${env.message}`;
   if (memo.get<boolean>(key)) return false;
   const never = "Don't show again";
   if (env.status === "needs-setup") {

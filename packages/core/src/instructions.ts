@@ -5,7 +5,7 @@ import { documentProfile, type LanguageProfile } from "./lang/index.js";
 /** The document's language, and examples in it (the project's, LaTeX by default). */
 const docOf = (p: LanguageProfile = documentProfile()) => ({
   name: p.name,
-  terms: p.agentTerms ?? { location: 'main.txt:12 "suggestion"', linked: "a definition and its uses", undefinedUse: "an undefined name", reference: "a name with its uses", dependencies: "a definition and its uses, the same symbol renamed" },
+  terms: p.agentTerms ?? { location: 'main.txt:12 "suggestion"', linked: "a definition and its uses", compiles: "an undefined name is not", reference: "a name with its uses", dependencies: "a definition and its uses, the same symbol renamed" },
 });
 
 /** What an agent (and its instruction files) are told once the reviewer archived its workspace. */
@@ -69,8 +69,8 @@ here reaches the real document until a human accepts it.
     \`reason\` (one sentence, shown to the reviewer) and it stays linked.
     A large linked group is hard to review. Split it into \`parts\` (each with
     a title and its locations) when every part can be accepted on its own:
-    accepting one part alone must leave the document compiling (warnings such
-    as undefined references are fine; ${doc().terms.undefinedUse} is not), and must not
+    accepting one part alone must leave the document compiling
+    (${doc().terms.compiles}), and must not
     stop any other part from being accepted later. Make parts as SMALL as
     these two conditions allow: one sentence, one formula, one wording change,
     or ${doc().terms.reference}. Never put changes in one part just

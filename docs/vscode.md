@@ -32,11 +32,12 @@ npm run package:vscode      # → packages/vscode/stet-vscode.vsix
 1. Open the folder of your LaTeX or Typst project in VS Code.
 2. Click the **Stet** icon in the activity bar. It looks like a page with a tick.
 3. Click **Set up project**.
-   - If the folder is not a git repository yet, Stet offers, in one question, to create one and commit your current files as a starting point. If LaTeX's build files are there (`.aux`, `.log`, the PDF of your `.tex` files) and there is no `.gitignore`, **Commit, ignoring build files** writes a `.gitignore` for them first, so they aren't committed.
+   - If the folder is not a git repository yet, Stet offers, in one question, to create one and commit your current files as a starting point. If build files are there (LaTeX's `.aux` and `.log`, the PDF of your `.tex` or `.typ` files) and there is no `.gitignore`, **Commit, ignoring build files** writes a `.gitignore` for them first, so they aren't committed.
    - If git doesn't know your name and email yet (it records them with each commit), Stet asks for them first and saves them for this project only.
    - In an agent's workspace there is nothing to set up: Stet offers to open the project's window instead.
    - If the repository has no commits yet, Stet offers to commit the current files (with the same `.gitignore` offer). Stet reviews every change against your last commit.
-   - A folder without any `.tex` file is probably the wrong one: Stet asks before setting it up.
+   - A folder without any `.tex` or `.typ` file is probably the wrong one: Stet asks before setting it up.
+   - Stet says which language it found (LaTeX or Typst); agents' instructions follow it. A folder with both is set up as LaTeX; set `"language": "typst"` in `.git/stet/config.json` to change that.
    - If you have uncommitted edits, Stet says so: agents start from your last commit. Running **Set up project** again only refreshes the setup, and says so.
    - Stet also installs git hooks that stop agent branches from being merged or pushed by accident. Existing hooks are kept and still run.
 4. Stet then offers to create the first agent workspace. Until the agent proposes something, its row in the panel says *no proposals yet*, and its tooltip what to do next.
@@ -147,7 +148,7 @@ The **History** view (under Review in the Stet sidebar; click its title to open 
 
 ### 4.2 In the editor
 
-Open a `.tex` file with pending changes:
+Open a `.tex` or `.typ` file with pending changes:
 
 - **only what actually changes is marked:** a change may span a whole formula (math is always reviewed whole, so it can't end up half-edited), but only the symbols that differ are marked, and the new ones appear right where they go. Everything unchanged stays plain;
 - the **old text is struck through in red**, and the **new text follows in green**;
@@ -225,7 +226,7 @@ After you accept, reject, edit or request a revision, Stet **moves on to the nex
 **Sharing your edits.** Changes you accept always reach agents. Your own edits reach them when you click **Share my edits with agents** (cloud icon in the panel title, or *Stet: Share my edits with agents* in the command palette). It saves your open project files, and agents work on that version from their next sync. You don't need to commit first.
 
 - The setting `stet.shareEdits` changes this: `saved` shares every save automatically (agents may then see half-written drafts); `committed` shares only committed text.
-- Shared are your tracked files, files staged with `git add`, and new `.tex`/`.bib` files. Build output such as `.aux` or `.pdf` stays out. Your git staging area is not changed.
+- Shared are your tracked files, files staged with `git add`, and new `.tex`, `.typ` and `.bib` files. Build output such as `.aux` or `.pdf` stays out. Your git staging area is not changed.
 - After a new commit, agents see the commit; share again if you have edits on top of it.
 
 **Stale changes:** a change becomes *stale* when:
@@ -235,6 +236,8 @@ After you accept, reject, edit or request a revision, Stet **moves on to the nex
 The agent is told and can propose it again against the current text.
 
 ### PDF previews
+
+PDF previews are for LaTeX projects; Typst projects have none yet, and their changes don't offer them.
 
 **PDF preview** (among a change's actions: hover, *More…*, Ctrl+., right-click, `p` in the panel) opens a panel next to the editor. It shows the region of the compiled paper where the change lands, after and before. The change itself is in the editor at once; the panel says *Building the preview…* and fills in a second or two later. While the panel is open it follows the change you select or put the cursor on, and prepares the next two changes in the background, so moving through a review stays quick.
 
@@ -344,7 +347,7 @@ Most of these can also be switched from the panel's **View options** (§4.1).
 
 **Colours:** the theme colours `stet.insertedText.foreground`/`.background`/`.border` and `stet.removedText.foreground`/`.background` can be changed in `workbench.colorCustomizations`. In high-contrast themes, inserted text has a dashed border (`.border`), so it isn't marked by colour alone; removed text is always struck through.
 
-For LaTeX and BibTeX files, the extension sets `editor.inlayHints.maximumLength` to `0` (no limit), so proposed text isn't cut at VS Code's default of 43 characters. You can override it in your settings.
+For LaTeX, BibTeX and Typst files, the extension sets `editor.inlayHints.maximumLength` to `0` (no limit), so proposed text isn't cut at VS Code's default of 43 characters. You can override it in your settings. Without a Typst extension (such as Tinymist) VS Code opens `.typ` files as plain text, and this default doesn't apply to them; Stet says so rather than changing the setting for every plain-text file.
 
 **How the agents reach Stet:**
 - The extension brings its own copy of the `stet` program and places it in `.git/stet/bin/stet.mjs`. That path stays valid across extension updates.

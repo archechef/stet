@@ -65,7 +65,7 @@ import { isInside, pathExists, samePath } from "./paths.js";
 import { StetError } from "./errors.js";
 import { AgentFiles } from "./agentfiles.js";
 import { verifyAgentWorktree } from "./worktree.js";
-import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normalizeWs, sha256, toLf } from "./text.js";
+import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normalizeWs, oneLine, sha256, toLf } from "./text.js";
 
 export { StetError };
 
@@ -220,7 +220,7 @@ function neighboursIn(all: readonly Item[], item: Item): Neighbour[] {
 /** Why a project in this language has no PDF previews. */
 function noPreviews(doc: LanguageProfile): string {
   return doc.id === "typst"
-    ? "Stet has no PDF previews for Typst yet: Typst writes no SyncTeX data, which previews need to find a change on the page."
+    ? "Stet has no PDF previews for Typst projects yet. Everything else works as usual."
     : `Stet has no PDF previews for ${doc.name}.`;
 }
 
@@ -938,6 +938,10 @@ export class Stet {
 
   /** The agent whose worktree contains `cwd`; adopts matching worktrees made by other tools. */
   async agentForCwd(cwd: string): Promise<Agent> {
+    // A known workspace's git link is checked before git runs there: a link to a repository the
+    // agent made would make git read that repository's config (security report 5e4c6af, S1).
+    const registered = (await this.store.agents()).find((a) => a.state !== "archived" && isInside(cwd, a.worktree));
+    if (registered) await this.checkWorktree(registered.worktree);
     const wt = new Repo(cwd, this.untrustedConfig);
     const top = await wt.tryRun(["rev-parse", "--show-toplevel"]);
     const branch = await wt.tryRun(["symbolic-ref", "--short", "HEAD"]);
@@ -1674,7 +1678,7 @@ export class Stet {
     const unitOf = new Map((units ?? []).flatMap((u, k) => u.map((i) => [i, k] as const)));
     const sameSymbol = (a: Item, b: Item) => !units || unitOf.get(a.id) === unitOf.get(b.id);
     const cfg = await this.config();
-    const { parts } = await settleParts(singles, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { sameSymbol, profileOf: (f) => this.profile(cfg, f) });
+    const { parts } = await settleParts(singles, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { sameSymbol, profileOf: (f) => this.profile(cfg, f), grouping: cfg.grouping });
     return parts ? parts.map((p) => p.items) : [members.map((m) => m.id)];
   }
 
@@ -1686,7 +1690,7 @@ export class Stet {
     const members = (await Promise.all(g.items.map(get))).filter((x): x is Item => !!x && x.status !== "superseded");
     const base = members.find((m) => isLive(m.status))?.baseCommit;
     const cfg = await this.config();
-    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { profileOf: (f) => this.profile(cfg, f), quietOverlaps: merged });
+    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { profileOf: (f) => this.profile(cfg, f), quietOverlaps: merged, grouping: cfg.grouping });
     if (parts) g.parts = parts;
     else delete g.parts;
     // Joins of parts Stet proposed itself are no news to the agent.
@@ -1959,6 +1963,9 @@ export class Stet {
    */
   async partlyDecided(items: Item[]): Promise<string[]> {
     const out: string[] = [];
+    const cfg = await this.config();
+    // Typst stops at a reference to a missing label; LaTeX prints "??" (test report 5e4c6af, D1).
+    const breaks = (ms: Item[]) => ms.some((m) => !!this.profile(cfg, m.file).references?.strict);
     for (const gid of new Set(items.flatMap((i) => i.groups))) {
       const g = await this.store.getGroup(gid);
       if (g?.kind !== "linked") continue;
@@ -1972,15 +1979,15 @@ export class Stet {
         // \refs left dangling without a word (test report v0.16.0, D3).
         if (open.length)
           out.push(
-            `${g.id} (${g.title}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
-              `${open.map((m) => m.id).join(", ")} still to decide. The document is inconsistent until they are accepted too.`,
+            `${g.id} (${oneLine(g.title, 80)}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
+              `${open.map((m) => m.id).join(", ")} still to decide. ${breaks(members) ? "The document may not compile" : "The document is inconsistent"} until they are accepted too.`,
           );
         continue;
       }
       out.push(
-        `${g.id} (${g.title}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
+        `${g.id} (${oneLine(g.title, 80)}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
           `${no.map((m) => m.id).join(", ")} ${no.every((m) => m.status === "rejected") ? "rejected" : "not"}. ` +
-          `Check that the document is still consistent (a reference to a label that no longer exists, say). Undo takes a decision back.`,
+          `Check that the document ${breaks(members) ? "still compiles" : "is still consistent"} (a reference to a label that no longer exists, say). Undo takes a decision back.`,
       );
     }
     return out;
@@ -2031,7 +2038,9 @@ export class Stet {
             `accepting only part of a linked group can break the document. Accept the whole group, or override explicitly.`,
         );
       }
-      warnings.push(`Accepted without linked items ${missing.map((m) => m.id).join(", ")}; the group is now broken.`);
+      // Typst stops at a reference to a missing label; say so (test report 5e4c6af, D1).
+      const strict = [...items, ...missing].some((m) => !!this.profile(cfg, m.file).references?.strict);
+      warnings.push(`Accepted without linked items ${missing.map((m) => m.id).join(", ")}; the group is now broken${strict ? ", and the document may not compile until they are accepted too" : ""}.`);
     }
     // The reviewer's drafts (from a file's review document), unless this accept gives other text.
     const overrides = new Map(items.filter((i) => i.draft !== undefined).map((i) => [i.id, i.draft!]));
@@ -2043,10 +2052,10 @@ export class Stet {
   private static failedMessage(failed: { item: Item; reason: string }[]): string {
     const lost = failed.filter((f) => /can't be located/.test(f.reason)).map((f) => f.item.id);
     return (
-      "Nothing was applied, because some items could not be applied:\n" +
+      `Nothing was applied, because ${failed.length === 1 ? "a change" : "some changes"} could not be applied:\n` +
       failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n") +
       // What to do next, for a change whose words were edited meanwhile (test report v0.16.0, UX).
-      (lost.length ? `\nYou edited the text around ${lost.join(", ")} since: reject ${lost.length > 1 ? "them" : "it"}, or ask the agent for a revision against your current text.` : "")
+      (lost.length ? `\nYou edited ${lost.length > 1 ? "their" : "its"} text or the text around ${lost.length > 1 ? "them" : "it"} since (${lost.join(", ")}): reject ${lost.length > 1 ? "them" : "it"}, or ask the agent for a revision against your current text.` : "")
     );
   }
 
@@ -2160,15 +2169,18 @@ export class Stet {
     const titles: string[] = [];
     for (const [csId, its] of byCs) {
       const cs = await this.store.getChangeset(csId);
-      if (cs && !titles.includes(cs.title)) titles.push(cs.title);
-      lines.push(`- ${cs ? `${cs.title} (${cs.agent}, ${csId})` : csId}: ${its.map((i) => i.id).join(", ")}`);
+      // Agent-written titles on one line, without control characters: tools that print `git log`
+      // raw would run escape sequences (security report 5e4c6af, S13).
+      const title = cs ? oneLine(cs.title, 200) : "";
+      if (cs && !titles.includes(title)) titles.push(title);
+      lines.push(`- ${cs ? `${title} (${cs.agent}, ${csId})` : csId}: ${its.map((i) => i.id).join(", ")}`);
     }
     const agents = [...new Set(items.map((i) => i.agent))].join(", ");
     let auto = titles.length === 1 ? titles[0]! : `Accept ${items.length} changes from ${agents}`;
     if (titles.length > 1 && titles.join("; ").length <= 60) auto = titles.join("; ");
     const ids = items.map((i) => i.id).join(",");
     return {
-      subject: subject?.trim() || auto,
+      subject: (subject && oneLine(subject, 200)) || auto,
       body: `Accepted in Stet review (${agents}):\n${lines.join("\n")}\n\nStet-Applied: ${ids}`,
     };
   }
@@ -2236,29 +2248,55 @@ export class Stet {
    * stale. The agent is told. A committed accept is in git's history: revert it with git.
    */
   async undo(id: string): Promise<UndoResult> {
+    return this.undoMany([id]);
+  }
+
+  /**
+   * Undo the decisions of several changes at once, in one lock and one write: undoing an accept
+   * of 400 changes one by one took 16 s (test report 5e4c6af, B5). Accepted changes are taken out
+   * together; all of them, or none when one can't be.
+   */
+  async undoMany(ids: string[]): Promise<UndoResult> {
     return this.store.withLock(async () => {
       await this.recoverInterrupted();
-      const [item] = await this.requireItems([id]);
-      if (item!.status === "needs_revision") {
+      const items = await this.requireItems([...new Set(ids)]);
+      for (const it of items) {
+        if (it.status !== "accepted" && it.status !== "rejected" && it.status !== "needs_revision")
+          throw new StetError(`${it.id} is ${it.status}: only accepted and rejected changes, and revision requests, can be undone.`);
+      }
+      const reopened = new Map<string, Item>();
+      for (const item of items.filter((i) => i.status === "needs_revision")) {
         // A revision request the agent hasn't answered yet (an answer supersedes the change):
         // taken back, the change is pending again, and the agent is told (test report v0.16.0, B5).
-        await this.reopen(item!, "revision request taken back", "needs_revision");
-        await this.updateGroups([item!]);
-        return { reopened: [item!], restored: [] };
+        await this.reopen(item, "revision request taken back", "needs_revision");
+        reopened.set(item.id, item);
       }
-      if (item!.status !== "accepted" && item!.status !== "rejected")
-        throw new StetError(`${item!.id} is ${item!.status}: only accepted and rejected changes, and revision requests, can be undone.`);
-      const unit = await this.decidedWith(item!);
-      if (item!.status === "rejected") {
+      for (const item of items.filter((i) => i.status === "rejected")) {
         // The revision requests this rejection sent to the rest of its linked group (reject
         // --revise-rest) are taken back too, unless the agent has answered them meanwhile.
-        const revised = (await this.sameDecision(item!)).filter((i) => i.status === "needs_revision");
-        for (const it of unit) await this.reopen(it, "rejection undone", "rejected");
-        for (const it of revised) await this.reopen(it, "rejection of a linked change undone", "needs_revision");
-        await this.updateGroups([...unit, ...revised]);
-        return { reopened: [...unit, ...revised], restored: [] };
+        const unit = await this.decidedWith(item);
+        const revised = (await this.sameDecision(item)).filter((i) => i.status === "needs_revision");
+        for (const it of unit) if (it.status === "rejected") await this.reopen(it, "rejection undone", "rejected");
+        for (const it of revised) if (it.status === "needs_revision") await this.reopen(it, "rejection of a linked change undone", "needs_revision");
+        for (const it of [...unit, ...revised]) reopened.set(it.id, it);
       }
+      const accepted = items.filter((i) => i.status === "accepted");
+      if (!accepted.length) {
+        await this.updateGroups([...reopened.values()]);
+        return { reopened: [...reopened.values()], restored: [] };
+      }
+      const units = new Map<string, Item>();
+      for (const item of accepted) if (!units.has(item.id)) for (const it of await this.decidedWith(item)) units.set(it.id, it);
+      const unit = [...units.values()];
+      const result = await this.undoAccepted(unit);
+      if (reopened.size) await this.updateGroups([...reopened.values()]);
+      return { reopened: [...reopened.values(), ...result.reopened], restored: result.restored };
+    });
+  }
 
+  /** Take accepted changes (whole units, see `decidedWith`) out of the working copy. Call under lock. */
+  private async undoAccepted(unit: Item[]): Promise<UndoResult> {
+    {
       const committed = unit.find((i) => i.resolution?.committed);
       if (committed) {
         const c = committed.resolution!.committed!.replace(/^external:/, "");
@@ -2335,7 +2373,7 @@ export class Stet {
       }
       await this.updateGroups([...unit, ...restored]);
       return { reopened: unit, restored };
-    });
+    }
   }
 
   /**

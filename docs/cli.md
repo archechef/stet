@@ -86,7 +86,7 @@ Run these in your project folder (in an agent's workspace they are refused, so a
 | Command | What it does |
 |---|---|
 | `stet review [--agent <a>] [--status <s>] [--all]` | Lists changes waiting for review (pending or revision requested), per agent → round → group. `--status` takes a comma-separated list (`pending,accepted,…`); `--all` shows everything. |
-| `stet show <12.3\|G3\|C12\|N3>` | Shows a change with its context, a group or round with its members, or a note with its thread. |
+| `stet show <12.3\|G3\|C12\|N3> [--full]` | Shows a change with its context, a group or round with its members, or a note with its thread. Added and deleted files show their first 40 lines and say how many more there are; `--full` shows them whole. |
 | `stet accept <12.3\|G3\|G3.2\|C12>… [--text <t> \| --text-file <f>] [--force] [--commit \| --no-commit]` | Applies changes to your files. `G3.2` accepts part 2 of group G3; `C12` accepts every pending change of round 12. `--text`/`--text-file` accepts one item with your own wording. `--force` accepts part of a linked group (or of one of its parts) anyway, which marks the group broken. |
 | `stet reject <12.3\|G3\|G3.2\|C12>… [-m <reason>] [--all \| --revise-rest \| --only]` | Rejects changes (`C12`: every pending change of round 12); the agent gets the reason. For a member of a linked group, choose `--all` (reject the whole group, or the whole part if the group has parts), `--revise-rest` (reject this one and ask for revisions of the rest) or `--only`. |
 | `stet undo <12.3>` | Undoes a rejection, a revision request the agent hasn't answered yet, or an accept until you commit it (the change is taken out of your file again): the change is pending again, and so are changes the accept made stale. Changes decided together (a linked group, a move) are undone together. The agent is told. |
@@ -116,7 +116,7 @@ Run these in your project folder (in an agent's workspace they are refused, so a
 - `saved`: automatically, whenever an agent syncs.
 - `committed`: only once you commit them.
 
-Shared are your tracked files, files you staged with `git add`, and new `.tex`/`.bib` files. Other new files (`.aux`, `.pdf`, …) stay out unless you `git add` them. Your git staging area is not changed.
+Shared are your tracked files, files you staged with `git add`, and new `.tex`, `.typ` and `.bib` files. Other new files (`.aux`, `.pdf`, …) stay out unless you `git add` them. Your git staging area is not changed.
 
 **When changes are committed:** by default, accepting only writes your files, and `stet commit` makes one commit for the whole review. With `"autoCommit": "when-clean"` in `.git/stet/config.json`, each accept is committed right away, unless the file had your own uncommitted edits.
 

@@ -2,7 +2,44 @@
 
 ## Unreleased
 
-**Typst projects.** Stet reviews Typst as it does LaTeX: changes are split by words and sentences, with maths, labels and references (`<a>`, `@a`, `#ref(<a>)`) kept whole; a renamed label or citation key is linked with its uses, a `#let` with the code that uses it, a new chapter or figure with the `#include` or `#image` that reads it in; moved paragraphs and blocks are moves. `@key` is a citation when the bibliography (a .bib file) has the key, else a reference. `stet init` and *Set up project* tell a Typst project by its files, and agents get Typst examples. No PDF previews for Typst yet (Typst writes no SyncTeX data). Also for LaTeX: a .bib entry whose key alone changed is one change, linked with the renamed `\cite`s.
+**Typst projects.** Stet reviews Typst as it does LaTeX: changes are split by words and sentences, with maths, labels and references (`<a>`, `@a`, `#ref(<a>)`) kept whole; a renamed label or citation key is linked with its uses, a `#let` with the code that uses it, a new chapter or figure with the `#include` or `#image` that reads it in; moved paragraphs and blocks are moves. `@key` is a citation when the bibliography (a .bib file) has the key, else a reference. `stet init` and *Set up project* tell a Typst project by its files, and agents get Typst examples. In Typst a reference to a missing label or citation is an error, not LaTeX's `??`: a label or citation key and its references are never in separately acceptable parts, and a new label is linked with new references to it. No PDF previews for Typst yet; their entries are hidden for Typst changes. Also for LaTeX: a .bib entry whose key alone changed is one change, linked with the renamed `\cite`s.
+
+Fixes from the security review and the test report of commit 5e4c6af (2026-11-21).
+
+**Security**
+- **An agent could make Stet run git hooks outside its sandbox.** By pointing its workspace's `.git` link at a repository of its own, an agent made the Stet MCP server (which runs outside the sandbox) run that repository's hooks. The MCP server and the guard now open the project from the folder recorded at setup and check the workspace's git link before running git there.
+- **Agent text could add working Stet links to a change's hover**, through a group title in a link's tooltip, or hide Stet's own links behind a `~~~` fence and a lone carriage return. Agent text in hovers, link tooltips, notifications, panel labels, pickers and the inline text is now escaped, kept on one line where it must be, and can't form links in notifications.
+- **Invisible characters are shown:** control characters, direction overrides, zero-width and tag characters, soft hyphens and byte-order marks in agent text are shown as markers such as `⟨U+202E⟩`, in the terminal and in VS Code; they were dropped from the display but still written into your file. A lone carriage return shows as a line break, and Stet's own colours can no longer be faked in `stet review`. Titles and replies on several lines can't pass for rows of their own. Commit messages get agent titles on one line, without control characters.
+- **The guard fails closed:** when it can't check a tool call it blocks it (it let every call through). Links whose target doesn't exist yet are followed.
+- `stet show` says when it shows only the first 40 lines of an added or deleted file; `--full` shows them all.
+
+**Your files and decisions**
+- **Typst: accepting a label's part alone broke the document.** A label or citation-key rename was split into parts as in LaTeX, where a missing reference is only `??`; in Typst it stops the build. They are now one unit, and Stet says "the document may not compile" when you accept only some.
+- **Multi-select Accept asks about the other parts of the changes' linked groups**, as a single Accept does.
+- **Escape in "which one?" decides nothing:** it accepted (rejected, revised) the change selected in the panel, in another file.
+- **A sentence added before a new heading or code block** came out as the old sentence replaced by the text after the heading; accepting some of the changes lost or doubled a sentence. Each change now only inserts.
+- **A new label and a new reference to it** (Typst) are linked, also with a pending rename of the label from an earlier round.
+- **A new image read in by a relative path** (`../figures/x.png` from a chapter in a subfolder, or `/figures/x.png`) is grouped with the `#image` that reads it.
+- **A re-indented code block is one change**, not one per line (accepting one line left broken code).
+- **A renamed `@key` next to a maths edit is a change of its own**, not merged with it.
+
+**Bugs**
+- Linked groups listed changes twice in their parts, and joined titles grew with every revision; `stet accept G1.1` could fail for parts an agent declared.
+- Typst comments and strings in code no longer count as labels or references.
+- **Set up PDF previews**, the panel's *PDF preview* and `p` are gone for Typst changes and projects (they pretended to build or opened an empty panel). *Don't show again* on a preview notice applies to one project and reason.
+- Opening a decided change from History marks its replies as read.
+- **Undo of a large accept is one operation**, with progress: 400 changes took 16 s, one at a time.
+- *Reopen note* is no longer in the Command Palette, where it did nothing.
+- Deleting the last entry of a `.bib` file left a blank line at its end.
+
+**Reviewing in VS Code**
+- *Set up project* and `stet init` say which language Stet found (LaTeX or Typst).
+- Without a Typst extension, `.typ` files open as plain text: Stet no longer offers to change a setting for every plain-text file, and says what helps.
+- Several projects in one window: results, the Finish review question and Undo name the project; projects are named after their workspace folder; `navigationOrder: document` goes through projects in the panel's order.
+- With several changes selected, Revise, Comment, Edit and Diff say which one change they act on.
+- "Which one?" names changes by their full id (2.1, not 1).
+- A failed accept says "change", not "item", and that you edited its text or the text around it.
+- Every panel row is read out in words by screen readers (messages, warnings), not only change rows; the High Contrast offer no longer implies that either style is read out.
 
 Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code focus).
 

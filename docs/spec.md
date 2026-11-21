@@ -232,10 +232,10 @@ A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`, `
 
 - **Files:** `files.typ` (default `*.typ`); code blocks fenced as `typst`. The tokenizer follows Typst's three modes (markup, code, maths): `#name` is a command; `[ ]` nest everywhere, `( )` and `{ }` in code; `$…$` is maths (inline or display); `//` and `/* */` are comments; raw text (backticks) and strings are words only, and raw text keeps its spaces; `\#`, `\$`, `\@` are plain characters. A label `<a>` and a reference `@a` are one token each. Headings (`=`, `==`, …), list and term markers, statements (`#let`, `#set`, …) and block calls (`#figure`, `#table`, …) are structure lines; a line of closing brackets (`] <thm:main>`) is one too. In code, `,` and `;` end a unit as a sentence's full stop does: table cells and arguments are changes of their own.
 - **References and citations:** `<key>` after markup defines a label (not a label passed to a function); `@key` and `#ref(<key>)` use it, and `#ref(<key>)` is taken whole like `\ref{key}`. `@key` and `#cite(<key>)` are citations when the bibliography defines the key, so whether `@key` is a reference or a citation follows from what the project defines, not from its syntax. Bibliographies are BibTeX (`.bib`, the existing profile) for now. Hayagriva (`.yml`) is to come later as a profile of its own whose entries define citation keys: nothing may assume that citation keys come only from `.bib` files. (Renaming an entry's key, and nothing else, is one change of the .bib file now, so it links with the renamed citations: for LaTeX too.)
-- **Definitions and parts:** `#let` defines a name (with or without parameters), used as `#name` or by name in maths, and is joined with its uses in parts. `#import`, `#set` and `#show` are global. A label and its references stay in separate parts, as with `\label`.
+- **Definitions and parts:** `#let` defines a name (with or without parameters), used as `#name` or by name in maths, and is joined with its uses in parts. `#import`, `#set` and `#show` are global. A reference to a missing label or citation is an error in Typst, not a `??` warning (the profile's references are *strict*): a label or bibliography entry and its references are never in separate parts, a detected rename is linked without parts, and a new label is linked with new references to it (test report 5e4c6af, D1, D5). Comments and strings in code are neither labels nor references.
 - **Includes:** `#include "…"`, `#import "…"` (a local file), `#image("…")`, `#bibliography("…")` and the data loaders (`read`, `json`, `csv`, `yaml`, …) read files in.
 - **Project language:** detected at setup from the files (`.typ` and no `.tex` → Typst, otherwise LaTeX) and kept in the config as `language`. `documentProfile(cfg)` follows it, and so do the agents' instructions ("for a Typst project", with Typst examples).
-- **No PDF previews yet:** Typst has no SyncTeX to find a change on the page. The preview status is *unavailable* with a message saying so.
+- **No PDF previews yet:** Typst has no SyncTeX to find a change on the page. The preview status is *unavailable* with a message saying so; VS Code shows no preview entries for Typst changes and projects.
 - **Moves:** a whole block (`#figure(…)[…] <a>`, `#block[…]`, a display formula) moved is named by what it is: "(figure, unchanged)".
 
 ### 6.1 Per file
@@ -345,7 +345,7 @@ An item matches when its new-side range overlaps a `where` range. For a pure del
 #### 6.4.6 Parts of linked groups
 Agents tend to link long lists of changes (notation changed across a paper, a label and dozens of references). All-or-nothing review of such a list is hard, so a linked group can be split into **parts** that are decided one at a time. Every part must satisfy two conditions:
 
-1. **Accepting it alone keeps the document compiling.** Warnings are fine (an undefined reference or citation prints `??`), errors are not (an undefined macro or environment).
+1. **Accepting it alone keeps the document compiling.** In LaTeX warnings are fine (an undefined reference or citation prints `??`), errors are not (an undefined macro or environment). In Typst an undefined reference or citation is an error too.
 2. **Accepting it does not keep any other part from being accepted later.**
 
 Changes that can't be shown to meet them are not split. Parts come from:

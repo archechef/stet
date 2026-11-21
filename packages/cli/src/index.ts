@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -7,6 +8,7 @@ import { existsSync } from "node:fs";
 import {
   changeSummary,
   DOCUMENT_LANGUAGES,
+  documentProfile,
   inlineDiff,
   paragraphChange,
   profileByName,
@@ -28,6 +30,7 @@ import {
   serveStdio,
   StetMcpServer,
   uninstallHooks,
+  verifyAgentWorktree,
   type CliCommand,
   Stet,
   StetError,
@@ -80,7 +83,7 @@ Project (run in your project folder):
 Review:
   stet review [--agent <a>] [--status <s>] [--all]
                                         list items (default: pending)
-  stet show <12.3|G3|G3.2|C12|N3>       show a change (round 12, change 3), group, part of a group, round or note
+  stet show <12.3|G3|G3.2|C12|N3> [--full]   show a change (round 12, change 3), group, part of a group, round or note; --full: whole added or deleted files
   stet accept <12.3|G3|G3.2|C12>... [--force] [--text <t> | --text-file <f>] [--commit | --no-commit]
   stet reject <12.3|G3|G3.2|C12>... [-m <reason>] [--all | --revise-rest | --only]
   stet undo <12.3>                      undo an accept (until committed) or a rejection: pending again
@@ -148,6 +151,7 @@ const OPTIONS = {
     page: { type: "string" },
     before: { type: "boolean" },
     print: { type: "boolean" },
+    full: { type: "boolean" },
 } as const;
 
 /** Exit codes, for scripts: 1 any other error, 2 a wrong command line, 3 an unknown id or name. */
@@ -170,18 +174,23 @@ const { values: opt, positionals: pos } = parseCommandLine();
 // Output helpers
 
 const color = process.stdout.isTTY && !process.env.NO_COLOR;
-const c = (code: string) => (s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
+/**
+ * Stet's own colour codes are written as markers with a random tag and become escape sequences
+ * only in `forTerminal`, after every control character from agent text is gone: agent text could
+ * otherwise carry Stet's own colours (security report 5e4c6af, S10).
+ */
+const TAG = randomBytes(8).toString("hex");
+const sgr = (code: string) => `\uE000${TAG}${code}\uE001`;
+const OWN_SGR = new RegExp(`\uE000${TAG}([0-9;]+)\uE001`, "g");
+const c = (code: string) => (s: string) => (color ? `${sgr(code)}${s}${sgr("0")}` : s);
 const red = c("31"), green = c("32"), yellow = c("33"), dim = c("2"), bold = c("1"), cyan = c("36");
 
 /**
  * Text for the terminal: Stet's own colour codes stay, every other control character goes (agent
  * text could otherwise carry escape sequences that rewrite or hide what the reviewer sees).
  */
-const OWN_SGR = /\x1b\[(?:0|1|2|31|32|33|36)m/g;
 export function forTerminal(s: string): string {
-  const keep: string[] = [];
-  const marked = s.replace(OWN_SGR, (m) => `\u0000${keep.push(m) - 1}\u0000`);
-  return printable(marked.replace(/\u0000(\d+)\u0000/g, "\uE000$1\uE001")).replace(/\uE000(\d+)\uE001/g, (_, k) => keep[Number(k)]!);
+  return printable(s).replace(OWN_SGR, (_, code: string) => `\x1b[${code}m`);
 }
 
 function out(human: () => string | void, data: unknown) {
@@ -234,19 +243,30 @@ function itemSummary(it: Item, line?: number): string {
   return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${breaks ? `${breaks}: ` : ""}${change}${revises}`;
 }
 
+/** A reply or note on several lines, indented, so it can't pass for thread lines of its own (security report 5e4c6af, S10). */
+const indented = (t: string) => printable(t).replace(/\n/g, "\n    ");
+
 function itemDiff(it: Item): string {
   if (it.kind === "binary") return dim("(binary file)");
   if (it.kind !== "modify") {
     const lines: string[] = [];
-    if (it.oldText) lines.push(...it.oldText.split("\n").slice(0, 40).map((l) => red("- " + l)));
-    if (it.newText) lines.push(...it.newText.split("\n").slice(0, 40).map((l) => green("+ " + l)));
+    // Whole files with --full; else the first 40 lines of each side, and how many more there are
+    // (security report 5e4c6af, S8: the rest was cut without a word).
+    const side = (text: string, mark: (s: string) => string, sign: string) => {
+      const all = text.split("\n");
+      const shown = opt.full ? all : all.slice(0, 40);
+      lines.push(...shown.map((l) => mark(sign + l)));
+      if (shown.length < all.length) lines.push(dim(`  … ${all.length - shown.length} more lines (stet show ${it.id} --full shows them all)`));
+    };
+    if (it.oldText) side(it.oldText, red, "- ");
+    if (it.newText) side(it.newText, green, "+ ");
     return lines.join("\n");
   }
   // Context up to the line boundary, without a cut-off partial word.
   const before = (it.context.before.split("\n").pop() ?? "").replace(/^\S*\s/, "…");
   const after = (it.context.after.split("\n")[0] ?? "").replace(/\s\S*$/, "…");
-  const del = (t: string) => (t ? (color ? `\x1b[31;9m${t}\x1b[0m` : `[-${t}-]`) : "");
-  const ins = (t: string) => (t ? (color ? `\x1b[32;4m${t}\x1b[0m` : `{+${t}+}`) : "");
+  const del = (t: string) => (t ? (color ? c("31;9")(t) : `[-${t}-]`) : "");
+  const ins = (t: string) => (t ? (color ? c("32;4")(t) : `{+${t}+}`) : "");
   if (paragraphChange(it.oldText, it.newText)) {
     // Only the paragraph breaks changed: those, made visible, in the text (not all of it twice).
     const shown = (t: string) => t.replace(/\n[ \t]*\n\s*/g, "¶").replace(/\n/g, "↵").replace(/[ \t]/g, "␣");
@@ -345,24 +365,34 @@ async function guard(): Promise<void> {
     process.stderr.write(reason + "\n");
     process.exitCode = 2;
   };
-  // An archived workspace: say so clearly (also when its folder is gone), and stop further work.
+  // The hook Stet installs names the project and the agent. The project is opened from there and
+  // the workspace's git link checked, never followed (security report 5e4c6af, S1), and the guard
+  // fails closed: an error used to let every tool call through (S6).
   const project = process.env.STET_PROJECT;
   const agentId = process.env.STET_AGENT;
   if (project && agentId) {
     try {
-      const agent = await (await Stet.open(project)).store.getAgent(agentId);
+      const stet = await Stet.open(project);
+      const agent = await stet.store.getAgent(agentId);
       if (agent?.state === "archived") return block(archivedMessage(agent));
-    } catch {
-      /* fall through to the normal checks */
+      if (!existsSync(cwd)) return block(`Stet: this workspace folder (${cwd}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
+      if (!agent) return block(`Stet: agent '${agentId}' is unknown to the project ${project}. Ask the user for a new agent workspace.`);
+      await verifyAgentWorktree(agent.worktree, stet.commonDir);
+      const cfg = await stet.config();
+      const reason = checkToolUse(input, { worktree: agent.worktree, mainPath: stet.mainPath, commonDir: stet.commonDir, ...(cfg.cli ? { cli: cfg.cli } : {}) });
+      if (reason) block(reason);
+    } catch (e: any) {
+      block(`Stet's guard could not check this tool call, so it is blocked: ${e?.message ?? e}`);
     }
-    if (!existsSync(cwd)) return block(`Stet: this workspace folder (${cwd}) no longer exists. Stop working here and ask the user for a new agent workspace.`);
+    return;
   }
+  // A hook written by an older Stet: find the project from the folder.
   try {
     const located = await Stet.locate(cwd);
     const { toplevel, mainPath, commonDir } = located;
     const stet = await Stet.open(cwd, located);
     const cfg = await stet.config();
-    const branch = await new Repo(toplevel).tryRun(["symbolic-ref", "--short", "HEAD"]);
+    const branch = await new Repo(toplevel, stet.untrustedConfig).tryRun(["symbolic-ref", "--short", "HEAD"]);
     if (!branch?.startsWith(cfg.agentBranchPrefix)) return; // not an agent workspace
     const reason = checkToolUse(input, { worktree: toplevel, mainPath, commonDir, ...(cfg.cli ? { cli: cfg.cli } : {}) });
     if (reason) block(reason);
@@ -505,6 +535,8 @@ async function main() {
     return out(
       () =>
         (already ? `Stet was already set up for ${stet.mainPath} (main branch '${cfg.mainBranch}'); its setup is refreshed.\n` : `Stet is set up for ${stet.mainPath} (main branch '${cfg.mainBranch}').\n`) +
+        // Which language agents are told about, and how to change it (test report 5e4c6af, UX).
+        `Language: ${documentProfile(cfg).name} (agents' instructions follow it; set "language" in .git/stet/config.json to change it).\n` +
         (hooks.missing.length
           ? yellow(`! Git guard hooks not installed (${hooks.customHooksPath ? `core.hooksPath is ${hooks.dir}` : "disabled"}). See \`stet hooks install\`.`) + "\n"
           : already ? "" : `Git guard hooks installed in ${hooks.dir}.\n`) +
@@ -632,13 +664,13 @@ async function main() {
       for (const cs of changesets) {
         const csItems = items.filter((i) => i.changeset === cs.id);
         if (!csItems.length) continue;
-        lines.push(`${bold(cs.agent)} › ${bold(`Round ${roundOf(cs.id)}`)} (${cs.id}) ${cs.title}${cs.rationale ? dim(" — " + oneLine(cs.rationale, 60)) : ""}`);
+        lines.push(`${bold(cs.agent)} › ${bold(`Round ${roundOf(cs.id)}`)} (${cs.id}) ${oneLine(cs.title, 200)}${cs.rationale ? dim(" — " + oneLine(cs.rationale, 60)) : ""}`);
         const shown = new Set<string>();
         for (const g of groups.filter((g) => g.items.some((i) => csItems.some((x) => x.id === i)))) {
           const icon = g.kind === "linked" ? "⛓" : g.kind === "related" ? "≡" : "◆";
-          lines.push(`  ${icon} ${bold(g.id)} ${g.kind} ${g.title}${g.source === "auto" ? dim(" [auto]") : ""}${g.state === "broken" ? red(" [broken]") : ""}`);
+          lines.push(`  ${icon} ${bold(g.id)} ${g.kind} ${oneLine(g.title, 200)}${g.source === "auto" ? dim(" [auto]") : ""}${g.state === "broken" ? red(" [broken]") : ""}`);
           // Parts of a linked group are accepted one at a time: list them with their own ids.
-          const units = g.parts ? g.parts.map((p, k) => ({ head: `${bold(partId(g.id, k))} ${p.title}`, items: p.items })) : [{ head: "", items: g.items }];
+          const units = g.parts ? g.parts.map((p, k) => ({ head: `${bold(partId(g.id, k))} ${oneLine(p.title, 200)}`, items: p.items })) : [{ head: "", items: g.items }];
           for (const u of units) {
             const its = csItems.filter((x) => u.items.includes(x.id));
             if (!its.length) continue;
@@ -669,7 +701,7 @@ async function main() {
             [
               noteSummary(n),
               dim(`passage: ${oneLine(n.text, 200)}`),
-              ...n.thread.map((t) => `${t.author === "user" ? "you" : n.agent}: ${t.text}`),
+              ...n.thread.map((t) => `${t.author === "user" ? "you" : n.agent}: ${indented(t.text)}`),
             ].join("\n"),
           n,
         );
@@ -677,10 +709,10 @@ async function main() {
       if (id.startsWith("G")) {
         const { group: g, part } = await stet.groupTarget(id);
         const items = (await Promise.all((part ?? g).items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
-        if (part) return out(() => [`${bold(id)} part of ${g.id} (${g.title}): ${part.title}`, ...items.map((i) => itemSummary(i))].join("\n"), { group: g, part, items });
-        const lines = [`${bold(g.id)} ${g.kind} ${g.title} (${g.state})`, g.rationale ?? "", ...(await stet.partlyDecided(items)).map((w) => yellow("! ") + w)];
+        if (part) return out(() => [`${bold(id)} part of ${g.id} (${oneLine(g.title, 200)}): ${oneLine(part.title, 200)}`, ...items.map((i) => itemSummary(i))].join("\n"), { group: g, part, items });
+        const lines = [`${bold(g.id)} ${g.kind} ${oneLine(g.title, 200)} (${g.state})`, g.rationale ?? "", ...(await stet.partlyDecided(items)).map((w) => yellow("! ") + w)];
         if (g.parts) {
-          for (const [k, p] of g.parts.entries()) lines.push(`${bold(partId(g.id, k))} ${p.title}`, ...items.filter((i) => p.items.includes(i.id)).map((i) => "  " + itemSummary(i)));
+          for (const [k, p] of g.parts.entries()) lines.push(`${bold(partId(g.id, k))} ${oneLine(p.title, 200)}`, ...items.filter((i) => p.items.includes(i.id)).map((i) => "  " + itemSummary(i)));
         } else lines.push(...items.map((i) => itemSummary(i)));
         return out(() => lines.filter(Boolean).join("\n"), { group: g, items });
       }
@@ -688,7 +720,7 @@ async function main() {
         const cs = (await stet.listChangesets()).find((x) => x.id === id);
         if (!cs) throw new StetError(`Unknown changeset ${id}.`);
         const items = await stet.listItems({ changeset: id });
-        return out(() => [`${bold(cs.id)} ${cs.title} (${cs.agent}, ${localTime(cs.submittedAt)})`, cs.rationale, ...items.map((i) => itemSummary(i))].filter(Boolean).join("\n"), { changeset: cs, items });
+        return out(() => [`${bold(cs.id)} ${oneLine(cs.title, 200)} (${cs.agent}, ${localTime(cs.submittedAt)})`, cs.rationale, ...items.map((i) => itemSummary(i))].filter(Boolean).join("\n"), { changeset: cs, items });
       }
       const it = await stet.getItem(id);
       if (!it) throw new StetError(`Unknown item ${id}.`);
@@ -723,7 +755,7 @@ async function main() {
         if (yours === undefined || it.kind !== "modify") lines.push("", itemDiff(it));
         // Without colours, the markers need a word (test report UX).
         if (!color && it.kind === "modify") lines.push(dim("([-…-] is removed, {+…+} is added)"));
-        if (it.thread.length) lines.push("", ...it.thread.map((t) => `${dim(localTime(t.at))} ${bold(t.author)}: ${t.text}`));
+        if (it.thread.length) lines.push("", ...it.thread.map((t) => `${dim(localTime(t.at))} ${bold(t.author)}: ${indented(t.text)}`));
         return lines.join("\n");
       }, { ...it, line });
     }
@@ -788,7 +820,7 @@ async function main() {
       if (what === "setup") {
         // Downloads packages into a container image: only ever on this explicit command.
         const before = await stet.previewStatus(true);
-        console.error(
+        console.error(forTerminal(
           dim(
             opt.extras
               ? "Adding the extra fonts to the preview image (downloads about 2 GB; this takes a while)…"
@@ -796,7 +828,7 @@ async function main() {
                 ? "Building the preview image with its own TeX Live (downloads about 1 GB; this takes a while)…"
                 : "Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…",
           ),
-        );
+        ));
         const r = await stet.setupPreview({ extras: !!opt.extras });
         if (!r.ok) throw new StetError(`Building the preview image failed:\n${r.log.split("\n").slice(-15).join("\n")}`);
         return out(() => `${green("Done.")} ${r.status.message}${r.status.fix ? `\n  ${r.status.fix}` : ""}`, r.status);
@@ -1013,11 +1045,11 @@ async function main() {
 main().catch((e) => {
   if (e instanceof StetError) {
     if (opt.json) console.log(JSON.stringify({ error: e.message }));
-    else console.error(red("error: ") + forTerminal(e.message));
+    else console.error(forTerminal(red("error: ") + e.message));
     process.exitCode = /^(Usage: |Missing |Unknown status )/.test(e.message) ? EXIT.usage : /^Unknown (item|group|changeset|agent|note|command)\b/.test(e.message) ? EXIT.unknown : EXIT.error;
   } else {
     // Not Stet's own error: the message, and the stack only when asked for.
-    console.error(red("error: ") + (e?.message ?? String(e)) + (process.env.STET_DEBUG ? `\n${e?.stack ?? ""}` : "\n(set STET_DEBUG=1 for details)"));
+    console.error(forTerminal(red("error: ")) + (e?.message ?? String(e)) + (process.env.STET_DEBUG ? `\n${e?.stack ?? ""}` : "\n(set STET_DEBUG=1 for details)"));
     process.exitCode = EXIT.error;
   }
 });
