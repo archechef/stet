@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { AgentFiles } from "./agentfiles.js";
 import { anchor, anchorNear, captureContext, chainInsertions, type Neighbour, type Span } from "./anchor.js";
-import { applyItems, conflicts, type FileChange, type FileView, locate, overlaps, type TextFile } from "./apply.js";
+import { type AcceptFailure, applyItems, conflicts, type FileChange, type FileView, locate, overlaps, type TextFile } from "./apply.js";
 import { type StetConfig, validateConfig } from "./config.js";
 import { itemEffect } from "./effects.js";
-import { StetError } from "./errors.js";
+import { notFound, StetError } from "./errors.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import { autoGroups, type GroupDraft, type GroupHint, type HintUnit, joinTitles, type NoteHint, normalizeGroups, parseWhere, unitMatches } from "./grouping.js";
 import { installHooks } from "./hooks.js";
@@ -24,7 +24,9 @@ import {
   type Group,
   type GroupKind,
   type GroupPart,
+  type HistoryEntry,
   type Item,
+  type ItemBrief,
   type ItemStatus,
   isLive,
   itemId,
@@ -187,6 +189,8 @@ interface Candidate extends Edit {
   oldBlob?: string | null;
   newBlob?: string | null;
   shownText?: Item["shownText"];
+  /** For changes merged from an agent's atomic group: its title and rationale, kept as the item's note. */
+  note?: string;
 }
 
 /** Submit: an agent's linked group made related, and what stayed linked. */
@@ -568,9 +572,16 @@ export class Stet {
     await rm(this.journalPath, { force: true });
   }
 
-  private setStatus(item: Item, status: ItemStatus, by: "user" | "agent" | "stet", note?: string, decision?: string) {
+  private setStatus(item: Item, status: ItemStatus, by: HistoryEntry["by"], note?: string, extra: Pick<HistoryEntry, "decision" | "staleBy"> = {}) {
     item.status = status;
-    item.history.push({ at: now(), status, by, ...(note ? { note } : {}), ...(decision ? { decision } : {}) });
+    item.history.push({
+      at: now(),
+      status,
+      by,
+      ...(note ? { note } : {}),
+      ...(extra.decision ? { decision: extra.decision } : {}),
+      ...(extra.staleBy ? { staleBy: extra.staleBy } : {}),
+    });
   }
 
   private async itemLine(item: Item): Promise<number> {
@@ -579,7 +590,7 @@ export class Stet {
   }
 
   /** Compact description of an item for event payloads. */
-  private async describe(item: Item) {
+  private async describe(item: Item): Promise<ItemBrief> {
     return {
       id: item.id,
       file: item.file,
@@ -638,7 +649,8 @@ export class Stet {
         const state = await this.wholeFileState(it, view);
         if (state === "open") stillOpen.push(it);
         else {
-          it.resolution!.committed = state === "done" ? head : `external:${head}`;
+          it.resolution!.committed = head;
+          if (state !== "done") it.resolution!.committedWithEdits = true;
           await this.store.putItem(it);
         }
         continue;
@@ -650,7 +662,8 @@ export class Stet {
       if (await this.committedSinceAccept(it, head, headBlobs)) {
         const f = await view.read(it.file);
         const probe = { ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } };
-        it.resolution!.committed = f && anchor(probe, f.text) ? head : `external:${head}`;
+        it.resolution!.committed = head;
+        if (!f || !anchor(probe, f.text)) it.resolution!.committedWithEdits = true;
         await this.store.putItem(it);
       } else stillOpen.push(it);
     }
@@ -728,7 +741,7 @@ export class Stet {
       const changed: Item[] = [];
       const working = this.workingView();
       for (const it of await this.store.items()) {
-        const c = it.status === "accepted" ? it.resolution?.committed?.replace(/^external:/, "") : undefined;
+        const c = it.status === "accepted" ? it.resolution?.committed : undefined;
         if (!c) continue;
         if (!reach.has(c)) reach.set(c, (await this.repo.tryRun(["merge-base", "--is-ancestor", c, head])) !== null);
         if (reach.get(c)) continue;
@@ -736,6 +749,7 @@ export class Stet {
         const kept = it.kind === "modify" ? !!f && this.holdsApplied(it, f.text) : (await this.wholeFileState(it, working).catch(() => "other")) === "done";
         if (kept) {
           it.resolution!.committed = null;
+          delete it.resolution!.committedWithEdits;
           it.resolution!.headBlob = await this.repo.blobId(head, it.file);
           await this.store.putItem(it);
         } else {
@@ -1099,7 +1113,7 @@ export class Stet {
 
   private async requireAgent(id: string): Promise<Agent> {
     const a = await this.store.getAgent(id);
-    if (!a) throw new StetError(`Unknown agent '${id}'.`);
+    if (!a) throw notFound(`Unknown agent '${id}'.`);
     return a;
   }
 
@@ -1396,7 +1410,7 @@ export class Stet {
         newText: tipText.slice(first.newStart, last.newEnd),
       };
       fresh.splice(0, fresh.length, ...fresh.filter((c) => !members.includes(c)), merged);
-      (merged as any).note = h.rationale ? `${h.title}: ${h.rationale}` : h.title;
+      merged.note = h.rationale ? `${h.title}: ${h.rationale}` : h.title;
     }
 
     // A reworded sentence with a piece that repeats an earlier rejection: keep that sentence's
@@ -1418,7 +1432,7 @@ export class Stet {
         else runs.push([c]);
       }
       for (const run of runs) {
-        if (run.length < 2 || !run.some(repeats) || run.some((c) => this.isKeyEdit(cfg, c) || (c as any).note)) continue;
+        if (run.length < 2 || !run.some(repeats) || run.some((c) => this.isKeyEdit(cfg, c) || c.note)) continue;
         const first = run[0]!;
         const last = run[run.length - 1]!;
         const merged: Candidate = {
@@ -1485,7 +1499,7 @@ export class Stet {
         ...(c.kind === "binary" ? { oldBlob: c.oldBlob ?? null, newBlob: c.newBlob ?? null, ...(c.shownText ? { shownText: c.shownText } : {}) } : {}),
         context: c.kind === "modify" ? captureContext(bt, c.start, c.end) : { before: "", after: "" },
         fingerprint: this.fingerprint(c),
-        note: (c as any).note ?? null,
+        note: c.note ?? null,
         groups: [],
         status: "pending",
         resolution: null,
@@ -1690,7 +1704,7 @@ export class Stet {
     };
     for (const it of created) await this.store.putItem(it);
     await this.store.putChangeset(changeset);
-    await this.store.appendEvent({ type: "items_submitted", agent: agent.id, items: created.map((i) => i.id), data: { changeset: csId } });
+    await this.store.appendEvent({ type: "items_submitted", agent: agent.id, items: created.map((i) => i.id), data: { changeset: changeset.id } });
     for (const id of result.repeats) {
       const it = byId.get(id)!;
       await this.store.appendEvent({
@@ -1733,7 +1747,7 @@ export class Stet {
       const stale: Item[] = [];
       const baseTexts = new Map<string, string>();
       for (const { item, reason } of res.failed) {
-        await this.markStale(item, reason, base);
+        await this.markStale(item, reason, { againstRev: base });
         stale.push(item);
       }
       for (const { item, span } of res.applied) {
@@ -1771,8 +1785,10 @@ export class Stet {
     });
   }
 
-  private async markStale(item: Item, reason: string, againstRev?: string) {
-    this.setStatus(item, "stale", "stet", reason);
+  /** `staleBy`: the item whose accept made this one stale (undoing it makes this one pending again). */
+  private async markStale(item: Item, reason: string, opts: { againstRev?: string; staleBy?: string } = {}) {
+    const againstRev = opts.againstRev;
+    this.setStatus(item, "stale", "stet", reason, opts.staleBy ? { staleBy: opts.staleBy } : {});
     await this.store.putItem(item);
     let current: string | undefined;
     if (againstRev && item.kind === "modify") {
@@ -2031,7 +2047,7 @@ export class Stet {
     const out: Item[] = [];
     for (const id of ids) {
       const it = await this.store.getItem(id.toUpperCase());
-      if (!it) throw new StetError(`Unknown item '${id}'.`);
+      if (!it) throw notFound(`Unknown item '${id}'.`);
       out.push(it);
     }
     return out;
@@ -2145,7 +2161,7 @@ export class Stet {
   async groupTarget(id: string): Promise<{ group: Group; part: GroupPart | null; pending: string[] }> {
     const pid = parsePartId(id);
     const g = await this.store.getGroup(pid ? pid.group : id.trim().toUpperCase());
-    if (!g) throw new StetError(`Unknown group '${id}'.`);
+    if (!g) throw notFound(`Unknown group '${id}'.`);
     const part = pid ? (g.parts?.[pid.index] ?? null) : null;
     if (pid && !part) throw new StetError(`${g.id} has ${g.parts?.length ? `only ${g.parts.length} parts` : "no parts"}.`);
     const pending: string[] = [];
@@ -2208,16 +2224,17 @@ export class Stet {
     return { cfg, items, warnings, missing, overrides, res };
   }
 
-  private static failedMessage(failed: { item: Item; reason: string }[]): string {
-    const lost = failed.filter((f) => /can't be located/.test(f.reason)).map((f) => f.item.id);
-    return (
+  /** The error of an accept that applied nothing, with the changes that can't be located any more. */
+  private static notApplied(failed: AcceptFailure[]): StetError {
+    const lost = failed.filter((f) => f.lost).map((f) => f.item.id);
+    const message =
       `Nothing was applied, because ${failed.length === 1 ? "a change" : "some changes"} could not be applied:\n` +
       failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n") +
       // What to do next, for a change whose words were edited meanwhile (test report v0.16.0, UX).
       (lost.length
         ? `\nYou edited ${lost.length > 1 ? "their" : "its"} text or the text around ${lost.length > 1 ? "them" : "it"} since (${lost.join(", ")}): reject ${lost.length > 1 ? "them" : "it"}, or ask the agent for a revision against your current text.`
-        : "")
-    );
+        : "");
+    return new StetError(message, { code: "not_applied", lost });
   }
 
   /**
@@ -2242,7 +2259,7 @@ export class Stet {
         blobId: (p) => disk.blobId(p),
       };
       const { res } = await this.planAccept(ids, opts, view);
-      if (res.failed.length) throw new StetError(Stet.failedMessage(res.failed));
+      if (res.failed.length) throw Stet.notApplied(res.failed);
     });
   }
 
@@ -2265,7 +2282,7 @@ export class Stet {
           f.item.acceptFailed = { at: now(), reason: f.reason };
           await this.store.putItem(f.item);
         }
-        throw new StetError(Stet.failedMessage(res.failed));
+        throw Stet.notApplied(res.failed);
       }
 
       // Other live items overlapping what we accept become stale.
@@ -2293,7 +2310,7 @@ export class Stet {
       const decision = randomUUID();
       for (const a of res.applied) {
         const edited = editedOf(a);
-        this.setStatus(a.item, "accepted", "user", undefined, decision);
+        this.setStatus(a.item, "accepted", "user", undefined, { decision });
         delete a.item.acceptFailed;
         delete a.item.draft;
         a.item.resolution = { appliedText: appliedText(a), edited, committed: null, headBlob: headBlobs.get(a.item.file) ?? null };
@@ -2306,7 +2323,10 @@ export class Stet {
         });
       }
       await rm(this.journalPath, { force: true });
-      for (const s of stale) await this.markStale(s, `overlaps accepted ${res.applied.find((a) => a.item.file === s.file)!.item.id}`);
+      for (const s of stale) {
+        const by = res.applied.find((a) => a.item.file === s.file)!.item.id;
+        await this.markStale(s, `overlaps accepted ${by}`, { staleBy: by });
+      }
 
       let committed: string | null = null;
       if (wantCommit) {
@@ -2382,12 +2402,13 @@ export class Stet {
         throw new StetError(
           `${items.map((i) => i.id).join(", ")} is linked with ${rest.map((m) => m.id).join(", ")}. ` +
             `Choose: reject all of them, reject this one and request revision of the rest, or reject only this one.`,
+          { code: "linked" },
         );
       }
       const toReject = opts.mode === "all" ? [...items, ...rest] : items;
       const decision = randomUUID();
       for (const it of toReject) {
-        this.setStatus(it, "rejected", "user", opts.reason, decision);
+        this.setStatus(it, "rejected", "user", opts.reason, { decision });
         delete it.draft;
         if (opts.reason) it.thread.push({ at: now(), author: "user", text: `Rejected: ${opts.reason}` });
         await this.store.putItem(it);
@@ -2471,7 +2492,7 @@ export class Stet {
     {
       const committed = unit.find((i) => i.resolution?.committed);
       if (committed) {
-        const c = committed.resolution!.committed!.replace(/^external:/, "");
+        const c = committed.resolution!.committed!;
         throw new StetError(`${committed.id} is committed already (${c.slice(0, 8)}): Stet can't undo it any more. Revert it with git if you need to.`);
       }
       const cfg = await this.config();
@@ -2537,12 +2558,12 @@ export class Stet {
       for (const it of unit) await this.reopen(it, "accept undone", "accepted");
       await rm(this.journalPath, { force: true });
 
-      // Items the accept made stale (`overlaps accepted <id>`) are pending again.
+      // Items the accept made stale are pending again.
       const ids = new Set(unit.map((i) => i.id));
       const restored: Item[] = [];
       for (const it of await this.store.items()) {
         const last = it.history[it.history.length - 1];
-        const by = last?.note?.match(/^overlaps accepted (\S+)$/)?.[1];
+        const by = last?.staleBy;
         if (it.status !== "stale" || !by || !ids.has(by)) continue;
         await this.reopen(it, `the accept of ${by} was undone`, "stale");
         restored.push(it);
@@ -2638,7 +2659,7 @@ export class Stet {
    */
   async preview(id: string): Promise<PreviewResult> {
     const item = await this.store.getItem(id.toUpperCase());
-    if (!item) throw new StetError(`Unknown item '${id}'.`);
+    if (!item) throw notFound(`Unknown item '${id}'.`);
     await this.previewStatus();
     const cfg = await this.config();
     // Changes to the text of the document's own source files (the typesetter's: .tex files).
@@ -2791,7 +2812,7 @@ export class Stet {
   async setDraft(id: string, text: string): Promise<boolean> {
     return this.store.withLock(async () => {
       const it = await this.store.getItem(id.toUpperCase());
-      if (!it) throw new StetError(`Unknown change '${id}'.`);
+      if (!it) throw notFound(`Unknown change '${id}'.`);
       if (it.kind !== "modify") throw new StetError(`${it.id} changes a whole file; it can only be accepted or rejected.`);
       if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status} already; there is no wording to change.`);
       const lf = toLf(text);
@@ -2855,7 +2876,7 @@ export class Stet {
   }
 
   private async requestRevisionLocked(it: Item, text: string, decision?: string) {
-    this.setStatus(it, "needs_revision", "user", undefined, decision);
+    this.setStatus(it, "needs_revision", "user", undefined, { decision });
     it.thread.push({ at: now(), author: "user", text });
     await this.store.putItem(it);
     await this.store.appendEvent({ type: "revision_requested", agent: it.agent, items: [it.id], data: { item: await this.describe(it), comment: text } });
@@ -3048,7 +3069,7 @@ export class Stet {
   async ungroup(groupId: string, agentId?: string): Promise<void> {
     await this.store.withLock(async () => {
       const g = await this.store.getGroup(groupId.toUpperCase());
-      if (!g) throw new StetError(`Unknown group '${groupId}'.`);
+      if (!g) throw notFound(`Unknown group '${groupId}'.`);
       if (agentId && g.agent !== agentId) throw new StetError(`${g.id} belongs to ${g.agent}.`);
       for (const i of g.items) {
         const it = await this.store.getItem(i);
@@ -3119,7 +3140,7 @@ export class Stet {
 
   async getNote(id: string): Promise<Note> {
     const n = await this.store.getNote(id.trim().toUpperCase());
-    if (!n) throw new StetError(`Unknown note '${id}'.`);
+    if (!n) throw notFound(`Unknown note '${id}'.`);
     return n;
   }
 
@@ -3194,7 +3215,7 @@ export class Stet {
       // Note events before the note was delivered are part of the delivery itself (§7.8).
       const early = (e: StetEvent) => {
         if (e.type !== "note_comment" && e.type !== "note_resolved" && e.type !== "note_reopened") return false;
-        const n = notes.get(String(e.data?.note ?? ""));
+        const n = notes.get(e.data.note);
         return !n?.deliveredAt || e.at <= n.deliveredAt;
       };
       const mine = all.filter((e) => e.agent === agentId && FEEDBACK_TYPES.includes(e.type) && !early(e));

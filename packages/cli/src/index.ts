@@ -44,6 +44,7 @@ import {
   type NoteHint,
   type NotifyMode,
   type NotifyTrigger,
+  notFound,
   notifyMode,
   notifyTriggers,
   oneLine,
@@ -62,6 +63,7 @@ import {
   serveStdio,
   summaryTexts,
   uninstallHooks,
+  usageError,
   verifyAgentWorktree,
 } from "@stet/core";
 
@@ -348,7 +350,7 @@ function statusOption(v: string): ItemStatus[] {
     .map((s) => s.trim())
     .filter(Boolean);
   const bad = out.filter((s) => !STATUSES.includes(s as ItemStatus));
-  if (bad.length) throw new StetError(`Unknown status ${bad.map((b) => `'${b}'`).join(", ")} (use ${STATUSES.join(", ")}).`);
+  if (bad.length) throw usageError(`Unknown status ${bad.map((b) => `'${b}'`).join(", ")} (use ${STATUSES.join(", ")}).`);
   return out as ItemStatus[];
 }
 
@@ -357,12 +359,12 @@ async function agentOption(stet: Stet): Promise<string | undefined> {
   if (!opt.agent) return undefined;
   const all = await stet.listAgents();
   if (!all.some((a) => a.id === opt.agent))
-    throw new StetError(`Unknown agent '${opt.agent}'${all.length ? ` (there are: ${all.map((a) => a.id).join(", ")})` : " (there are no agents yet)"}.`);
+    throw notFound(`Unknown agent '${opt.agent}'${all.length ? ` (there are: ${all.map((a) => a.id).join(", ")})` : " (there are no agents yet)"}.`);
   return opt.agent;
 }
 
 function need(v: string | undefined, what: string): string {
-  if (!v) throw new StetError(`Missing ${what}.`);
+  if (!v) throw usageError(`Missing ${what}.`);
   return v;
 }
 
@@ -373,7 +375,7 @@ const isRoundId = (s: string) => /^C\d+$/i.test(s);
 /** A round's (C3) pending changes, for accepting or rejecting it whole (test report UX: "Unknown item 'C1'"). */
 async function roundItems(stet: Stet, id: string): Promise<string[]> {
   const cs = (await stet.listChangesets()).find((c) => c.id === id.toUpperCase());
-  if (!cs) throw new StetError(`Unknown changeset ${id.toUpperCase()}.`);
+  if (!cs) throw notFound(`Unknown changeset ${id.toUpperCase()}.`);
   const ids = (await stet.listItems({ changeset: cs.id })).filter((i) => isLive(i.status)).map((i) => i.id);
   if (!ids.length) throw new StetError(`${cs.id} has no pending changes.`);
   return ids;
@@ -555,7 +557,7 @@ async function main() {
         ["mcp", "remove", "stet"],
         ["mcp", "add", "stet", ...envFlags("--env"), "--", ...server],
       ];
-    } else throw new StetError("Usage: stet setup claude|codex [--print]");
+    } else throw usageError("Usage: stet setup claude|codex [--print]");
     const add = steps[1]!;
     const shown = [tool, ...add].map(winQuote).join(" ");
     if (opt.print) return console.log(shown);
@@ -696,7 +698,7 @@ async function main() {
                   .filter(Boolean) as NotifyTrigger[]),
           );
         const a = (await stet.listAgents()).find((x) => x.id === id);
-        if (!a) throw new StetError(`Unknown agent '${id}'.`);
+        if (!a) throw notFound(`Unknown agent '${id}'.`);
         const on = notifyTriggers(a);
         return out(
           () =>
@@ -708,7 +710,7 @@ async function main() {
         await stet.pingAgent(need(name, "agent name"), opt.message);
         return out(() => `Asked ${bold(name!)} to check in now (if it is watching).`, { ok: true });
       }
-      throw new StetError("Usage: stet agent new|list|refresh|archive|notify|ping <name>");
+      throw usageError("Usage: stet agent new|list|refresh|archive|notify|ping <name>");
     }
 
     case "hooks": {
@@ -838,7 +840,7 @@ async function main() {
       }
       if (id.startsWith("C")) {
         const cs = (await stet.listChangesets()).find((x) => x.id === id);
-        if (!cs) throw new StetError(`Unknown changeset ${id}.`);
+        if (!cs) throw notFound(`Unknown changeset ${id}.`);
         const items = await stet.listItems({ changeset: id });
         return out(
           () =>
@@ -849,7 +851,7 @@ async function main() {
         );
       }
       const it = await stet.getItem(id);
-      if (!it) throw new StetError(`Unknown item ${id}.`);
+      if (!it) throw notFound(`Unknown item ${id}.`);
       const { line } = await stet.locateInWorkingCopy(it);
       const moveItems = it.move ? await Promise.all([...moveFrom(it.move), ...moveTo(it.move)].map((id) => stet.getItem(id))) : [];
       const moved = it.move ? moveTexts(it.move, (id) => moveItems.find((m) => m?.id === id) ?? undefined) : null;
@@ -894,7 +896,7 @@ async function main() {
     }
 
     case "accept": {
-      if (!args.length) throw new StetError("Usage: stet accept <12.3|G3|C12>...");
+      if (!args.length) throw usageError("Usage: stet accept <12.3|G3|C12>...");
       const commit = opt["no-commit"] ? false : opt.commit ? true : undefined;
       const edited: Record<string, string> = {};
       const text = opt["text-file"] ? await readFile(opt["text-file"], "utf8") : opt.text;
@@ -925,7 +927,7 @@ async function main() {
     }
 
     case "reject": {
-      if (!args.length) throw new StetError("Usage: stet reject <12.3|G3|C12>... [-m reason]");
+      if (!args.length) throw usageError("Usage: stet reject <12.3|G3|C12>... [-m reason]");
       const mode = opt.all ? "all" : opt["revise-rest"] ? "revise-rest" : opt.only ? "only" : undefined;
       let ids: string[] = [];
       for (const a of args) {
@@ -942,8 +944,8 @@ async function main() {
         const warnings = await stet.partlyDecided(rejected);
         return out(() => [`${red("Rejected")} ${rejected.map((i) => i.id).join(", ")}`, ...warnings.map((w) => yellow("! ") + w)].join("\n"), rejected);
       } catch (e) {
-        if (e instanceof StetError && /is linked with/.test(e.message)) {
-          throw new StetError(e.message + "\n  Use --all, --revise-rest or --only.");
+        if (e instanceof StetError && e.code === "linked") {
+          throw new StetError(e.message + "\n  Use --all, --revise-rest or --only.", { code: "linked" });
         }
         throw e;
       }
@@ -1001,7 +1003,7 @@ async function main() {
     }
 
     case "undo": {
-      if (!args.length) throw new StetError("Usage: stet undo <12.3>");
+      if (!args.length) throw usageError("Usage: stet undo <12.3>");
       const r = await stet.undo(args[0]!);
       return out(
         () =>
@@ -1180,7 +1182,7 @@ async function main() {
       const id = await agentId(stet);
       if (isNoteId(need(args[0], "item or note id"))) {
         const n = await stet.getNote(args[0]!);
-        if (n.agent !== id || !n.deliveredAt) throw new StetError(`Unknown note ${args[0]}.`);
+        if (n.agent !== id || !n.deliveredAt) throw notFound(`Unknown note ${args[0]}.`);
         await stet.replyNote(n.id, need(opt.message, "-m <text>"), "agent");
         return out(() => `Replied on ${n.id}.`, { ok: true });
       }
@@ -1196,7 +1198,7 @@ async function main() {
     }
 
     default:
-      throw new StetError(`Unknown command '${cmd}'. Run \`stet --help\`.`);
+      throw notFound(`Unknown command '${cmd}'. Run \`stet --help\`.`);
   }
 }
 
@@ -1204,11 +1206,7 @@ main().catch((e) => {
   if (e instanceof StetError) {
     if (opt.json) console.log(JSON.stringify({ error: e.message }));
     else console.error(forTerminal(red("error: ") + e.message));
-    process.exitCode = /^(Usage: |Missing |Unknown status )/.test(e.message)
-      ? EXIT.usage
-      : /^Unknown (item|group|changeset|agent|note|command)\b/.test(e.message)
-        ? EXIT.unknown
-        : EXIT.error;
+    process.exitCode = e.code === "usage" ? EXIT.usage : e.code === "not_found" ? EXIT.unknown : EXIT.error;
   } else {
     // Not Stet's own error: the message, and the stack only when asked for.
     console.error(

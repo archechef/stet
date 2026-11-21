@@ -147,6 +147,20 @@ export interface ThreadEntry {
   text: string;
 }
 
+/**
+ * One status change of an item. `decision`: the reviewer's accept or reject this came from, shared
+ * by everything it decided (undone together). `staleBy`: the accepted item whose accept made this
+ * one stale, so undoing that accept makes it pending again.
+ */
+export interface HistoryEntry {
+  at: string;
+  status: ItemStatus;
+  by: "user" | "agent" | "stet";
+  note?: string;
+  decision?: string;
+  staleBy?: string;
+}
+
 export interface Item {
   id: string;
   agent: string;
@@ -175,7 +189,10 @@ export interface Item {
   resolution: {
     appliedText: string;
     edited: boolean;
+    /** The commit on the main branch that holds it; null while it is only in the working copy. */
     committed: string | null;
+    /** That commit holds your own version of the change (you edited it before committing by hand), not the change as accepted. */
+    committedWithEdits?: true;
     /**
      * The file's blob in main HEAD when the item was accepted (null: absent). Once HEAD's file
      * differs, the user has committed it, with this change or their later edits of it.
@@ -185,8 +202,7 @@ export interface Item {
   } | null;
   supersedes: string | null;
   conflictsWith: string[];
-  /** `decision`: the reviewer's accept or reject this came from, shared by everything it decided (undone together). */
-  history: { at: string; status: ItemStatus; by: "user" | "agent" | "stet"; note?: string; decision?: string }[];
+  history: HistoryEntry[];
   thread: ThreadEntry[];
   /** Part of a move (spec §6.4.7), on every item of it: they are accepted or rejected together. */
   move?: MoveInfo;
@@ -250,41 +266,56 @@ export interface Note {
 
 export const isNoteId = (id: string): boolean => /^N\d+$/i.test(id.trim());
 
-export type EventType =
-  | "items_submitted"
-  | "accepted"
-  | "rejected"
-  | "revision_requested"
-  | "comment"
-  | "reply"
-  | "stale"
-  | "repeat_rejected"
-  | "group_broken"
-  | "group_partial"
-  | "withdrawn"
-  | "superseded"
-  | "synced"
-  | "archived"
-  | "note_added"
-  /** The reviewer wrote in a delivered note's thread. */
-  | "note_comment"
-  /** The agent replied to a note. */
-  | "note_reply"
-  | "note_resolved"
-  /** The reviewer opened a resolved note again. */
-  | "note_reopened"
-  /** The reviewer undid a decision: the item is pending again. */
-  | "reopened";
-
-export interface StetEvent {
-  seq: number;
-  at: string;
-  type: EventType;
-  agent: string;
-  items?: string[];
-  group?: string;
-  data?: Record<string, unknown>;
+/** An item as events describe it: where it is, and its text (cut at 400 characters). */
+export interface ItemBrief {
+  id: string;
+  file: string;
+  line: number;
+  kind: ItemKind;
+  oldText: string;
+  newText: string;
 }
+
+/** A part of a linked group in a `group_partial` event, and how it was decided. */
+export interface PartOutcome {
+  id: string;
+  title: string;
+  outcome: ItemStatus;
+  items: string[];
+}
+
+/** What an event is about, by its type. */
+export type EventPayload =
+  | { type: "items_submitted"; data: { changeset: string } }
+  | { type: "accepted"; data: { item: ItemBrief; finalText?: string } }
+  /** `acceptFailed`: why the reviewer's attempt to accept it failed, when they rejected it after that. */
+  | { type: "rejected"; data: { item: ItemBrief; reason?: string; acceptFailed?: string } }
+  | { type: "revision_requested"; data: { item: ItemBrief; comment: string } }
+  /** The reviewer ("comment") or the agent ("reply") wrote in an item's thread. */
+  | { type: "comment" | "reply"; data: { item: ItemBrief; text: string } }
+  | { type: "stale"; data: { item: ItemBrief; reason: string; currentText?: string } }
+  /** `previous`: the history note of the rejection it repeats. */
+  | { type: "repeat_rejected"; data: { item: ItemBrief; previous?: string } }
+  | { type: "group_broken"; data: { title: string; members: { id: string; status: ItemStatus; file: string }[] } }
+  | { type: "group_partial"; data: { title: string; parts: PartOutcome[] } }
+  | { type: "withdrawn"; data: { reason?: string } }
+  /** Written by older versions only. */
+  | { type: "superseded"; data?: Record<string, unknown> }
+  | { type: "synced"; data: { base: string; stale: string[] } }
+  | { type: "archived"; data: { worktreeRemoved: boolean } }
+  | { type: "note_added" | "note_resolved" | "note_reopened"; data: { note: string; file: string } }
+  /** The reviewer ("note_comment") or the agent ("note_reply") wrote in a delivered note's thread. */
+  | { type: "note_comment" | "note_reply"; data: { note: string; file: string; text: string } }
+  /** The reviewer undid a decision: the item is pending again. `was`: its status before. */
+  | { type: "reopened"; data: { item: ItemBrief; was: ItemStatus } };
+
+export type EventType = EventPayload["type"];
+
+/** An event as written: its payload, and what it concerns. */
+export type NewEvent = EventPayload & { agent: string; items?: string[]; group?: string };
+
+/** An event in the store's log (`events.jsonl`). */
+export type StetEvent = NewEvent & { seq: number; at: string };
 
 /** Event types an agent receives from `feedback`. */
 export const FEEDBACK_TYPES: readonly EventType[] = [
@@ -350,4 +381,22 @@ export function compareItemIds(a: string, b: string): number {
   const [ra, na] = idKey(a);
   const [rb, nb] = idKey(b);
   return ra - rb || na - nb || a.localeCompare(b);
+}
+
+/**
+ * An item as stored by an older Stet, in today's shape: a commit made by hand was kept as
+ * `external:<commit>`, and an item made stale by an accept said so only in its history note.
+ * The store applies it to every item it reads.
+ */
+export function upgradeItem(it: Item): Item {
+  const r = it.resolution;
+  if (r?.committed?.startsWith("external:")) {
+    r.committed = r.committed.slice("external:".length);
+    r.committedWithEdits = true;
+  }
+  for (const h of it.history ?? []) {
+    const by = h.status === "stale" && !h.staleBy ? h.note?.match(/^overlaps accepted (\S+)$/)?.[1] : undefined;
+    if (by) h.staleBy = by;
+  }
+  return it;
 }

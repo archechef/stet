@@ -34,7 +34,9 @@ describe("accepted binary replacements (Codex review 2026-09, F6)", () => {
     git(repo, "add", "new.tex");
     git(repo, "commit", "-qm", "mine");
     await stet.agentStatus("a");
-    expect((await stet.getItem(item!.id))!.resolution!.committed).toMatch(/^external:/);
+    const r = (await stet.getItem(item!.id))!.resolution!;
+    expect(r.committed).toBe(git(repo, "rev-parse", "HEAD"));
+    expect(r.committedWithEdits).toBe(true);
   });
 });
 

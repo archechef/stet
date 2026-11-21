@@ -107,6 +107,7 @@ Fixes from the test report of Stet v0.16.0 (2026-11-20, three testers, VS Code f
 - The PDF preview's title names the project in a window with several; the Reject… CodeLens has a tooltip.
 - Setting texts match what is shown (`stet.codeLens`, `stet.longChanges`, `stet.shareEdits`).
 
+- **Internal: no logic reads message text any more.** Errors carry a code (`usage`, `not_found`, `not_applied`, `linked`), which sets the command line's exit code, adds the advice to a refused reject, and gives VS Code's failed accept its Reject… and Revise… buttons. An accept by hand is stored as `committedWithEdits`, and a change an accept made stale names that accept (`staleBy`); older stores are read in this shape. Events have one typed payload per kind. `stet` exits with 3 for an unknown change id (`Unknown change '9.9'`) too, like for other unknown ids.
 - **Internal: tests sorted by topic.** Test files are named after what they test (undo, linked groups, paths and links, the MCP server, …) instead of the report that found a bug; each regression test names its report and finding.
 - **Internal: language profiles.** Everything Stet knows about LaTeX and BibTeX (tokens, structure, maths, labels, citations, macros, included files, and PDF previews with latexmk and SyncTeX) is now in one place per language, `packages/core/src/lang/`, and the rest of Stet asks the file's profile. Nothing changes in use: same items, groups, parts and previews, and `config.json` keeps its shape. This is the groundwork for other document languages (Typst).
 

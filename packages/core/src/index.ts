@@ -2,7 +2,7 @@ export { anchor } from "./anchor.js";
 export * from "./config.js";
 export { type DoctorCheck, doctor } from "./doctor.js";
 export { effectOf, itemEffect } from "./effects.js";
-export { StetError } from "./errors.js";
+export { type ErrorCode, notFound, StetError, usageError } from "./errors.js";
 export { gitIdentity, Repo } from "./git.js";
 export type { GroupHint, NoteHint } from "./grouping.js";
 export { checkToolUse, type GuardContext, type HookInput } from "./guard.js";

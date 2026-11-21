@@ -7,7 +7,18 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { configDelta, defaultConfig, mergeConfig, type StetConfig, validateConfig } from "./config.js";
 import { StetError } from "./errors.js";
-import { type Agent, type Changeset, compareItemIds, type Group, type Item, type Note, type StetEvent, type StoreState } from "./model.js";
+import {
+  type Agent,
+  type Changeset,
+  compareItemIds,
+  type Group,
+  type Item,
+  type NewEvent,
+  type Note,
+  type StetEvent,
+  type StoreState,
+  upgradeItem,
+} from "./model.js";
 import { pathExists } from "./paths.js";
 
 /**
@@ -62,6 +73,11 @@ const lockContext = new AsyncLocalStorage<Store>();
 export const CHANGED_FILE = "changed";
 
 type Kind = "agents" | "changesets" | "groups" | "items" | "notes";
+
+/** A record as read from disk, in today's shape (see `upgradeItem`). */
+function upgrade<T>(kind: Kind, v: T): T {
+  return kind === "items" && v ? (upgradeItem(v as unknown as Item) as T) : v;
+}
 
 /** Item, group, changeset and agent ids: a name, never a path. */
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -258,7 +274,7 @@ export class Store {
     if (!SAFE_ID.test(id)) return null;
     const c = this.cached(kind);
     if (c) return c.has(id) ? structuredClone(c.get(id) as T) : null;
-    return readJson<T>(join(this.dir(kind), `${id}.json`));
+    return upgrade(kind, await readJson<T>(join(this.dir(kind), `${id}.json`)));
   }
 
   private async list<T>(kind: Kind): Promise<T[]> {
@@ -282,7 +298,7 @@ export class Store {
             }),
           ),
         );
-        for (const v of batch) if (v && typeof (v as any).id === "string") records.set((v as any).id, v);
+        for (const v of batch) if (v && typeof (v as any).id === "string") records.set((v as any).id, upgrade(kind, v));
       }
       if (lockContext.getStore() === this && this.session) this.session.set(kind, records);
     }
@@ -362,7 +378,7 @@ export class Store {
   };
 
   /** Append an event. Call while holding the lock. */
-  async appendEvent(e: Omit<StetEvent, "seq" | "at">): Promise<StetEvent> {
+  async appendEvent(e: NewEvent): Promise<StetEvent> {
     const s = await this.state();
     const ev: StetEvent = { seq: s.nextEvent, at: new Date().toISOString(), ...e };
     s.nextEvent++;

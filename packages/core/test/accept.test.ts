@@ -4,6 +4,7 @@ import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { effectOf } from "../src/effects.js";
+import { StetError } from "../src/errors.js";
 import { edit, PAPER, read, setup, write } from "./helpers.js";
 
 const sha = (s: string) => createHash("sha256").update(Buffer.from(s)).digest("hex");
@@ -155,5 +156,38 @@ describe("an accept that will fail is known before the editor saves (test report
     // Unsaved edits elsewhere in the file don't stop it; nor do the linked-group checks differ from accept's.
     await stet.checkAccept([id], { unsaved: { "main.tex": LINES.replace("Line 1 ", "Line one ") } });
     await stet.checkAccept([id]);
+  });
+});
+
+describe("what a failed accept says, for code to act on (code quality report 6a517ae)", () => {
+  it("names the changes that can't be located, without its message being read", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", { title: "t" });
+    edit(repo, "main.tex", "$a+b=c$", "$a + b = c$");
+    const e = await stet.accept([items[0]!.id]).catch((x) => x);
+    expect(e).toBeInstanceOf(StetError);
+    expect(e.code).toBe("not_applied");
+    expect(e.lost).toEqual([items[0]!.id]);
+  });
+
+  it("tells an unknown id, and a linked change rejected alone, apart from other failures", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem of reviewing", "the task of reviewing");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    const { items } = await stet.submit("a", { title: "t" });
+    await stet.group(
+      "a",
+      items.map((i) => i.id),
+      "linked",
+      "Together",
+      undefined,
+      undefined,
+      "they go together",
+    );
+    expect(await stet.accept(["9.9"]).catch((x) => x.code)).toBe("not_found");
+    expect(await stet.reject([items[0]!.id]).catch((x) => x.code)).toBe("linked");
   });
 });

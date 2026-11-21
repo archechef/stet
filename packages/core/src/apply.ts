@@ -17,10 +17,17 @@ export interface FileView {
 
 export type FileChange = TextFile | { blob: string } | null;
 
+/** A change that could not be applied, and why. `lost`: it can't be located in its file any more (the text around it was edited). */
+export interface AcceptFailure {
+  item: Item;
+  reason: string;
+  lost?: true;
+}
+
 export interface ApplyResult {
   changes: Map<string, FileChange>;
   applied: { item: Item; span: Span; text: string }[];
-  failed: { item: Item; reason: string }[];
+  failed: AcceptFailure[];
 }
 
 export interface ApplyOptions {
@@ -35,7 +42,7 @@ export interface ApplyOptions {
 /** Locate every item in `view`. Items that can't be located are reported as failed. */
 export async function locate(items: Item[], view: FileView, opts: ApplyOptions) {
   const located: { item: Item; span: Span }[] = [];
-  const failed: { item: Item; reason: string }[] = [];
+  const failed: AcceptFailure[] = [];
   // Read each file once, however many of its items are located.
   const files = new Map<string, Promise<TextFile | null>>();
   const read = (p: string) => {
@@ -54,7 +61,7 @@ export async function locate(items: Item[], view: FileView, opts: ApplyOptions) 
     }
     const span = anchorNear(item, f.text, await opts.refText(item), opts.neighbours ? await opts.neighbours(item) : []);
     if (span) located.push({ item, span });
-    else failed.push({ item, reason: "the surrounding text changed; the change can't be located" });
+    else failed.push({ item, reason: "the surrounding text changed; the change can't be located", lost: true });
   }
   keepInsertionOrder(located);
   return { located, failed };

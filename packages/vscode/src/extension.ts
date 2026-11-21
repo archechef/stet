@@ -35,6 +35,7 @@ import {
   roundOf,
   type ShareMode,
   Stet,
+  StetError,
 } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, acceptQuestion, type ChangeAction, changeActions, withIcon } from "./actions.js";
@@ -1585,8 +1586,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
    * Revise…, as its More… list does (test report 5e4c6af). False for other failures.
    */
   private offerInstead(p: Project, ids: string[], e: unknown): boolean {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (ids.length !== 1 || !/can't be located/.test(msg)) return false;
+    if (ids.length !== 1 || !(e instanceof StetError) || !e.lost.includes(ids[0]!)) return false;
+    const msg = e.message;
     const ref: Ref = { path: p.mainPath, id: ids[0]! };
     void vscode.window.showErrorMessage(noLinks(msg), "Reject…", "Revise…").then((pick) => {
       if (pick) void vscode.commands.executeCommand(pick === "Reject…" ? "stet.reject" : "stet.revise", ref);

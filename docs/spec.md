@@ -178,10 +178,10 @@ A group is `resolved` once all its members are in final states, and `broken` whe
   "note": null,                   // optional per-item rationale from the agent
   "groups": ["G7"],               // groups this item belongs to (§6.4)
   "status": "pending",
-  "resolution": null,             // on accept: { "appliedText": "…", "edited": bool, "committed": "<sha>|null", "headBlob": "<blob of the file in HEAD at the accept>|null" }
+  "resolution": null,             // on accept: { "appliedText": "…", "edited": bool, "committed": "<sha>|null", "committedWithEdits"?: true, "headBlob": "<blob of the file in HEAD at the accept>|null" }
   "supersedes": null,             // item id this revises
   "conflictsWith": [],            // other pending items overlapping the same base range
-  "history": [ { "at": "…", "status": "pending", "by": "stet" } ],
+  "history": [ { "at": "…", "status": "pending", "by": "stet" } ],   // also "note", "decision", and "staleBy": the item whose accept made it stale
   "thread": [ { "at": "…", "author": "user|agent", "text": "…" } ]
 }
 ```
@@ -445,7 +445,7 @@ Uncommitted agent edits count as **drafts** and are never shown for review until
 The snapshot of "saved project files" is taken with a temporary index (a copy of the user's, so git re-reads only changed files; the user's index is never touched): tracked files and files staged with `git add`, as on disk, plus new **TeX/BibTeX** files that `.gitignore` doesn't exclude. Other new files (build output such as `.aux` or `.pdf`) stay out; staging one shares it. Unsaved editor buffers are not included (the extension saves the project's files before sharing). The snapshot requires the project folder to have the main branch checked out. The share is stored in `state.json` as `shared: {head, tree, at}`.
 
 Which accepted items are added on top (fixed 2026-11-12):
-- **Not yet committed** means `HEAD`'s file is still what it was at the accept (`resolution.headBlob`): accepting writes only the working copy. Once the user commits the file, it holds the change or whatever they made of it since (edited, moved, removed), and the item is marked committed. Items accepted before 0.6.1 have no `headBlob`: a commit touching the file after the accept counts; without one, `HEAD`'s file is recorded then.
+- **Not yet committed** means `HEAD`'s file is still what it was at the accept (`resolution.headBlob`): accepting writes only the working copy. Once the user commits the file, it holds the change or whatever they made of it since (edited, moved, removed), and the item is marked committed (`committedWithEdits` when the commit holds the user's own version rather than the change as accepted). Older stores wrote that as `committed: "external:<sha>"`, and an item made stale by an accept as the history note `overlaps accepted <id>` only; the store reads both in today's shape (`upgradeItem`). Items accepted before 0.6.1 have no `headBlob`: a commit touching the file after the accept counts; without one, `HEAD`'s file is recorded then.
 - **On top of shared edits:** the shared edits already hold every item accepted before they were taken, or the user's later version of it, so those items are not added again. With `saved` that is every item; with `manual`, items accepted after the share (`at`) are added. A share from before 0.6.1 has no `at`; its items are added if their old text is found, as before.
 
 `manual` is the default because sharing everything automatically shows agents half-written drafts, which they may "fix" or build proposals on that later go stale. The UI shows when saved edits exist that agents don't see.

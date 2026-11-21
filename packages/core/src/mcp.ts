@@ -4,11 +4,12 @@
  */
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import { notFound } from "./errors.js";
 import type { GroupHint, NoteHint } from "./grouping.js";
 import { InboxWriter } from "./inbox.js";
 import { archivedMessage, mcpInstructions } from "./instructions.js";
 import { documentProfile, type LanguageProfile } from "./lang/index.js";
-import { type GroupKind, type Item, type ItemStatus, isNoteId, moveFrom, moveTo, partId, type StetEvent } from "./model.js";
+import { type GroupKind, type Item, type ItemBrief, type ItemStatus, isNoteId, moveFrom, moveTo, type PartOutcome, partId, type StetEvent } from "./model.js";
 import { describeNote } from "./notes.js";
 import { pathExists } from "./paths.js";
 import { Stet, StetError, type SubmitResult } from "./service.js";
@@ -260,50 +261,69 @@ function sentence(text: string): string {
   return /[.!?…]["'”’)]*$/.test(t) ? t : t + ".";
 }
 
+/** The item an event is about, for the events that are about one. */
+function itemOf(e: StetEvent): ItemBrief | undefined {
+  switch (e.type) {
+    case "accepted":
+    case "rejected":
+    case "revision_requested":
+    case "comment":
+    case "reply":
+    case "stale":
+    case "repeat_rejected":
+    case "reopened":
+      return e.data.item;
+    default:
+      return undefined;
+  }
+}
+
 export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): string {
   const label = style.label ?? ((t: string) => t);
   const reply = style.reply ?? (() => "stet_reply");
-  const d = (e.data ?? {}) as any;
-  const it = d.item
-    ? `${d.item.id} (${d.item.file}:${d.item.line}, "${oneLine(d.item.oldText, 50)}" → "${oneLine(d.item.newText, 50)}")`
-    : (e.items ?? []).join(", ");
+  const item = itemOf(e);
+  const it = item ? `${item.id} (${item.file}:${item.line}, "${oneLine(item.oldText, 50)}" → "${oneLine(item.newText, 50)}")` : (e.items ?? []).join(", ");
   switch (e.type) {
     case "accepted":
-      return `${label("ACCEPTED", "good")} ${it}${d.finalText !== undefined ? `; the reviewer edited it to: "${oneLine(d.finalText, 300)}"` : ""}`;
-    case "rejected":
-      if (d.acceptFailed)
+      return `${label("ACCEPTED", "good")} ${it}${e.data.finalText !== undefined ? `; the reviewer edited it to: "${oneLine(e.data.finalText, 300)}"` : ""}`;
+    case "rejected": {
+      const { reason, acceptFailed } = e.data;
+      if (acceptFailed)
         return (
-          `${label("REJECTED", "bad")} ${sentence(`${it}${d.reason ? `; reason: ${d.reason}` : ""}`)} The reviewer tried to accept it, but it could not be applied ` +
-          `(${d.acceptFailed}): sync, and if it is still wanted, propose it again against the current text.`
+          `${label("REJECTED", "bad")} ${sentence(`${it}${reason ? `; reason: ${reason}` : ""}`)} The reviewer tried to accept it, but it could not be applied ` +
+          `(${acceptFailed}): sync, and if it is still wanted, propose it again against the current text.`
         );
-      return `${label("REJECTED", "bad")} ${sentence(`${it}${d.reason ? `; reason: ${d.reason}` : ""}`)} Do not propose this change again.`;
+      return `${label("REJECTED", "bad")} ${sentence(`${it}${reason ? `; reason: ${reason}` : ""}`)} Do not propose this change again.`;
+    }
     case "revision_requested":
-      return `${label("REVISION REQUESTED", "warn")} for ${it}: ${d.comment}`;
+      return `${label("REVISION REQUESTED", "warn")} for ${it}: ${e.data.comment}`;
     case "comment":
-      return `${label("COMMENT", "info")} on ${it}: ${d.text} (answer with ${reply(d.item?.id ?? "")})`;
+      return `${label("COMMENT", "info")} on ${it}: ${e.data.text} (answer with ${reply(item?.id ?? "")})`;
     case "stale":
-      return `${label("STALE", "warn")} ${it}: ${sentence(String(d.reason))}${d.currentText ? ` Current text around it: "${oneLine(d.currentText, 400)}"` : ""} Re-propose if still relevant.`;
+      return `${label("STALE", "warn")} ${it}: ${sentence(String(e.data.reason))}${e.data.currentText ? ` Current text around it: "${oneLine(e.data.currentText, 400)}"` : ""} Re-propose if still relevant.`;
     case "repeat_rejected":
-      return `${label("AUTO-REJECTED", "bad")} ${it}: it repeats an earlier rejected change (${d.previous}).`;
+      return `${label("AUTO-REJECTED", "bad")} ${it}: it repeats an earlier rejected change (${e.data.previous}).`;
     case "group_broken":
-      return `${label("LINKED GROUP BROKEN", "bad")} ${e.group} "${d.title}": ${(d.members ?? []).map((m: any) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
+      return `${label("LINKED GROUP BROKEN", "bad")} ${e.group} "${e.data.title}": ${(e.data.members ?? []).map((m) => `${m.id}=${m.status}`).join(", ")}. Make the document consistent again.`;
     case "note_comment":
-      return `${label("REVIEWER ON NOTE", "info")} ${d.note} (${d.file}): ${d.text} (answer with ${reply(String(d.note ?? ""))})`;
-    case "reopened":
-      if (d.was === "needs_revision") return `${label("PENDING AGAIN", "info")} ${it}: the reviewer took back the request to revise it. Nothing to do.`;
-      return d.was === "stale"
+      return `${label("REVIEWER ON NOTE", "info")} ${e.data.note} (${e.data.file}): ${e.data.text} (answer with ${reply(String(e.data.note ?? ""))})`;
+    case "reopened": {
+      const was = e.data.was;
+      if (was === "needs_revision") return `${label("PENDING AGAIN", "info")} ${it}: the reviewer took back the request to revise it. Nothing to do.`;
+      return was === "stale"
         ? `${label("PENDING AGAIN", "info")} ${it}: it was stale because of an accept the reviewer has undone. Nothing to do.`
-        : `${label("REOPENED", "info")} ${it}: the reviewer undid ${d.was === "accepted" ? "accepting" : "rejecting"} it; it is pending again${d.was === "accepted" ? " and no longer part of the document" : ""}. Nothing to do.`;
+        : `${label("REOPENED", "info")} ${it}: the reviewer undid ${was === "accepted" ? "accepting" : "rejecting"} it; it is pending again${was === "accepted" ? " and no longer part of the document" : ""}. Nothing to do.`;
+    }
     case "note_reopened":
-      return `${label("NOTE REOPENED", "info")} ${d.note} (${d.file}): the reviewer opened it again; it still needs your attention.`;
+      return `${label("NOTE REOPENED", "info")} ${e.data.note} (${e.data.file}): the reviewer opened it again; it still needs your attention.`;
     case "note_resolved":
-      return `${label("NOTE RESOLVED", "good")} ${d.note} (${d.file}): the reviewer closed it.`;
+      return `${label("NOTE RESOLVED", "good")} ${e.data.note} (${e.data.file}): the reviewer closed it.`;
     case "group_partial": {
-      const ps = (d.parts ?? []) as { id: string; title: string; outcome: string; items: string[] }[];
-      const list = (xs: typeof ps) =>
+      const ps = e.data.parts ?? [];
+      const list = (xs: PartOutcome[]) =>
         xs.map((p) => `${p.id} "${p.title}" (${p.items.join(", ")}${p.outcome === "accepted" ? "" : `: ${p.outcome}`})`).join("; ");
       return (
-        `${label("LINKED GROUP PARTLY ACCEPTED", "warn")} ${e.group} "${d.title}": accepted ${list(ps.filter((p) => p.outcome === "accepted"))}; ` +
+        `${label("LINKED GROUP PARTLY ACCEPTED", "warn")} ${e.group} "${e.data.title}": accepted ${list(ps.filter((p) => p.outcome === "accepted"))}; ` +
         `not accepted ${list(ps.filter((p) => p.outcome !== "accepted"))}. The document compiles but may be inconsistent: propose what makes it consistent again.`
       );
     }
@@ -534,7 +554,7 @@ export class StetMcpServer {
           const id = String(args.id ?? "").toUpperCase();
           if (isNoteId(id)) {
             const n = await stet.getNote(id);
-            if (n.agent !== agent || !n.deliveredAt) throw new StetError(`Unknown note ${id}.`);
+            if (n.agent !== agent || !n.deliveredAt) throw notFound(`Unknown note ${id}.`);
             return text(
               [
                 `${n.id} [${n.state}] ${n.file}: ${n.body}`,
@@ -545,7 +565,7 @@ export class StetMcpServer {
           }
           if (id.startsWith("G")) {
             const g = await stet.store.getGroup(id);
-            if (!g || g.agent !== agent) throw new StetError(`Unknown group ${id}.`);
+            if (!g || g.agent !== agent) throw notFound(`Unknown group ${id}.`);
             const members = (await Promise.all(g.items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
             const lines = [`${g.id} ${g.kind} "${g.title}" (${g.state})`, g.rationale ?? ""];
             if (g.parts) {
@@ -556,7 +576,7 @@ export class StetMcpServer {
             return text(lines.filter(Boolean).join("\n"));
           }
           const it = await stet.getItem(id);
-          if (!it || it.agent !== agent) throw new StetError(`Unknown item ${id}.`);
+          if (!it || it.agent !== agent) throw notFound(`Unknown item ${id}.`);
           return text(
             [
               itemLine(it),
@@ -575,12 +595,12 @@ export class StetMcpServer {
         case "stet_reply": {
           if (isNoteId(String(args.itemId ?? ""))) {
             const n = await stet.getNote(String(args.itemId));
-            if (n.agent !== agent || !n.deliveredAt) throw new StetError(`Unknown note ${args.itemId}.`);
+            if (n.agent !== agent || !n.deliveredAt) throw notFound(`Unknown note ${args.itemId}.`);
             await stet.replyNote(n.id, String(args.text ?? ""), "agent");
             return text(`Replied on ${n.id}.`);
           }
           const it = await stet.getItem(String(args.itemId ?? "").toUpperCase());
-          if (!it) throw new StetError(`Unknown item ${args.itemId}.`);
+          if (!it) throw notFound(`Unknown item ${args.itemId}.`);
           if (it.agent !== agent) throw new StetError(`${it.id} belongs to ${it.agent}.`);
           await stet.comment(it.id, String(args.text ?? ""), "agent");
           return text(`Replied on ${it.id}.`);
