@@ -28,6 +28,7 @@ import {
   TreeModel,
 } from "../src/model.js";
 import { isManaged, managedCliPath } from "../src/runtime.js";
+import { makeItem } from "./fixtures.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
   id,
@@ -41,28 +42,7 @@ const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
   createdAt: "",
   state,
 });
-const item = (id: string, cs: string, extra: Partial<Item> = {}): Item => ({
-  id,
-  agent: "claude-1",
-  changeset: cs,
-  file: "main.tex",
-  kind: "modify",
-  baseCommit: "b",
-  range: { start: 0, end: 1 },
-  oldText: "old",
-  newText: "new",
-  context: { before: "", after: "" },
-  fingerprint: "",
-  note: null,
-  groups: [],
-  status: "pending",
-  resolution: null,
-  supersedes: null,
-  conflictsWith: [],
-  history: [],
-  thread: [],
-  ...extra,
-});
+const item = (id: string, cs: string, extra: Partial<Item> = {}): Item => makeItem(id, { agent: "claude-1", changeset: cs, groups: [], ...extra });
 const cs = (id: string, items: string[], groups: string[] = []): Changeset => ({
   id,
   agent: "claude-1",

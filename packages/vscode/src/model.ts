@@ -8,10 +8,12 @@ import {
   changeSummary,
   compareItemIds,
   type Group,
+  hasPreview,
   type InlineDiff,
   type Item,
   type ItemStatus,
   inlineDiff,
+  itemEffect,
   lineDiff,
   linkedUnit,
   moveChangesOf,
@@ -28,6 +30,7 @@ import {
   printable,
   profileByName,
   roundOf,
+  StetError,
   spokenChange,
   summaryTexts,
 } from "@stet/core";
@@ -886,4 +889,111 @@ export function projectQuery(mainPath: string): string {
 /** The project folder in a `projectQuery`. */
 export function projectOfQuery(query: string): string {
   return new URLSearchParams(query).get("p") ?? "";
+}
+
+/** A change that can't be found in your file any more: what its row and hover say, and what to do. */
+export const LOST_TEXT = "can't be found in your file";
+export const LOST_NEXT =
+  "You edited this text or the text around it since it was proposed, so Stet can't tell where it goes. Reject it, or ask the agent for a revision against your current text.";
+
+/**
+ * A change's row in the panel: its label, the line under it, what a screen reader says, and its
+ * `contextValue`, which the menus in package.json match:
+ * `item.live.<kind>[.pdf]` for an open change, `item.done.<kind>[.pdf][.undo]` for a decided one
+ * (`.pdf`: it has a PDF preview; `.undo`: its decision can still be undone).
+ * `found`: Stet located it in your file; `history`: shown in History, where that doesn't matter.
+ */
+export function itemRow(
+  it: Item,
+  model: TreeModel,
+  place: { line: number; found: boolean },
+  opts: { history: boolean; unread: number },
+): { label: string; description: string; spoken: string; lost: boolean; contextValue: string } {
+  const lost = !place.found && !opts.history;
+  const description =
+    `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${place.line}` : ""}` +
+    `${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}` +
+    `${itemEffect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, opts.unread)}` : ""}`;
+  // Undoable: a rejection, or an accept not committed yet.
+  const undo = it.status === "rejected" || (it.status === "accepted" && !!it.resolution && !it.resolution.committed);
+  // ".pdf": the change has a PDF preview (not in a Typst file).
+  const pdf = it.kind === "modify" && hasPreview(it.file) ? ".pdf" : "";
+  return {
+    label: itemLabel(it, model.get),
+    description,
+    spoken: itemSpoken(it, lost ? undefined : place.line, opts.unread) + (lost ? `, ${LOST_TEXT}` : ""),
+    lost,
+    contextValue: isLive(it) ? `item.live.${it.kind}${pdf}` : `item.done.${it.kind}${pdf}${undo ? ".undo" : ""}`,
+  };
+}
+
+/**
+ * The status bar item: counts as icons, and the same in words for its tooltip and for screen
+ * readers, which would read the icons' numbers alone as "3 2".
+ */
+export function statusView(s: {
+  pending: number;
+  unread: number;
+  uncommitted: number;
+  /** Agents behind your latest text. */
+  behind: string[];
+  /** Projects whose saved edits agents don't see (named when there are several). */
+  unshared: string[];
+  missing: { id: string; reason: string }[];
+  /** Each project's counts, when the window has several. */
+  projects: { name: string; pending: number; uncommitted: number }[];
+}): { text: string; tooltip: string; spoken: string } {
+  const text =
+    `$(checklist) ${s.pending}` +
+    (s.unread ? ` $(comment-unresolved) ${s.unread}` : "") +
+    (s.uncommitted ? ` $(git-commit) ${s.uncommitted}` : "") +
+    (s.behind.length ? " $(sync)" : "") +
+    (s.unshared.length ? " $(cloud-upload)" : "") +
+    (s.missing.length ? " $(warning)" : "");
+  const tip = [`Stet: ${s.pending} change${s.pending === 1 ? "" : "s"} to review`];
+  if (s.unread) tip.push(`${s.unread} new repl${s.unread === 1 ? "y" : "ies"} from agents (marked in the panel; read when you go to the change or note)`);
+  if (s.projects.length > 1) {
+    for (const p of s.projects) tip.push(`  ${p.name}: ${p.pending} to review${p.uncommitted ? `, ${p.uncommitted} to commit` : ""}`);
+  }
+  if (s.uncommitted) tip.push(`${s.uncommitted} accepted, not committed yet (Finish review)`);
+  if (s.unshared.length) tip.push(`Agents don't see your latest saved edits${s.projects.length > 1 ? ` in ${s.unshared.join(", ")}` : ""} (Share my edits)`);
+  if (s.behind.length) tip.push(`Behind your latest text: ${s.behind.join(", ")}. Agents catch up the next time they sync with your text.`);
+  for (const m of s.missing) tip.push(`Agents don't get accepted ${m.id}: ${m.reason}. Finish the review or share your edits.`);
+  return { text, tooltip: tip.join("\n"), spoken: tip.join(". ") };
+}
+
+/**
+ * Whether to offer the highlighted style: once, in a High Contrast theme, for a file of a Stet
+ * project whose proposed text wraps with the line (an inlay hint, which gets no border there).
+ */
+export function offerContrastStyle(s: { highContrast: boolean; inProject: boolean; wrapsWithLine: boolean; askedBefore: boolean }): boolean {
+  return s.highContrast && s.inProject && s.wrapsWithLine && !s.askedBefore;
+}
+
+/**
+ * What a failed accept offers instead: Reject… and Revise… when the one change accepted can't be
+ * found in your file any more, as its More… list does; nothing for other failures.
+ */
+export function failedAcceptActions(ids: readonly string[], e: unknown): string[] {
+  return ids.length === 1 && e instanceof StetError && e.lost.includes(ids[0]!) ? ["Reject…", "Revise…"] : [];
+}
+
+/** "Which one?" was cancelled (Escape). */
+export const CANCELLED: unique symbol = Symbol("cancelled");
+
+/**
+ * What a command acts on, when it isn't given a change: the panel's selection if the user picked
+ * there last, else the change at the cursor (`atCursor`, which may ask "which one?"), else the
+ * panel's selection. Escape in "which one?" decides nothing: undefined, not the panel's selection,
+ * which may be a change in another file.
+ */
+export async function chooseTarget<T>(
+  selected: T | undefined,
+  lastPick: "panel" | "editor",
+  atCursor: () => Promise<T | typeof CANCELLED | undefined>,
+): Promise<{ target: T | undefined; cancelled: boolean }> {
+  if (selected && lastPick !== "editor") return { target: selected, cancelled: false };
+  const here = await atCursor();
+  if (here === CANCELLED) return { target: undefined, cancelled: true };
+  return { target: here ?? selected, cancelled: false };
 }

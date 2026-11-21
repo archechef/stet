@@ -8,6 +8,7 @@ import { basename } from "node:path";
 import { foldPath, type Item } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, type ChangeAction, withIcon } from "./actions.js";
+import { announce } from "./announce.js";
 import { isLive, projectOfQuery, projectQuery, type Ref } from "./model.js";
 import type { Project } from "./project.js";
 import { type ReviewHost, viaReview } from "./review.js";
@@ -68,7 +69,7 @@ export class EditFiles implements vscode.FileSystemProvider, vscode.CodeLensProv
     const { project, id } = this.target(uri);
     try {
       const changed = await project.stet.setDraft(id, Buffer.from(content).toString("utf8"));
-      if (changed) vscode.window.setStatusBarMessage(`$(edit) Your wording for ${id} is saved; still pending: accept when ready`, 6000);
+      if (changed) announce(`$(edit) Your wording for ${id} is saved; still pending: accept when ready`, 6000);
     } catch (e: any) {
       // VS Code shows this with the failed save; the edits stay in the editor.
       throw vscode.FileSystemError.NoPermissions(e?.message ?? String(e));

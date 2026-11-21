@@ -25,7 +25,7 @@ import type { Item, MoveInfo } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
 import { type Edit, splitText } from "../src/split.js";
 import { normalizeWs, paragraphChange } from "../src/text.js";
-import { edit, git, read, setup, write } from "./helpers.js";
+import { edit, git, makeItem, read, setup, write } from "./helpers.js";
 
 const TYPST = PROFILES.find((p) => p.id === "typst") as LanguageProfile | undefined;
 const T = () => TYPST!;
@@ -58,32 +58,7 @@ export const TYPST_PAPER = [
 const BIB = "@article{lamport94,\n  title = {LaTeX},\n  author = {Lamport, Leslie},\n  year = {1994}\n}\n";
 const BIB2 = BIB + "\n@book{knuth84,\n  title = {The TeXbook},\n  author = {Knuth, Donald},\n  year = {1984}\n}\n";
 
-let n = 0;
-function item(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
-  n++;
-  return {
-    id: `1.${n}`,
-    agent: "a",
-    changeset: "C1",
-    file: "main.typ",
-    kind: "modify",
-    baseCommit: "x",
-    range: { start: 0, end: oldText.length },
-    oldText,
-    newText,
-    context: { before: "", after: "" },
-    fingerprint: String(n),
-    note: null,
-    groups: [],
-    status: "pending",
-    resolution: null,
-    supersedes: null,
-    conflictsWith: [],
-    history: [],
-    thread: [],
-    ...extra,
-  };
-}
+const item = (oldText: string, newText: string, extra: Partial<Item> = {}) => makeItem(oldText, newText, { file: "main.typ", ...extra });
 const one = (...items: Item[]) => items.map((i) => ({ title: i.id, items: [i.id] }));
 const ids = (parts: { items: string[] }[] | undefined) => parts?.map((p) => p.items);
 

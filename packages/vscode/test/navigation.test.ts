@@ -1,10 +1,6 @@
 /** Moving between changes, and which change a command acts on. */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { changesAt, documentOrder, fromPanel, nextItemIndex } from "../src/model.js";
-
-const src = (f: string) => readFileSync(join(__dirname, "../src", f), "utf8");
+import { CANCELLED, changesAt, chooseTarget, documentOrder, fromPanel, nextItemIndex } from "../src/model.js";
 
 describe("j/k from a round or group row (test report v0.16, B4)", () => {
   // agent, round, change, change, group, change, change
@@ -63,9 +59,18 @@ describe("overlapping changes at the cursor (test report v0.16)", () => {
 });
 
 describe("which one?", () => {
-  it('Escape in "which one?" decides nothing (test report 5e4c6af, D3)', () => {
-    const e = src("extension.ts");
-    expect(e).toContain("if (here === CANCELLED) return undefined;");
-    expect(e).not.toContain("return (await this.atCursor()) ?? sel;");
+  it('Escape in "which one?" decides nothing (test report 5e4c6af, D3)', async () => {
+    // The panel's selection is a change in another file; the cursor is in two changes.
+    expect(await chooseTarget("2.1", "editor", async () => CANCELLED)).toEqual({ target: undefined, cancelled: true });
+    expect(await chooseTarget("2.1", "editor", async () => "1.4")).toEqual({ target: "1.4", cancelled: false });
+    // No change at the cursor: the panel's selection; picked in the panel last: that, without asking.
+    expect(await chooseTarget("2.1", "editor", async () => undefined)).toEqual({ target: "2.1", cancelled: false });
+    let asked = false;
+    const r = await chooseTarget("2.1", "panel", async () => {
+      asked = true;
+      return CANCELLED;
+    });
+    expect(r).toEqual({ target: "2.1", cancelled: false });
+    expect(asked).toBe(false);
   });
 });

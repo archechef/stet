@@ -1,31 +1,8 @@
 /** Edit & accept: the input box shows the change in the words around it. */
 
-import type { Item } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { editedPart, editFrame } from "../src/model.js";
-
-const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id,
-  agent: "a",
-  changeset: "C1",
-  file: "main.tex",
-  kind: "modify",
-  baseCommit: "b",
-  range: { start: 0, end: 1 },
-  oldText: "old",
-  newText: "new",
-  context: { before: "", after: "" },
-  fingerprint: "",
-  note: null,
-  groups: ["G1"],
-  status: "pending",
-  resolution: null,
-  supersedes: null,
-  conflictsWith: [],
-  history: [],
-  thread: [],
-  ...extra,
-});
+import { makeItem as item } from "./fixtures.js";
 
 describe("Edit & accept in the input box shows where the change is (test report v0.16, D2)", () => {
   const it2 = item("1.1", {

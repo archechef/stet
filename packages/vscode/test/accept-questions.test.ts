@@ -1,33 +1,9 @@
 /** What Accept asks: the parts and groups a change is linked with, several changes at once, and its wording. */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import type { Agent, Changeset, Group, Item } from "@stet/core";
+import { type Agent, type Changeset, type Group, type Item, StetError } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { acceptAction, acceptQuestion, changeActions } from "../src/actions.js";
-import { manyQuestion, type Snapshot, TreeModel } from "../src/model.js";
-
-const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id,
-  agent: "a",
-  changeset: "C1",
-  file: "main.tex",
-  kind: "modify",
-  baseCommit: "b",
-  range: { start: 0, end: 1 },
-  oldText: "old",
-  newText: "new",
-  context: { before: "", after: "" },
-  fingerprint: "",
-  note: null,
-  groups: ["G1"],
-  status: "pending",
-  resolution: null,
-  supersedes: null,
-  conflictsWith: [],
-  history: [],
-  thread: [],
-  ...extra,
-});
+import { failedAcceptActions, manyQuestion, type Snapshot, TreeModel } from "../src/model.js";
+import { makeItem as item, makeTypItem as typItem } from "./fixtures.js";
 
 function model(g: Partial<Group>, items: Item[] = ["1.1", "1.2", "1.3"].map((i) => item(i))): TreeModel {
   const group: Group = {
@@ -53,29 +29,6 @@ const parts = {
   ],
 };
 
-const typItem = (id: string, extra: Partial<Item> = {}): Item => ({
-  id,
-  agent: "a",
-  changeset: "C1",
-  file: "main.typ",
-  kind: "modify",
-  baseCommit: "b",
-  range: { start: 0, end: 1 },
-  oldText: "old",
-  newText: "new",
-  context: { before: "", after: "" },
-  fingerprint: "",
-  note: null,
-  groups: [],
-  status: "pending",
-  resolution: null,
-  supersedes: null,
-  conflictsWith: [],
-  history: [],
-  thread: [],
-  ...extra,
-});
-
 const typSnap = (items: Item[], groups: Group[]): Snapshot => ({
   agents: [],
   changesets: [typCs],
@@ -87,8 +40,6 @@ const typSnap = (items: Item[], groups: Group[]): Snapshot => ({
   unshared: false,
   missing: [],
 });
-
-const src = (f: string) => readFileSync(join(__dirname, "../src", f), "utf8");
 
 const agent: Agent = {
   id: "a",
@@ -203,6 +154,11 @@ describe("questions and wording", () => {
   });
 
   it("a failed accept of a change that can't be found offers Reject and Revise", () => {
-    expect(src("extension.ts")).toContain('showErrorMessage(noLinks(msg), "Reject…", "Revise…")');
+    const lost = new StetError("Nothing was applied", { code: "not_applied", lost: ["1.1"] });
+    expect(failedAcceptActions(["1.1"], lost)).toEqual(["Reject…", "Revise…"]);
+    // Not for other failures, nor when several were accepted.
+    expect(failedAcceptActions(["1.1"], new StetError("Nothing was applied", { code: "not_applied", lost: [] }))).toEqual([]);
+    expect(failedAcceptActions(["1.1", "1.2"], lost)).toEqual([]);
+    expect(failedAcceptActions(["1.1"], new Error("can't be located"))).toEqual([]);
   });
 });

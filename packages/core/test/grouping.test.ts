@@ -5,34 +5,9 @@ import { describe, expect, it } from "vitest";
 import { joinTitles } from "../src/grouping.js";
 import type { Item } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
-import { CLI_DIST, edit, git, PAPER, renamed, setup, write } from "./helpers.js";
+import { CLI_DIST, edit, git, makeItem, PAPER, renamed, setup, write } from "./helpers.js";
 
-let n = 0;
-function item(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
-  n++;
-  return {
-    id: `1.${n}`,
-    agent: "a",
-    changeset: "C1",
-    file: "main.typ",
-    kind: "modify",
-    baseCommit: "x",
-    range: { start: 0, end: oldText.length },
-    oldText,
-    newText,
-    context: { before: "", after: "" },
-    fingerprint: String(n),
-    note: null,
-    groups: [],
-    status: "pending",
-    resolution: null,
-    supersedes: null,
-    conflictsWith: [],
-    history: [],
-    thread: [],
-    ...extra,
-  };
-}
+const item = (oldText: string, newText: string, extra: Partial<Item> = {}) => makeItem(oldText, newText, { file: "main.typ", ...extra });
 
 describe("a new file and what reads it in (test report v0.14, D6)", () => {
   it("links an added chapter with its \\input, and a figure with its \\includegraphics", async () => {

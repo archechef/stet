@@ -4,7 +4,8 @@ import { join } from "node:path";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { changeActions } from "../src/actions.js";
-import { behindAgents, itemSpoken, type Snapshot, TreeModel, threadText, unreadReplies } from "../src/model.js";
+import { behindAgents, itemRow, itemSpoken, type Snapshot, TreeModel, threadText, unreadReplies } from "../src/model.js";
+import { makeItem as item } from "./fixtures.js";
 
 const agent: Agent = {
   id: "a",
@@ -18,29 +19,6 @@ const agent: Agent = {
   createdAt: "",
   state: "active",
 };
-
-const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id,
-  agent: "a",
-  changeset: "C1",
-  file: "main.tex",
-  kind: "modify",
-  baseCommit: "b",
-  range: { start: 0, end: 1 },
-  oldText: "old",
-  newText: "new",
-  context: { before: "", after: "" },
-  fingerprint: "",
-  note: null,
-  groups: ["G1"],
-  status: "pending",
-  resolution: null,
-  supersedes: null,
-  conflictsWith: [],
-  history: [],
-  thread: [],
-  ...extra,
-});
 
 function model(g: Partial<Group>, items: Item[] = ["1.1", "1.2", "1.3"].map((i) => item(i))): TreeModel {
   const group: Group = {
@@ -144,5 +122,42 @@ describe("menu entries", () => {
     for (const m of menus.filter((x) => x.command === "stet.preview" && x.when?.includes("viewItem"))) expect(m.when).toContain("\\.pdf/");
     for (const m of menus.filter((x) => x.command === "stet.previewSetup")) expect(m.when).toContain("stet.previews");
     expect(menus.find((x) => x.command === "stet.reopenNote" && x.when === "false")).toBeDefined();
+  });
+});
+
+describe("a change's row gets the menu entries that fit it", () => {
+  const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf8"));
+  const entries = pkg.contributes.menus["view/item/context"] as { command: string; when?: string }[];
+  /** The commands in a row's context menu: each `when` read as VS Code reads it (the terms used here). */
+  const menu = (view: string, row: Item) => {
+    const { contextValue } = itemRow(row, model({}), { line: 1, found: true }, { history: view === "stet.history", unread: 0 });
+    const holds = (term: string) => {
+      const [, key, op, want] = term.match(/^(view|viewItem) (==|=~) (.*)$/) ?? [];
+      if (!want) throw new Error(`unexpected when clause term: ${term}`);
+      const value = key === "view" ? view : contextValue;
+      return op === "==" ? value === want : new RegExp(want.slice(1, -1)).test(value);
+    };
+    return new Set(entries.filter((e) => e.when?.includes("viewItem") && e.when.split(" && ").every(holds)).map((e) => e.command));
+  };
+
+  it("a pending change in a TeX file can be accepted, edited and previewed", () => {
+    const m = menu("stet.review", item("1.1"));
+    for (const c of ["stet.accept", "stet.reject", "stet.edit", "stet.revise", "stet.preview", "stet.comment"]) expect(m).toContain(c);
+  });
+
+  it("a pending change in a Typst file has no PDF preview entry", () => {
+    const m = menu("stet.review", item("1.1", { file: "main.typ" }));
+    expect(m).toContain("stet.accept");
+    expect(m).not.toContain("stet.preview");
+  });
+
+  it("in History, an accepted change can be undone until it is committed, and previewed", () => {
+    const accepted = (committed: string | null) => item("1.1", { status: "accepted", resolution: { appliedText: "new", edited: false, committed } });
+    const open = menu("stet.history", accepted(null));
+    expect(open).toContain("stet.undo");
+    expect(open).toContain("stet.preview");
+    expect(open).not.toContain("stet.accept");
+    expect(menu("stet.history", accepted("abc123"))).not.toContain("stet.undo");
+    expect(menu("stet.history", item("1.1", { status: "rejected" }))).toContain("stet.undo");
   });
 });

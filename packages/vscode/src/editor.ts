@@ -2,7 +2,7 @@
 
 import { type Item, itemEffect, lineDiff, moveChanges, moveFrom, movesOut, moveTexts, moveTo, partIndexOf, profileByName } from "@stet/core";
 import * as vscode from "vscode";
-import { acceptAction, type ChangeAction, changeActions, withIcon } from "./actions.js";
+import { acceptAction, actionRow, type ChangeAction, changeActions, withIcon } from "./actions.js";
 import {
   diffBlock,
   draftMarkdown,
@@ -84,6 +84,21 @@ export class Locator {
 }
 
 /**
+ * How proposed text looks as a decoration (word wrap off): Stet's colours, and a border, so that
+ * High Contrast themes, which give it no background, don't mark it by colour alone.
+ */
+export function insertedTextStyle(): vscode.DecorationRenderOptions {
+  return {
+    after: {
+      color: new vscode.ThemeColor("stet.insertedText.foreground"),
+      backgroundColor: new vscode.ThemeColor("stet.insertedText.background"),
+      border: "1px dashed",
+      borderColor: new vscode.ThemeColor("stet.insertedText.border"),
+    },
+  };
+}
+
+/**
  * How much new text is shown inline after a change. With word wrap on, inline text wraps with the
  * line, so a longer single-line proposal fits; without it, long text would run off the screen.
  */
@@ -156,8 +171,6 @@ function marks(doc: vscode.TextDocument, shownItem: Item, range: vscode.Range): 
   };
 }
 
-const cmd = (command: string, args: unknown[]) => `command:${command}?${encodeURIComponent(JSON.stringify(args))}`;
-
 /**
  * The area a change's hover answers to: the change plus the word before and after it (up to 30
  * characters each), so a short change, or an insertion that takes no room, is easy to hit.
@@ -188,15 +201,7 @@ export class EditorIntegration
     overviewRulerLane: vscode.OverviewRulerLane.Left,
   });
   /** New text as coloured decorations (when word wrap is off; see usesHints). */
-  private readonly inserted = vscode.window.createTextEditorDecorationType({
-    after: {
-      color: new vscode.ThemeColor("stet.insertedText.foreground"),
-      backgroundColor: new vscode.ThemeColor("stet.insertedText.background"),
-      // High-contrast themes have no background here: a border marks it, not colour alone.
-      border: "1px dashed",
-      borderColor: new vscode.ThemeColor("stet.insertedText.border"),
-    },
-  });
+  private readonly inserted = vscode.window.createTextEditorDecorationType(insertedTextStyle());
   /** Where half of a move goes or comes from (instead of its text). */
   private readonly moveLabel = vscode.window.createTextEditorDecorationType({
     after: { color: new vscode.ThemeColor("editorCodeLens.foreground"), fontStyle: "italic", margin: "0 0 0 1em" },
@@ -382,7 +387,7 @@ export class EditorIntegration
     md.appendMarkdown(itemMarkdown(item, model));
     const pdf = this.host.previewHover?.(p, item);
     if (pdf) md.appendMarkdown(`\n\n${pdf}`);
-    md.appendMarkdown(`\n\n${actions.map((a) => `[${withIcon(a)}](${cmd(a.command, a.args)}${a.detail ? ` "${linkTitle(a.detail)}"` : ""})`).join(" · ")}`);
+    md.appendMarkdown(`\n\n${actionRow(actions)}`);
     return md;
   }
 

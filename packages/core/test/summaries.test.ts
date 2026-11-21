@@ -2,33 +2,9 @@
 import { describe, expect, it } from "vitest";
 import type { Item } from "../src/model.js";
 import { changeSummary, spokenChange, summaryTexts } from "../src/text.js";
+import { makeItem } from "./helpers.js";
 
-let n = 0;
-function item(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
-  n++;
-  return {
-    id: `1.${n}`,
-    agent: "a",
-    changeset: "C1",
-    file: "main.typ",
-    kind: "modify",
-    baseCommit: "x",
-    range: { start: 0, end: oldText.length },
-    oldText,
-    newText,
-    context: { before: "", after: "" },
-    fingerprint: String(n),
-    note: null,
-    groups: [],
-    status: "pending",
-    resolution: null,
-    supersedes: null,
-    conflictsWith: [],
-    history: [],
-    thread: [],
-    ...extra,
-  };
-}
+const item = (oldText: string, newText: string, extra: Partial<Item> = {}) => makeItem(oldText, newText, { file: "main.typ", ...extra });
 
 describe("change summaries (test report v0.14, B4, UX)", () => {
   it("show where two long texts differ, and whitespace", async () => {

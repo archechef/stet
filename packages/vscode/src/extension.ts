@@ -35,10 +35,10 @@ import {
   roundOf,
   type ShareMode,
   Stet,
-  StetError,
 } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, acceptQuestion, type ChangeAction, changeActions, withIcon } from "./actions.js";
+import { announce } from "./announce.js";
 import { inProject, Threads } from "./comments.js";
 import { DiffContent, EditorIntegration, esc, type Host, inlineProblems, itemMarkdown, Locator, usesHints } from "./editor.js";
 import { EDIT_SCHEME, EditFiles } from "./edits.js";
@@ -48,13 +48,16 @@ import {
   archiveChoices,
   behindAgents,
   bulkQuestion,
+  CANCELLED,
   changeAt,
   changesAt,
+  chooseTarget,
   dissolveQuestion,
   documentOrder,
   editedPart,
   editFrame,
   FINISH_SAVE,
+  failedAcceptActions,
   fence,
   filterIsEmpty,
   filterText,
@@ -66,12 +69,15 @@ import {
   isLive,
   isRef,
   itemLabel,
-  itemSpoken,
+  itemRow,
   LineIndex,
+  LOST_NEXT,
+  LOST_TEXT,
   manyQuestion,
   type Node,
   nextItemIndex,
   noLinks,
+  offerContrastStyle,
   oneLine,
   type PanelFilter,
   partLabel,
@@ -79,12 +85,11 @@ import {
   projectQuery,
   type Ref,
   roundLabel,
-  STATUS_TEXT,
   spokenRow,
+  statusView,
   suggestAgentId,
   type TreeMode,
   TreeModel,
-  threadText,
   toLf,
   unreadReplies,
 } from "./model.js";
@@ -649,28 +654,22 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
     if (all.length) {
       const fresh = all.reduce((n, p) => n + this.unreadOf(p, () => true), 0);
-      this.status.text =
-        `$(checklist) ${pending}` +
-        (fresh ? ` $(comment-unresolved) ${fresh}` : "") +
-        (uncommitted ? ` $(git-commit) ${uncommitted}` : "") +
-        (sync.length ? " $(sync)" : "") +
-        (unshared.length ? " $(cloud-upload)" : "") +
-        (missing.length ? " $(warning)" : "");
-      const tip = [`Stet: ${pending} change${pending === 1 ? "" : "s"} to review`];
-      if (fresh) tip.push(`${fresh} new repl${fresh === 1 ? "y" : "ies"} from agents (marked in the panel; read when you go to the change or note)`);
-      if (all.length > 1) {
-        for (const p of all) {
-          const n = p.snapshot.items.filter((i) => i.status === "pending").length;
-          tip.push(`  ${p.name}: ${n} to review${p.snapshot.uncommitted.length ? `, ${p.snapshot.uncommitted.length} to commit` : ""}`);
-        }
-      }
-      if (uncommitted) tip.push(`${uncommitted} accepted, not committed yet (Finish review)`);
-      if (unshared.length) tip.push(`Agents don't see your latest saved edits${all.length > 1 ? ` in ${unshared.join(", ")}` : ""} (Share my edits)`);
-      if (sync.length) tip.push(`Behind your latest text: ${sync.join(", ")}. Agents catch up the next time they sync with your text.`);
-      for (const m of missing) tip.push(`Agents don't get accepted ${m.id}: ${m.reason}. Finish the review or share your edits.`);
-      this.status.tooltip = tip.join("\n");
-      // Read out as words, not as "3 2" (test report 2026-11-20, accessibility).
-      this.status.accessibilityInformation = { label: tip.join(". "), role: "button" };
+      const view = statusView({
+        pending,
+        unread: fresh,
+        uncommitted,
+        behind: sync,
+        unshared,
+        missing,
+        projects: all.map((p) => ({
+          name: p.name,
+          pending: p.snapshot.items.filter((i) => i.status === "pending").length,
+          uncommitted: p.snapshot.uncommitted.length,
+        })),
+      });
+      this.status.text = view.text;
+      this.status.tooltip = view.tooltip;
+      this.status.accessibilityInformation = { label: view.spoken, role: "button" };
       this.status.show();
     } else this.status.hide();
     const context: [string, boolean][] = [
@@ -990,24 +989,20 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }
       case "item": {
         const it = n.item;
-        const t = new vscode.TreeItem(itemLabel(it, model.get), vscode.TreeItemCollapsibleState.None);
-        const { line, found } = await this.placeOf(el.project, it);
-        // Can't be found in your file any more: said on the row, with what to do (test report v0.16.0).
-        const lost = !found && !history;
-        t.description = `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${line}` : ""}${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLive(it) ? " · your wording" : ""}${itemEffect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, this.unread(el.project, it))}` : ""}`;
+        const unread = this.unread(el.project, it);
+        const row = itemRow(it, model, await this.placeOf(el.project, it), { history, unread });
+        const lost = row.lost;
+        const t = new vscode.TreeItem(row.label, vscode.TreeItemCollapsibleState.None);
+        t.description = row.description;
         t.iconPath = lost
           ? new vscode.ThemeIcon("warning", new vscode.ThemeColor("problemsWarningIcon.foreground"))
-          : this.unread(el.project, it)
+          : unread
             ? new vscode.ThemeIcon("comment-unresolved", new vscode.ThemeColor("notificationsInfoIcon.foreground"))
             : itemIcon(it);
-        t.accessibilityInformation = { label: itemSpoken(it, lost ? undefined : line, this.unread(el.project, it)) + (lost ? `, ${LOST_TEXT}` : "") };
+        t.accessibilityInformation = { label: row.spoken };
         const md = new vscode.MarkdownString((lost ? `⚠ **${LOST_TEXT}.** ${LOST_NEXT}\n\n` : "") + itemMarkdown(it, model));
         t.tooltip = md;
-        // Undoable: a rejection, or an accept not committed yet.
-        const undo = it.status === "rejected" || (it.status === "accepted" && !!it.resolution && !it.resolution.committed);
-        // ".pdf": the change has a PDF preview (not in a Typst file: test report 5e4c6af, B8).
-        const pdf = it.kind === "modify" && hasPreview(it.file) ? ".pdf" : "";
-        t.contextValue = isLive(it) ? `item.live.${it.kind}${pdf}` : `item.done.${it.kind}${pdf}${undo ? ".undo" : ""}`;
+        t.contextValue = row.contextValue;
         // Decided changes open as a diff of the change itself; open ones are shown in the file.
         t.command = history
           ? { command: "stet.showDiff", title: "Show diff", arguments: [el] }
@@ -1102,13 +1097,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     }
     if (arg && typeof arg === "object" && "project" in arg) return arg as El;
     const sel = this.tree.visible ? this.panelSelection() : undefined;
-    if (sel && this.lastPick !== "editor") return sel;
-    const here = await this.atCursor();
-    // Escape in "which one?" decides nothing: it used to fall back to the panel's selection, a
-    // change in another file (test report 5e4c6af, D3).
-    this.pickCancelled = here === CANCELLED;
-    if (here === CANCELLED) return undefined;
-    return here ?? sel;
+    const { target, cancelled } = await chooseTarget(sel, this.lastPick, () => this.atCursor());
+    this.pickCancelled = cancelled;
+    return target;
   }
 
   /** The last `target` call ended in a cancelled "which one?": nothing more to ask or say. */
@@ -1303,8 +1294,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   private async offerContrastStyle(uri: vscode.Uri): Promise<void> {
     const memo = "stet.askedContrastStyle";
     const kind = vscode.window.activeColorTheme.kind;
-    const contrast = kind === vscode.ColorThemeKind.HighContrast || kind === vscode.ColorThemeKind.HighContrastLight;
-    if (!contrast || !this.projectFor(uri) || !usesHints(uri) || this.ctx.globalState.get<boolean>(memo)) return;
+    const highContrast = kind === vscode.ColorThemeKind.HighContrast || kind === vscode.ColorThemeKind.HighContrastLight;
+    const ask = offerContrastStyle({
+      highContrast,
+      inProject: !!this.projectFor(uri),
+      wrapsWithLine: usesHints(uri),
+      askedBefore: !!this.ctx.globalState.get<boolean>(memo),
+    });
+    if (!ask) return;
     await this.ctx.globalState.update(memo, true);
     const use = "Use the highlighted style";
     const pick = await vscode.window.showInformationMessage(
@@ -1586,10 +1583,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
    * Revise…, as its More… list does (test report 5e4c6af). False for other failures.
    */
   private offerInstead(p: Project, ids: string[], e: unknown): boolean {
-    if (ids.length !== 1 || !(e instanceof StetError) || !e.lost.includes(ids[0]!)) return false;
-    const msg = e.message;
+    const instead = failedAcceptActions(ids, e);
+    if (!instead.length) return false;
     const ref: Ref = { path: p.mainPath, id: ids[0]! };
-    void vscode.window.showErrorMessage(noLinks(msg), "Reject…", "Revise…").then((pick) => {
+    void vscode.window.showErrorMessage(noLinks((e as Error).message), ...instead).then((pick) => {
       if (pick) void vscode.commands.executeCommand(pick === "Reject…" ? "stet.reject" : "stet.revise", ref);
     });
     return true;
@@ -2758,21 +2755,6 @@ function elId(el: El): string {
 }
 
 /** The notification modes as offered in the panel. */
-const LOST_TEXT = "can't be found in your file";
-const LOST_NEXT =
-  "You edited this text or the text around it since it was proposed, so Stet can't tell where it goes. Reject it, or ask the agent for a revision against your current text.";
-
-/** Whether VS Code is set up for a screen reader (`editor.accessibilitySupport`). */
-const screenReader = (): boolean => vscode.workspace.getConfiguration("editor").get<string>("accessibilitySupport") === "on";
-
-/**
- * A result, in the status bar for a few seconds; for a screen reader also as a notification, which
- * it reads out: status-bar messages are not (test report v0.16.0, accessibility).
- */
-function announce(text: string, ms = 5000): void {
-  vscode.window.setStatusBarMessage(text, ms);
-  if (screenReader()) void vscode.window.showInformationMessage(text.replace(/\$\([\w-]+\)\s*/g, ""));
-}
 
 const NOTIFY_PICKS: { mode: NotifyMode; label: string; detail: string }[] = [
   { mode: "batched", label: "When I pause", detail: "Once you have stopped for half a minute, with all your decisions together. Not after every click." },
@@ -2810,7 +2792,6 @@ export interface TestApi {
 }
 
 /** "Which one?" was cancelled: nothing to act on, not "no change here". */
-const CANCELLED = Symbol("cancelled");
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   const ext = new StetExtension(ctx);

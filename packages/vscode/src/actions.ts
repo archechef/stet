@@ -4,7 +4,7 @@
  * change offers the same actions under the same names wherever you meet it.
  */
 import { hasPreview, type Item, movesOut, oneLine, profileByName } from "@stet/core";
-import { isLive, type Ref, type TreeModel } from "./model.js";
+import { isLive, linkTitle, type Ref, type TreeModel } from "./model.js";
 
 export interface ChangeAction {
   /** Shown text, without icon. */
@@ -23,6 +23,15 @@ export interface ChangeAction {
 
 /** "$(check) Accept": an action's label with its icon, for CodeLens, hovers and lists. */
 export const withIcon = (a: Pick<ChangeAction, "icon" | "label">): string => `$(${a.icon}) ${a.label}`;
+
+/**
+ * The links under a change's hover: each action's command link, its detail as the link's tooltip,
+ * kept to one line and escaped so that text from an agent in it can't end the link or add one.
+ */
+export function actionRow(actions: readonly ChangeAction[]): string {
+  const link = (a: ChangeAction) => `command:${a.command}?${encodeURIComponent(JSON.stringify(a.args))}`;
+  return actions.map((a) => `[${withIcon(a)}](${link(a)}${a.detail ? ` "${linkTitle(a.detail)}"` : ""})`).join(" · ");
+}
 
 /** One answer to "what to accept with this change": the changes it takes, and whether that breaks a linked group. */
 export interface AcceptChoice {

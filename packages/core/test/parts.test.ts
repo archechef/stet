@@ -2,34 +2,8 @@ import { describe, expect, it } from "vitest";
 import { parseWhere } from "../src/grouping.js";
 import type { Item } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
-import { edit, PAPER, read, setup, write } from "./helpers.js";
+import { edit, makeItem as item, PAPER, read, setup, write } from "./helpers.js";
 
-let n = 0;
-function item(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
-  n++;
-  return {
-    id: `1.${n}`,
-    agent: "a",
-    changeset: "C1",
-    file: "main.tex",
-    kind: "modify",
-    baseCommit: "x",
-    range: { start: 0, end: oldText.length },
-    oldText,
-    newText,
-    context: { before: "", after: "" },
-    fingerprint: String(n),
-    note: null,
-    groups: [],
-    status: "pending",
-    resolution: null,
-    supersedes: null,
-    conflictsWith: [],
-    history: [],
-    thread: [],
-    ...extra,
-  };
-}
 const one = (...items: Item[]) => items.map((i) => ({ title: i.id, items: [i.id] }));
 const ids = (parts: { items: string[] }[] | undefined) => parts?.map((p) => p.items);
 

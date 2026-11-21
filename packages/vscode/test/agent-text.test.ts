@@ -1,35 +1,11 @@
 /** Text an agent wrote, in hovers, notifications and the panel: escaped, on one line, invisible characters marked. */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import type { Changeset, Group, Item } from "@stet/core";
+import type { Changeset, Group } from "@stet/core";
 import { describe, expect, it } from "vitest";
+import { actionRow } from "../src/actions.js";
 import { diffBlock, esc, fence, linkTitle, noLinks, shownAgentText } from "../src/model.js";
-
-const typItem = (id: string, extra: Partial<Item> = {}): Item => ({
-  id,
-  agent: "a",
-  changeset: "C1",
-  file: "main.typ",
-  kind: "modify",
-  baseCommit: "b",
-  range: { start: 0, end: 1 },
-  oldText: "old",
-  newText: "new",
-  context: { before: "", after: "" },
-  fingerprint: "",
-  note: null,
-  groups: [],
-  status: "pending",
-  resolution: null,
-  supersedes: null,
-  conflictsWith: [],
-  history: [],
-  thread: [],
-  ...extra,
-});
+import { makeTypItem as typItem } from "./fixtures.js";
 
 const typCs: Changeset = { id: "C1", agent: "a", title: "t", rationale: "", submittedAt: "", items: [], baseCommit: "b" } as unknown as Changeset;
-const src = (f: string) => readFileSync(join(__dirname, "../src", f), "utf8");
 
 describe("escaping and invisible characters", () => {
   it("a link tooltip stays one line, its quotes escaped (security report 5e4c6af, S2)", () => {
@@ -37,8 +13,21 @@ describe("escaping and invisible characters", () => {
     expect(t).not.toMatch(/\n/);
     expect(t).toContain('\\"x\\"');
     expect(t.endsWith("\\\\")).toBe(true);
-    // The hover's action row uses it.
-    expect(src("editor.ts")).toContain("linkTitle(a.detail)");
+    // The hover's action row: an agent's group title in an action's detail stays inside its link's tooltip.
+    const row = actionRow([
+      {
+        label: "Accept all of G1",
+        icon: "check",
+        command: "stet.accept",
+        args: [{ id: "G1" }],
+        tier: "decide",
+        detail: 'G1 "x"\n\n[Reject…](command:stet.accept?%5B%5D)',
+      },
+    ]);
+    expect(row).toBe(
+      `[$(check) Accept all of G1](command:stet.accept?${encodeURIComponent(JSON.stringify([{ id: "G1" }]))} "${linkTitle('G1 "x"\n\n[Reject…](command:stet.accept?%5B%5D)')}")`,
+    );
+    expect(row).not.toMatch(/\n/);
   });
 
   it("escaped agent text can't open a fence, a link or a line of its own (security report 5e4c6af, S2, S3)", () => {

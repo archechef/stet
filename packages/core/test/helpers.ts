@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach } from "vitest";
 import { PROFILES } from "../src/lang/index.js";
+import type { Item } from "../src/model.js";
 import { Stet } from "../src/service.js";
 
 const dirs: string[] = [];
@@ -168,4 +169,36 @@ export async function renamed() {
   if (!g?.parts || g.parts.length < 2) throw new Error("expected a linked group with parts");
   const label = r.items.find((i) => i.newText.includes("\\label") || i.context.before.endsWith("\\label{"))!;
   return { stet, repo, wt, r, g, label, refs: r.items.filter((i) => i !== label) };
+}
+
+let itemCount = 0;
+
+/**
+ * A proposed change for tests of pure functions: a modify of main.tex, with ids 1.1, 1.2, … in
+ * the order made (each test file counts from 1.1).
+ */
+export function makeItem(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
+  itemCount++;
+  return {
+    id: `1.${itemCount}`,
+    agent: "a",
+    changeset: "C1",
+    file: "main.tex",
+    kind: "modify",
+    baseCommit: "x",
+    range: { start: 0, end: oldText.length },
+    oldText,
+    newText,
+    context: { before: "", after: "" },
+    fingerprint: String(itemCount),
+    note: null,
+    groups: [],
+    status: "pending",
+    resolution: null,
+    supersedes: null,
+    conflictsWith: [],
+    history: [],
+    thread: [],
+    ...extra,
+  };
 }

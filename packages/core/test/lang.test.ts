@@ -14,35 +14,11 @@ import type { Item } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
 import { splitText } from "../src/split.js";
 import { tokenizeWords } from "../src/tokenizer.js";
+import { makeItem } from "./helpers.js";
 
 const cfg = defaultConfig("main");
 
-let n = 0;
-function item(file: string, oldText: string, newText: string, extra: Partial<Item> = {}): Item {
-  n++;
-  return {
-    id: `1.${n}`,
-    agent: "a",
-    changeset: "C1",
-    file,
-    kind: "modify",
-    baseCommit: "x",
-    range: { start: 0, end: oldText.length },
-    oldText,
-    newText,
-    context: { before: "", after: "" },
-    fingerprint: String(n),
-    note: null,
-    groups: [],
-    status: "pending",
-    resolution: null,
-    supersedes: null,
-    conflictsWith: [],
-    history: [],
-    thread: [],
-    ...extra,
-  };
-}
+const item = (file: string, oldText: string, newText: string, extra: Partial<Item> = {}) => makeItem(oldText, newText, { file, ...extra });
 
 /** A language that is not LaTeX: its rules are all Stet knows of it. */
 const TOY_SYNTAX: SyntaxRules = {

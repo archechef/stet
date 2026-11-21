@@ -1,31 +1,8 @@
 /** Hovers, the More… menu and diffs. */
 
-import type { Item } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { actionsTitle, diffBlock, draftMarkdown } from "../src/model.js";
-
-const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id,
-  agent: "a",
-  changeset: "C1",
-  file: "main.tex",
-  kind: "modify",
-  baseCommit: "b",
-  range: { start: 0, end: 1 },
-  oldText: "old",
-  newText: "new",
-  context: { before: "", after: "" },
-  fingerprint: "",
-  note: null,
-  groups: ["G1"],
-  status: "pending",
-  resolution: null,
-  supersedes: null,
-  conflictsWith: [],
-  history: [],
-  thread: [],
-  ...extra,
-});
+import { makeItem as item } from "./fixtures.js";
 
 describe("hovers with your wording (test report v0.16, B12)", () => {
   it("put the code block on lines of its own, so it is one", () => {

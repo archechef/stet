@@ -12,6 +12,7 @@
 import { foldPath, type Item, type ReviewDocument } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, type ChangeAction, changeActions, withIcon } from "./actions.js";
+import { announce } from "./announce.js";
 import { positionIn, projectOfQuery, projectQuery, type Ref, type TreeModel, toLf } from "./model.js";
 import type { Project } from "./project.js";
 
@@ -112,7 +113,7 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
     if ("error" in r) throw vscode.FileSystemError.NoPermissions(r.error);
     this.mtimes.set(uri.toString(), Date.now());
     if (r.changed.length) {
-      vscode.window.setStatusBarMessage(`$(edit) Your wording for ${r.changed.join(", ")} is saved; still pending: accept when ready`, 6000);
+      announce(`$(edit) Your wording for ${r.changed.join(", ")} is saved; still pending: accept when ready`, 6000);
     }
     await c.project.refresh();
     await this.build(uri);
