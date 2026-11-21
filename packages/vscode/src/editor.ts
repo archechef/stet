@@ -222,6 +222,8 @@ export class EditorIntegration
     private host: Host,
     private locator: Locator,
   ) {
+    // Every file, not only .tex and .typ: agents change .sty, .bib, .latexmkrc, Makefiles too, and
+    // outside a project the providers return nothing (`projectFor`).
     const selector: vscode.DocumentSelector = { scheme: "file" };
     this.disposables.push(
       vscode.languages.registerCodeLensProvider(selector, this),
@@ -326,7 +328,7 @@ export class EditorIntegration
       const at = new vscode.Range(range.start, range.start);
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
       // Several changes on one line: Reject… and More… name theirs, or "Show CodeLens commands
-      // for current line" lists them alike (test report v0.16.0).
+      // for current line" lists them alike.
       const whose = (onLine.get(range.start.line) ?? 0) > 1 ? ` ${item.id}` : "";
       // The two decisions everyone needs, and More… for the rest (the same list as everywhere).
       const accept = acceptAction(model, p.mainPath, item);
@@ -425,11 +427,11 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   const cs = model.snap.changesets.find((c) => c.id === item.changeset);
   const d = describeItem(item, model.get);
   const lines = [`**${item.id}** · ${esc(item.agent)} · ${STATUS_TEXT[item.status]}`];
-  // A file that takes effect once accepted: said first (security report 5e4c6af, S12).
+  // A file that takes effect once accepted: said first.
   if (d.effect) lines.push(`⚠ **Takes effect:** ${esc(d.effect)}. Accepting asks to confirm.`);
   if (cs) lines.push(`*${esc(cs.title)}*${cs.rationale ? ` — ${esc(cs.rationale)}` : ""}`);
   if (item.note) lines.push(esc(item.note));
-  // A revision: what it revises, and what you asked for there (test report 2026-11-20, B4).
+  // A revision: what it revises, and what you asked for there.
   if (d.revises) lines.push(`↻ **Revision of ${d.revises.id}**${d.revises.asked ? `, where you asked: ${esc(d.revises.asked)}` : ""}`);
   if (d.yours?.accepted) lines.push(`✎ **Accepted with your wording:** ${diffBlock(item.oldText, d.yours.text)}\n\nThe agent proposed:`);
   else if (d.yours) lines.push(draftMarkdown({ draft: d.yours.text, file: item.file }));
@@ -459,7 +461,7 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     // A whole file's content (its first lines): new files showed only their name.
     const whole = d.whole && (item.kind === "delete-file" ? d.whole.old : d.whole.new);
     if (whole?.length) lines.push(fence(shown(whole), profileByName(item.file).fence));
-    // Text with bytes that aren't UTF-8: its changed lines, the bytes marked (security report 5e4c6af, S7).
+    // Text with bytes that aren't UTF-8: its changed lines, the bytes marked.
     if (d.bytes)
       lines.push("Not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte.", fence(shown(d.bytes), "diff"));
   }

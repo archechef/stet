@@ -33,8 +33,7 @@ export interface Neighbour {
 /**
  * `anchor`, and if that fails, again with `neighbours` (changes accepted from the item's base)
  * made in `ref` too. A change right next to an accepted one has lost the context on that side:
- * a sentence rewritten up to the line break that the next change removes (bug report
- * 2026-11-18). With the neighbours in its reference, that context is the accepted text.
+ * a sentence rewritten up to the line break that the next change removes. With the neighbours in its reference, that context is the accepted text.
  */
 export function anchorNear(item: Anchorable, target: string, ref: string | undefined, neighbours: Neighbour[]): Span | null {
   const span = anchor(item, target, ref);
@@ -161,7 +160,7 @@ export function anchor(item: Anchorable, target: string, ref?: string): Span | n
 /**
  * Whether the old text found at `span` is part of the new text, i.e. the change has already been
  * made there. When the new text contains the old (pk → \pk, H → \Hash), the old text is still
- * found after the change; applying it again gave \\pk and \\Hashash (bug report 2026-10-21).
+ * found after the change; applying it again gave \\pk and \\Hashash.
  */
 export function insideNewText(oldText: string, newText: string, target: string, span: Span): boolean {
   if (newText.length <= oldText.length) return false;
@@ -191,8 +190,7 @@ function findOldText(item: Anchorable, target: string, ref?: string): Span | nul
   const mapper = ref !== undefined ? makeMapper(ref, target) : null;
   // Where the old text is in text unchanged from the reference but not at the item's place, it
   // is another occurrence (the mapped path would have found the item's own): never the item's.
-  // An undo found another accepted change's words there and reverted that one (test report
-  // v0.16.0, D1).
+  // An undo found another accepted change's words there and reverted that one.
   const elsewhere = (sp: Span) => !!oldText && !!mapper?.unchanged(sp.start, sp.end);
 
   // 2. Mapped path.

@@ -255,7 +255,7 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       if (fewestChanged(dw, iw) > allowed) continue;
       let changed = changedWords(dw, iw);
       // Two blocks that were next to each other at both ends, in swapped order, come out as one
-      // deletion and one insertion (bug report 2026-11-13).
+      // deletion and one insertion.
       let blocks: string[][] | null = null;
       if (changed > allowed) {
         const sb = sameBlocks(blocksOf(d.oldText), blocksOf(i.newText), allowed);

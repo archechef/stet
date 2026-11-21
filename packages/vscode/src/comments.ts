@@ -253,7 +253,7 @@ export class Threads implements vscode.Disposable {
   }
 }
 
-/** " · paper-a" in a window with several folders, where two projects have the same ids (test report v0.16.0); else "". */
+/** " · paper-a" in a window with several folders, where two projects have the same ids; else "". */
 export function inProject(p: Project): string {
   return (vscode.workspace.workspaceFolders?.length ?? 0) > 1 ? ` · ${p.name}` : "";
 }

@@ -1,4 +1,4 @@
-/** Replies you haven't seen yet (test report v0.16.0): counted per change and note, remembered per workspace. */
+/** Replies you haven't seen yet: counted per change and note, remembered per workspace. */
 import { isLiveItem } from "@stet/core";
 import type { StetExtension } from "./extension.js";
 import { unreadReplies } from "./model.js";
@@ -26,7 +26,7 @@ export class UnreadReplies {
 
   /**
    * " in paper-typst" when the window has several projects: ids repeat across projects, and with
-   * a screen reader these results are all the feedback there is (test report 5e4c6af, multi-root).
+   * a screen reader these results are all the feedback there is.
    */
   inWhich(p: Project): string {
     return this.ext.projects.size > 1 ? ` in ${p.name}` : "";

@@ -3,7 +3,7 @@ import { captureContext, type Neighbour } from "../anchor.js";
 import { applyItems, conflicts, type FileView, locate } from "../apply.js";
 import { notFound, StetError } from "../errors.js";
 import { joinTitles } from "../grouping.js";
-import { type Group, type GroupKind, type Item, isLive, itemId, numberInRound, partId } from "../model.js";
+import { DROPPED_STATUSES, type Group, type GroupKind, type Item, isLive, itemId, numberInRound, partId } from "../model.js";
 import { combineParts, settleParts } from "../parts.js";
 import type { Stet } from "../service.js";
 import { now } from "./common.js";
@@ -32,10 +32,6 @@ export class GroupOps {
   constructor(private readonly stet: Stet) {}
 
   /**
-   * Check the parts of a linked group (§6.4.6) and join the ones that break the rules. Accepting
-   * is simulated on the review base the members were made against. Returns notes for the agent.
-   */
-  /**
    * The sets of changes among `members` that need each other: the rules of §6.4.6 from single
    * changes up, plus the same symbol or term replaced, within one of `units` (the agent's parts:
    * a notation change it split by section stays split).
@@ -54,6 +50,10 @@ export class GroupOps {
     return parts ? parts.map((p) => p.items) : [members.map((m) => m.id)];
   }
 
+  /**
+   * Check the parts of a linked group (§6.4.6) and join the ones that break the rules. Accepting
+   * is simulated on the review base the members were made against. Returns notes for the agent.
+   */
   async settleParts(g: Group, get: (id: string) => Promise<Item | undefined>, merged = false): Promise<string[]> {
     if (g.kind !== "linked" || !g.parts) {
       delete g.parts;
@@ -99,7 +99,7 @@ export class GroupOps {
           res.applied.some((x) => x.item.file === l.item.file && (l.item.kind !== "modify" || x.item.kind !== "modify" || conflicts(l.span, x.span))),
         );
         // Part a is accepted in this simulation: a change next to it is found with its text, as
-        // after a real accept (bug report 2026-11-19: parts in one paragraph were always joined).
+        // after a real accept (parts in one paragraph were always joined).
         const simulated = { ...opts, neighbours: async (it: Item) => [...appliedAsNeighbours(res.applied, it), ...(await this.stet.neighbours(it))] };
         const lost = clash
           ? []
@@ -131,7 +131,7 @@ export class GroupOps {
       const units = g.kind !== "linked" ? [] : g.parts ? g.parts.map((p) => members.filter((m) => p.items.includes(m.id))).filter((u) => u.length) : [members];
       for (const u of units) {
         const accepted = u.filter((m) => m.status === "accepted").length;
-        const dead = u.filter((m) => ["rejected", "stale", "withdrawn"].includes(m.status)).length;
+        const dead = u.filter((m) => DROPPED_STATUSES.includes(m.status)).length;
         if ((accepted && accepted < u.length) || (dead && u.some((m) => isLive(m.status)))) state = "broken";
       }
       if (state === "broken" && g.state !== "broken") {

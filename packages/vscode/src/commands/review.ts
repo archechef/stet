@@ -114,13 +114,8 @@ export class ReviewCommands {
   }
 
   /**
-   * The pending changes selected in the panel, when there are several: a menu or button of a row
-   * passes the selection as its second argument, a key in the panel uses the panel's selection.
-   * Undefined for one change, so the usual one-change path runs.
-   */
-  /**
    * With several changes selected, an action that takes one says which one it took: Revise,
-   * Comment, Edit and Diff acted on one without a word (test report 5e4c6af, multi-select).
+   * Comment, Edit and Diff acted on one without a word.
    */
   onlyOne(action: string, item: Item, arg: unknown, all: unknown): void {
     const els: El[] = Array.isArray(all) ? (all as El[]) : arg === "panel" ? [...this.ext.tree.selection] : [];
@@ -128,6 +123,11 @@ export class ReviewCommands {
     if (n > 1) announce(`$(info) ${action} takes one change at a time: ${item.id}, not the other ${n - 1} selected.`, 6000);
   }
 
+  /**
+   * The pending changes selected in the panel, when there are several: a menu or button of a row
+   * passes the selection as its second argument, a key in the panel uses the panel's selection.
+   * Undefined for one change, so the usual one-change path runs.
+   */
   private selectedMany(arg: unknown, all: unknown): { project: Project; items: Item[] } | undefined {
     const els: El[] = Array.isArray(all) ? (all as El[]) : arg === "panel" ? [...this.ext.tree.selection] : [];
     const items = els.filter((e) => e?.node?.type === "item" && isLiveItem((e.node as { item: Item }).item));
@@ -149,7 +149,7 @@ export class ReviewCommands {
     const ids = [...new Set(items.flatMap((i) => this.ext.model(p).withMove(i)))];
     const rest = this.ext.model(p).linkedRest(ids);
     // Other parts of their groups too, as a single Accept asks: a label's part was accepted
-    // without its references, unasked (test report 5e4c6af, D2).
+    // without its references, unasked.
     const others = this.ext.model(p).otherParts(ids);
     let take = ids;
     let overrideLinked = false;
@@ -252,7 +252,7 @@ export class ReviewCommands {
     opts: { overrideLinked?: boolean; edited?: Record<string, string>; confirmEffects?: boolean } = {},
   ): Promise<void> {
     // Files that take effect once accepted (a latexmkrc, .gitattributes, AGENTS.md…): asked
-    // explicitly, with what they set off (security report 5e4c6af, S12).
+    // explicitly, with what they set off.
     const effects = ids.map((id) => this.ext.model(p).item(id)).filter((it): it is Item => !!it && !!itemEffect(it));
     if (effects.length) {
       const ok = `Accept ${effects.length > 1 ? "them" : "it"}`;
@@ -269,7 +269,7 @@ export class ReviewCommands {
       return it ? [it.file, ...(it.oldFile ? [it.oldFile] : [])] : [];
     });
     // Your wording typed in a Review-file or change tab and not saved yet: saved first, so the
-    // accept uses it (test report v0.16.0, D4). A save it refuses stops the accept.
+    // accept uses it. A save it refuses stops the accept.
     if (!(await this.ext.saveWording(p, ids, files))) return;
     await this.ext.run(p, async () => {
       // Your unsaved edits of these files are saved only for an accept that will work (D7).
@@ -298,7 +298,7 @@ export class ReviewCommands {
 
   /**
    * A change that can't be found in your file any more: the failed accept offers Reject… and
-   * Revise…, as its More… list does (test report 5e4c6af). False for other failures.
+   * Revise…, as its More… list does. False for other failures.
    */
   private offerInstead(p: Project, ids: string[], e: unknown): boolean {
     const instead = failedAcceptActions(ids, e);
@@ -460,7 +460,7 @@ export class ReviewCommands {
       if (typeof r !== "string") start = r.inTab;
       else {
         const text = r;
-        // Linked with other changes: ask what to take along, as Accept does (test report v0.16.0, D5).
+        // Linked with other changes: ask what to take along, as Accept does.
         const c = await this.acceptWhat(p, item);
         if (!c) return;
         return this.ext.panel.decide(p, item.id, fromPanel(arg), () =>
@@ -585,7 +585,7 @@ export class ReviewCommands {
     await this.ext.panel.decide(t.project, t.item.id, fromPanel(arg), () =>
       this.ext.run(t.project, async () => {
         await t.project.stet.requestRevision(t.item.id, text);
-        // Undoable like the other decisions: `u` after `v` undid an older accept (test report v0.16.0, B5).
+        // Undoable like the other decisions: `u` after `v` undid an older accept.
         this.ext.undos.noteDecision(t.project, [t.item.id], "revision request");
         announce(`$(sync) Revision of ${t.item.id}${this.ext.replies.inWhich(t.project)} requested: it waits for the agent's new version.`);
       }),
@@ -602,7 +602,7 @@ export class ReviewCommands {
   }
 
   async finishReview(): Promise<void> {
-    // Only projects with something to commit: asking "Which project?" for one was a needless step (test report v0.16.0).
+    // Only projects with something to commit: asking "Which project?" for one was a needless step.
     const ps = this.ext.allProjects().filter((x) => x.snapshot.uncommitted.length);
     if (!ps.length) return void vscode.window.showInformationMessage("Nothing to commit: all accepted changes are committed.");
     const p =
@@ -620,7 +620,7 @@ export class ReviewCommands {
     const preview = await this.ext.run(p, () => p.stet.commitPreview());
     if (!preview) return;
     // What the commit takes, said before it happens: your own edits in these files, and that undo
-    // ends here. Unsaved text is not committed unless you choose to save it (test report v0.16.0, D6).
+    // ends here. Unsaved text is not committed unless you choose to save it.
     const unsaved = Object.keys(this.ext.unsavedTexts(p, files));
     const q = finishQuestion(preview.items.length, files, preview.yourEdits, unsaved, this.ext.replies.inWhich(p).replace(/^ in /, ""));
     const ok = await vscode.window.showWarningMessage(q.message, { modal: true, detail: q.detail }, ...q.buttons);

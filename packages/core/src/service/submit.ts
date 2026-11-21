@@ -98,7 +98,7 @@ export class Submission {
       });
       if (binary) {
         // Text with a byte that isn't UTF-8 is still shown, the byte marked: shown as "(binary
-        // file)", it hid what accepting it writes (security report 5e4c6af, S7).
+        // file)", it hid what accepting it writes.
         const [os, ns] = [oldBuf && textWithBadBytes(oldBuf), newBuf && textWithBadBytes(newBuf)];
         out.push({
           ...whole("binary"),
@@ -148,7 +148,7 @@ export class Submission {
         agent.lastTip = tip;
         await this.stet.store.putAgent(agent);
         // A very large round: said to the agent and the reviewer, not refused. 3,000 changes in
-        // one held the store lock for over a minute (security report 5e4c6af, S15).
+        // one held the store lock for over a minute.
         const nFiles = new Set(result.items.map((i) => i.file)).size;
         if (result.changeset && (result.items.length > LARGE_SUBMIT.items || nFiles > LARGE_SUBMIT.files)) {
           const what = `${result.items.length} changes in ${nFiles} file${nFiles === 1 ? "" : "s"}`;
@@ -315,7 +315,7 @@ export class Submission {
 
     // A reworded sentence with a piece that repeats an earlier rejection: keep that sentence's
     // changes together as one item. Auto-rejecting only the piece left the rest a broken
-    // sentence, which accepting would have put into the document (bug report 2026-11-18).
+    // sentence, which accepting would have put into the document.
     const rejectedFps = new Set(allItems.filter((i) => i.status === "rejected" && !i.acceptFailed).map((i) => i.fingerprint));
     const repeats = (c: Candidate) => rejectedFps.has(this.fingerprint(c));
     for (const file of new Set(fresh.filter((c) => c.kind === "modify" && repeats(c)).map((c) => c.file))) {
@@ -428,7 +428,7 @@ export class Submission {
       result.superseded.push(e.id);
     }
     // A move loses an item it can't do without: dissolve it, so its group isn't inherited by a
-    // replacement that moves something else (bug report 2026-11-13: an old move group ended up
+    // replacement that moves something else (an old move group ended up
     // linking unrelated items). Detection below pairs the remaining items again where it can.
     const gone = existing.filter((e) => result.superseded.includes(e.id) || result.withdrawn.includes(e.id));
     await this.stet.decisionOps.dissolveMoves(gone, new Map(allItems.map((i) => [i.id, i])), rec);

@@ -129,7 +129,7 @@ export function compareVersions(a: string, b: string): number {
 /**
  * Who git commits as in `cwd` ("Name <email>"), or null if it can't commit: no user.name /
  * user.email and none it can guess. Asked before setup commits anything, so a missing identity
- * doesn't leave a half set up folder (test report v0.16.0, B1).
+ * doesn't leave a half set up folder.
  */
 export async function gitIdentity(cwd: string): Promise<string | null> {
   const r = new Repo(cwd);

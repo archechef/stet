@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: { alias: { vscode: fileURLToPath(new URL("./packages/vscode/test/fake-vscode.ts", import.meta.url)) } },
   test: {
     include: ["packages/*/test/**/*.test.ts"],
+    globalSetup: ["./vitest.setup.ts"],
     testTimeout: 60_000,
     hookTimeout: 60_000,
   },

@@ -179,7 +179,7 @@ function splitSyntax(rules: SyntaxRules, oldText: string, newText: string, cfg: 
     const hi = idx + 1 < raw.length ? raw[idx + 1]!.oldStart : oldLines.length;
     // Only into a paragraph the change is part of: a change that starts (ends) with a paragraph
     // break on both sides stops there. Otherwise a moved paragraph next to a heading merged with
-    // it, and with a change below it, into one rewritten item (bug report 2026-11-13).
+    // it, and with a change below it, into one rewritten item.
     const edge = (o: number, n: number) => (r.oldEnd > r.oldStart && !blank(oldLines[o])) || (r.newEnd > r.newStart && !blank(newLines[n]));
     let up = 0;
     if (edge(r.oldStart, r.newStart)) while (r.oldStart - up > lo && !blank(oldLines[r.oldStart - up - 1])) up++;
@@ -189,7 +189,7 @@ function splitSyntax(rules: SyntaxRules, oldText: string, newText: string, cfg: 
     const last = expanded[expanded.length - 1];
     // Changes only blank lines apart are diffed together: the line diff cuts a paragraph inserted
     // before an edited one at the blank line between them, which pairs the new paragraph with the
-    // old one (bug report C42). Paragraphs are paired by similarity inside a region instead.
+    // old one. Paragraphs are paired by similarity inside a region instead.
     const blankGap = (a: string[], from: number, to: number) => a.slice(from, to).every((l) => !l.trim());
     if (last && (last.oldEnd >= e.oldStart || (blankGap(oldLines, last.oldEnd, e.oldStart) && blankGap(newLines, last.newEnd, e.newStart)))) {
       last.oldEnd = e.oldEnd;
@@ -214,7 +214,7 @@ function splitSyntax(rules: SyntaxRules, oldText: string, newText: string, cfg: 
 
 /**
  * Changes inside one verbatim or raw block, joined: re-indenting a listing gave a change per line,
- * and accepting one of them left broken code (test report 5e4c6af, D7).
+ * and accepting one of them left broken code.
  */
 function verbatimWhole(oldText: string, newText: string, edits: Edit[], rules: SyntaxRules): Edit[] {
   const [inOld, inNew] = [rules.verbatim(oldText), rules.verbatim(newText)];
@@ -239,7 +239,7 @@ function verbatimWhole(oldText: string, newText: string, edits: Edit[], rules: S
  * A paragraph break that moves past a sentence ("… a line. Beta two …" ending one paragraph
  * starts the next instead) is one change of the text where it stood: paragraphs are paired first,
  * so the sentence came out deleted from one and inserted into the next, and showed as moved "word
- * for word" (test report 2026-11-20). A deletion and an insertion next to each other are joined
+ * for word". A deletion and an insertion next to each other are joined
  * when together they keep the words, (almost) all of them in order, and a paragraph break moves.
  */
 function shiftedBreaks(oldText: string, newText: string, edits: Edit[]): Edit[] {
@@ -348,7 +348,7 @@ function perBlock(oldText: string, newText: string, e: Edit, rules: SyntaxRules)
   if (!ins && !del) return [e];
   const t = ins ? e.newText : e.oldText;
   // Line breaks go before each piece when the text comes at the end of a line: after it, the
-  // last piece alone ran into the old line ("tight.Here it is:", test report 5e4c6af, D4).
+  // last piece alone ran into the old line ("tight.Here it is:").
   const atLineEnd = /^[ \t]*(?:\n|$)/.test(ins ? oldText.slice(e.end) : newText.slice(e.newEnd));
   const leading = (/^\s*\n/.test(t) || atLineEnd) && !/\n\s*$/.test(t);
   const cuts = blockCuts(t, leading, rules);
@@ -441,7 +441,7 @@ function diffRange(ot: Token[], nt: Token[], oa: number, ob: number, na: number,
   // Anchor the common prefix and suffix before diffing the middle. The diff matches greedily from
   // the front: for a block inserted before a paragraph whose first words also occur in the block,
   // it matched those words inside the block, and a pure insertion became a replacement ("The
-  // algorithm " → block + "The algorithm "), which hid moves (bug report 2026-11-13). When one
+  // algorithm " → block + "The algorithm "), which hid moves. When one
   // side is wholly a suffix of the other, the change is an insertion (deletion) in front.
   const lo = ob - oa;
   const ln = nb - na;
@@ -516,12 +516,6 @@ interface BlockPair {
   n: [number, number];
 }
 
-/**
- * Which old paragraph became which new one: the in-order pairing of the most alike paragraphs
- * (word similarity at least PAIR_MIN). Pairing by position instead showed a paragraph edited in
- * place as replaced by a new neighbour and inserted again (bug report C42). A paragraph split in
- * two (or two merged) pairs with both.
- */
 /** Above this many paragraph pairs, `pairBlocks` pairs the obvious ones first (`anchorPairs`). */
 const PAIR_ALL_MAX = 2500;
 
@@ -577,6 +571,12 @@ function anchorPairs(ow: string[][], nw: string[][]): { o: number; n: number }[]
   return out;
 }
 
+/**
+ * Which old paragraph became which new one: the in-order pairing of the most alike paragraphs
+ * (word similarity at least PAIR_MIN). Pairing by position instead showed a paragraph edited in
+ * place as replaced by a new neighbour and inserted again. A paragraph split in
+ * two (or two merged) pairs with both.
+ */
 function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [number, number][]): BlockPair[] {
   const wordsOf = (toks: Token[], [a, b]: [number, number]) =>
     toks
@@ -614,7 +614,7 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
     return out;
   };
   // Many paragraphs each side (every paragraph of a long file edited): comparing every pair took
-  // minutes when they all shared their words (test report 2026-11-20, B3). Paragraphs that are
+  // minutes when they all shared their words. Paragraphs that are
   // plainly one paragraph edited are paired first, and only the stretches between are compared.
   const pairs: BlockPair[] = [];
   let [i0, j0] = [0, 0];
@@ -657,8 +657,7 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
   // A paragraph cut by a heading or other structure line inserted into it (or joined by removing
   // one): the blocks across it belong to the pair when they hold clearly more of the paragraph's
   // words, in order. Taking them in one at a time never paid, as the heading alone lowers the
-  // similarity; the sentence before it came out "replaced" by the one after it (test report
-  // 5e4c6af, D4).
+  // similarity; the sentence before it came out "replaced" by the one after it.
   const span = (ws: string[][], r: [number, number]) => ws.slice(r[0], r[1] + 1).flat();
   const common = (p: BlockPair) => commonWords(span(ow, p.o), span(nw, p.n));
   for (const p of pairs) {
@@ -873,7 +872,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   const ot = rules.tokenize(oldSeg);
   const nt = rules.tokenize(newSeg);
   // Reflowing is ignored, except where spaces are content: the agent's edit of a listing's
-  // spaces was dropped, and the next sync reverted it (test report 2026-11-20, D7).
+  // spaces was dropped, and the next sync reverted it.
   const [oVerb, nVerb] = [rules.verbatim(oldSeg), rules.verbatim(newSeg)];
   const same = (a: Token, b: Token) => a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws" && !oVerb(a) && !nVerb(b));
   // Where a new unit of the alignment starts (see `alignTokens`): changes don't cross these.
@@ -926,7 +925,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   const keyU = [...os.keys.map(([a, b]) => [os.pos[a]!, os.pos[b]! + 1]), ...ns.keys.map(([a, b]) => [ns.pos[a]!, ns.pos[b]! + 1])];
   // Covered by key spans: a Typst key is one token, so `@a` → `@b` is a deletion in the old key's
   // span next to an insertion in the new one's, and merged with any edit nearby, a maths value
-  // with it (test report 5e4c6af, D8).
+  // with it.
   const isKey = (r: [number, number]) => {
     if (r[1] <= r[0]) return false;
     for (let i = r[0]; i < r[1]; i++) if (!keyU.some(([a, b]) => a! <= i && i < b!)) return false;
@@ -1022,7 +1021,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   };
 
   // The same for single sentences: a sentence rewritten this much, or in this many pieces, is
-  // one change. Its pieces rarely read right on their own (bug report C31).
+  // one change. Its pieces rarely read right on their own.
   const sent = new Array<number>(u.length);
   let sc = 0;
   u.forEach((e, i) => {
@@ -1048,8 +1047,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
     const sid = sent[r[0]]!;
     const ratio = (sChanged.get(sid) ?? 0) / Math.max(1, sTotals.get(sid) ?? 0);
     // Edits a few words apart in one sentence that rebuild it are one change: "Plants are … and
-    // therefore" → "Because plants are …, they" came as two, and either alone broke the sentence
-    // (test report 2026-11-20, D6). Plain word swaps ("very" → "extremely" … "useful" →
+    // therefore" → "Because plants are …, they" came as two, and either alone broke the sentence. Plain word swaps ("very" → "extremely" … "useful" →
     // "helpful") stay apart: each reads right alone.
     let between = 0;
     if (last) for (let i = last[1]; i < r[0]; i++) if (oldTok(i) && !isBlank(oldTok(i)!) && oldTok(i)!.type !== "punct") between++;

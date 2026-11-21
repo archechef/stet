@@ -366,7 +366,7 @@ const count = (keys: Iterable<string>) => {
 /**
  * Text where keys count: without escapes, raw text, comments, and strings in code (after `#`, `(`,
  * `,`, `:`, `=`, …). A comment about `<intro>` was taken into a rename, and `#"see @intro"` counted
- * as a reference (test report 5e4c6af, B2). Quotes in markup are text, and keys in them count.
+ * as a reference. Quotes in markup are text, and keys in them count.
  */
 const keyText = (s: string) =>
   s

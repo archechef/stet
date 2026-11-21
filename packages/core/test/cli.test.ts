@@ -10,7 +10,7 @@ function stet(cwd: string, ...args: string[]) {
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
-describe.skipIf(!existsSync(CLI_DIST))("the command line", () => {
+describe("the command line", () => {
   it("says what is wrong with the command line, without a stack trace, and has --version (test report v0.14, B1)", async () => {
     const { repo } = await setup({ "main.tex": PAPER });
     for (const args of [["review", "--frob"], ["reject", "1.1", "-m"], ["--nope"]]) {

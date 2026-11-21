@@ -27,7 +27,7 @@ export class Project implements vscode.Disposable {
     return this.stet.store.root;
   }
 
-  /** The workspace folder's name ("paper-typst"), else the folder's own ("typ"): test report 5e4c6af. */
+  /** The workspace folder's name ("paper-typst"), else the folder's own ("typ"). */
   get name(): string {
     const f = vscode.workspace.workspaceFolders?.find((w) => foldPath(w.uri.fsPath) === foldPath(this.mainPath));
     return f?.name ?? this.mainPath.replace(/\\/g, "/").split("/").pop() ?? this.mainPath;

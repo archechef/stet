@@ -11,8 +11,7 @@ export class PreviewCommands {
   /** Say once what PDF previews need here (nothing when they work). Never sets anything up unasked. */
   async checkPreviews(p: Project): Promise<void> {
     try {
-      // A language without previews (Typst): nothing to tell at startup, and no preview entries
-      // (test report 5e4c6af, B3, B8 and accessibility).
+      // A language without previews (Typst): nothing to tell at startup, and no preview entries.
       const doc = documentProfile(await p.stet.config());
       if (!doc.typesetter) {
         if (!this.noPreviews.has(foldPath(p.mainPath)))
@@ -43,7 +42,7 @@ export class PreviewCommands {
     p ??= await this.ext.setupWizard.pickProject();
     if (!p) return;
     const project = p;
-    // Said at once, without a progress note about downloads (test report 5e4c6af, B3).
+    // Said at once, without a progress note about downloads.
     const doc = documentProfile(await project.stet.config());
     if (!doc.typesetter)
       return void vscode.window.showInformationMessage(
@@ -114,7 +113,7 @@ export class PreviewCommands {
   async showPreview(arg: unknown): Promise<void> {
     const t = await this.ext.targetItem(arg);
     if (!t) return;
-    // `p` on a Typst change opened an empty preview panel (test report 5e4c6af, B8).
+    // `p` on a Typst change opened an empty preview panel.
     if (t.item.kind !== "modify" || !hasPreview(t.item.file))
       return void vscode.window.showInformationMessage(
         `Stet has no PDF preview for ${t.item.id}: ${t.item.kind !== "modify" ? "it is not a text change" : `there are no PDF previews for ${profileByName(t.item.file).name} files yet`}.`,

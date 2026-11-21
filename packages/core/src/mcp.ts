@@ -11,6 +11,7 @@ import { archivedMessage, mcpInstructions } from "./instructions.js";
 import { documentProfile, type LanguageProfile } from "./lang/index.js";
 import {
   type GroupKind,
+  ITEM_STATUSES,
   type Item,
   type ItemBrief,
   type ItemStatus,
@@ -52,8 +53,7 @@ const str = (description: string) => ({ type: "string", description });
 
 /**
  * What is wrong with a tool call's arguments by its schema (required ones there and not empty,
- * types of those given), or null. Without it, stet_withdraw with no ids reported "Withdrawn: ."
- * (test report 2026-11-20, B6).
+ * types of those given), or null. Without it, stet_withdraw with no ids reported "Withdrawn: .".
  */
 export function argumentError(def: ToolDef, args: unknown): string | null {
   const schema = def.inputSchema as { properties?: Record<string, { type?: string }>; required?: string[] };
@@ -234,7 +234,6 @@ export interface FeedbackStyle {
   reply?: (itemId: string) => string;
 }
 
-/** One line per feedback event, for agents (MCP) and the CLI alike. */
 /** What `stet_submit` tells the agent. */
 export function describeSubmit(r: SubmitResult): string {
   const lines: string[] = [];
@@ -267,7 +266,7 @@ export function describeSubmit(r: SubmitResult): string {
   return lines.join("\n");
 }
 
-/** `text` as the end of a sentence: a full stop added, unless it ends in one already ("speed.." in feedback, test report v0.16.0, B13). */
+/** `text` as the end of a sentence: a full stop added, unless it ends in one already ("speed.." in feedback). */
 function sentence(text: string): string {
   const t = text.trimEnd();
   return /[.!?…]["'”’)]*$/.test(t) ? t : t + ".";
@@ -290,6 +289,7 @@ function itemOf(e: StetEvent): ItemBrief | undefined {
   }
 }
 
+/** One line per feedback event, for agents (MCP) and the CLI alike. */
 export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): string {
   const label = style.label ?? ((t: string) => t);
   const reply = style.reply ?? (() => "stet_reply");
@@ -373,7 +373,7 @@ export class StetMcpServer {
     // The project path lets the server explain what happened even when the workspace folder is gone.
     // Open the project from its recorded folder, never through the workspace's own git link: an
     // agent can point that link at a repository of its own, whose hooks Stet's git calls would
-    // then run outside the agent's sandbox (security report 5e4c6af, S1).
+    // then run outside the agent's sandbox.
     if (!this.stet) this.stet = await Stet.open(this.opts.project ?? where);
     const known = this.opts.agentId ? await this.stet.store.getAgent(this.opts.agentId) : await this.stet.agentByWorktree(where);
     if (known?.state === "archived") throw new StetError(archivedMessage(known));
@@ -385,7 +385,7 @@ export class StetMcpServer {
     const agent = found.id;
     if (this.opts.agentId && this.opts.agentId !== agent) throw new StetError(`This workspace belongs to agent '${agent}', not '${this.opts.agentId}'.`);
     // Once per start: the workspace's tool settings are as Stet wrote them. They start programs
-    // outside the agent's sandbox, and the agent can edit them (security report 5e4c6af, S5).
+    // outside the agent's sandbox, and the agent can edit them.
     if (!this.configsChecked) {
       const changed = await this.stet.changedToolConfigs(found);
       if (changed.length) {
@@ -668,7 +668,7 @@ function strings(v: unknown, what: string): string[] {
 }
 
 function statuses(v: unknown): ItemStatus[] {
-  const all: ItemStatus[] = ["pending", "needs_revision", "accepted", "rejected", "withdrawn", "superseded", "stale"];
+  const all: readonly ItemStatus[] = ITEM_STATUSES;
   const list = strings(v, "status");
   for (const s of list) if (!all.includes(s as ItemStatus)) bad(`status must be one of ${all.join(", ")}`);
   return list as ItemStatus[];

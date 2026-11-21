@@ -63,8 +63,7 @@ export function languageCounts(paths: string[], files: FilePatterns): Record<str
 
 /**
  * The language of a project, by its files (relative paths): the one with the most files, LaTeX
- * on a tie or with none. A Typst thesis with one old .tex file was set up as LaTeX (test report
- * 5e4c6af); a front end asks when there are both (`languageCounts`).
+ * on a tie or with none. A Typst thesis with one old .tex file was set up as LaTeX; a front end asks when there are both (`languageCounts`).
  */
 export function detectLanguage(paths: string[], files: FilePatterns): string {
   const counts = Object.entries(languageCounts(paths, files)).sort((a, b) => b[1] - a[1]);

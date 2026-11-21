@@ -35,21 +35,25 @@ import { writeInside } from "./safefs.js";
 import { type Eol, fromLf, lineOf } from "./text.js";
 import type { Token } from "./tokenizer.js";
 
+export const PREVIEW_ENGINES = ["auto", "pdflatex", "xelatex", "lualatex"] as const;
+export const PREVIEW_ISOLATIONS = ["auto", "container", "process"] as const;
+export const PREVIEW_TEX = ["auto", "host", "image"] as const;
+
 export interface PreviewConfig {
   enabled: boolean;
   /** The document to compile, relative to the project; null: detected (`main.tex`, else the one top-level document). */
   rootFile: string | null;
   /** `auto`: from a `% !TEX program =` line, else LuaLaTeX with fontspec/unicode-math, else pdfLaTeX. */
-  engine: "auto" | "pdflatex" | "xelatex" | "lualatex";
+  engine: (typeof PREVIEW_ENGINES)[number];
   /**
    * `container` (what `auto` means): builds in a Podman container. `process`: as a normal process,
    * where TeX can read every file you can; only on your explicit choice.
    */
-  isolation: "auto" | "container" | "process";
+  isolation: (typeof PREVIEW_ISOLATIONS)[number];
   /** The container image with Perl and the PDF tools, for the user's own TeX (`stet preview setup` builds it). */
   image: string;
   /** Where TeX comes from: `auto` (the user's standalone TeX Live on Linux, else the image's), `host` or `image`. */
-  tex: "auto" | "host" | "image";
+  tex: (typeof PREVIEW_TEX)[number];
   /** The container image with its own TeX Live, for macOS and Linux without a standalone TeX Live. */
   texImage: string;
   /**
@@ -719,8 +723,10 @@ export class PreviewBuilder {
     return files.length ? { missing: { files, extras: !!this.env.extrasAvailable } } : {};
   }
 
-  /** Locate source lines in a PDF (the typesetter's `locate`) and render that region to `out`. */
-  /** `found`: where the changes (`spans`) are on the page, for the page view's marks. */
+  /**
+   * Locate source lines in a PDF (the typesetter's `locate`) and render that region to `out`.
+   * `found`: where the changes (`spans`) are on the page, for the page view's marks.
+   */
   private async region(
     work: string,
     pdf: string,
@@ -944,8 +950,7 @@ const decodeXml = (s: string) =>
     .replace(/&#39;/g, "'")
     .replace(/&amp;/g, "&");
 
-/** A word as it compares: letters and digits only, lower case, ligatures (ﬁ) taken apart. */
-/** A word as it is compared on the page: case, accents' forms and punctuation aside. */
+/** A word as it is compared on the page: letters and digits only, lower case, ligatures (ﬁ) taken apart. */
 export const normWord = (w: string) =>
   w
     .normalize("NFKC")

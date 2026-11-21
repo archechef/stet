@@ -67,7 +67,7 @@ export interface PageInput {
 export function previewPage({ item, result: r, img, inCache, cspSource, nonce }: PageInput): string {
   let body: string;
   let pageData: unknown = null;
-  // What changed, for the pictures' alt text: where the changes are said nothing of what they are (test report v0.16.0).
+  // What changed, for the pictures' alt text: where the changes are said nothing of what they are.
   const [was, now] = changeSummary(item.oldText, item.newText, 60);
   const what = !item.oldText ? `“${now}” inserted` : !item.newText ? `“${was}” deleted` : `“${was}” replaced with “${now}”`;
   if (!r) body = `<p class="muted">Building the preview… The change is already in the editor; its page appears here when it's compiled.</p>`;
@@ -241,7 +241,7 @@ for (const f of frames) {
   f.querySelector("img").addEventListener("load", () => { fit(); place(); });
 }
 new ResizeObserver(() => { fit(); place(); }).observe(document.body);
-// The keyboard moves and zooms a page as the mouse does (test report 2026-11-20, accessibility).
+// The keyboard moves and zooms a page as the mouse does.
 for (const f of frames) {
   f.addEventListener("keydown", (e) => {
     const k = frameKey(e.key);
@@ -321,7 +321,7 @@ if (PAGES) {
   if (PAGES.before) document.getElementById("show-before").onclick = () => goto("before", shown.before);
   document.getElementById("prev").onclick = () => goto(side, shown[side] - 1);
   document.getElementById("next").onclick = () => goto(side, shown[side] + 1);
-  // Pages and versions from the keyboard too, not only with Tab and Enter (test report v0.16.0).
+  // Pages and versions from the keyboard too, not only with Tab and Enter.
   frame.addEventListener("keydown", (e) => {
     const to = viewerKey(e.key, { side, shown, count: PAGES[side].count, hasBefore: !!PAGES.before });
     if (!to) return;

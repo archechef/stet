@@ -151,7 +151,7 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
         });
         if (users.length) {
           // In LaTeX a missing label or citation key is only a warning: each change can be its own
-          // part. In Typst it is an error, so the rename is one unit (test report 5e4c6af, D1).
+          // part. In Typst it is an error, so the rename is one unit.
           const members = [def, ...users];
           groups.push({
             kind: "linked",
@@ -168,7 +168,7 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
 
   // A new key with the changes that start using it: a bibliography entry, in a change of new
   // entries only; and any key used where a use of a missing key is an error (Typst: a new
-  // `<label>` and a new `@label`, test report 5e4c6af, D5).
+  // `<label>` and a new `@label`).
   const additions = (kind: KeyKind["id"]) => {
     for (const def of text) {
       for (const d of definitions(def, kind)) {
@@ -310,7 +310,7 @@ export function normalizeGroups(drafts: GroupDraft[]): GroupDraft[] {
 
 /**
  * Whether `ref`, read in by `from`, names `file`: as written, relative to `from`'s folder (Typst,
- * where chapters in subfolders read `../figures/x.png`: test report 5e4c6af, D6), or from the
+ * where chapters in subfolders read `../figures/x.png`), or from the
  * project's root (Typst's `/figures/x.png`).
  */
 function namesFile(inc: { names(ref: string, file: string): boolean }, ref: string, from: string, file: string): boolean {
@@ -323,7 +323,7 @@ function namesFile(inc: { names(ref: string, file: string): boolean }, ref: stri
 /** Join two group titles, skipping near-duplicates ("a -> b" vs "a → b"). */
 export function joinTitles(a: string, b: string): string {
   const norm = (t: string) => t.toLowerCase().replace(/->|→/g, "→").replace(/\s+/g, " ").trim();
-  // Each title of b once: joined titles piled up with every revision (test report 5e4c6af, B1).
+  // Each title of b once: joined titles piled up with every revision.
   const parts = a.split(" + ");
   for (const t of b.split(" + ")) if (!parts.some((p) => norm(p) === norm(t))) parts.push(t);
   return parts.join(" + ");

@@ -46,7 +46,7 @@ export interface AcceptChoice {
  * group's linked changes), the whole group, or this change only, the recommended one first. Null
  * when there is nothing to ask (a change alone, or a move: its halves always go together). Every
  * Accept of such a change asks, wherever it is clicked: one click on a label's part used to leave
- * its \refs dangling, and Edit & accept took 57 changes along unasked (test report v0.16.0, D3 and D5).
+ * its \refs dangling, and Edit & accept took 57 changes along unasked.
  */
 export function acceptQuestion(model: TreeModel, item: Item): { title: string; choices: AcceptChoice[] } | null {
   const own = model.withMove(item);
@@ -62,7 +62,7 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
   const part = model.partOf(item);
   const n = (k: number) => `${k} change${k === 1 ? "" : "s"}`;
   const choices: AcceptChoice[] = [];
-  // One set of phrases wherever Accept is offered (test report 5e4c6af): "Accept part 1 of 2",
+  // One set of phrases wherever Accept is offered: "Accept part 1 of 2",
   // "Accept all of G1", "Accept only 1.10 (breaks G1)".
   if (unit.length > own.length) {
     choices.push({
@@ -185,7 +185,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
       tier: "decide",
       detail: "Tell the agent what to change; the change stays open until it resubmits.",
     });
-    // Can't be found in your file: accepting can't work, so Reject and Revise come first (test report v0.16.0).
+    // Can't be found in your file: accepting can't work, so Reject and Revise come first.
     if (opts.lost) {
       const first = (label: string) => out.findIndex((a) => a.label.startsWith(label));
       const pick = [first("Reject"), first("Revise")].map((k) => out[k]!);

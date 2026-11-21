@@ -60,7 +60,7 @@ export class Navigation {
     this.ext.reviewing.onlyOne("Diff", t.item, arg, all);
     const { project: p, item } = t;
     // Opening a change from History is how its replies are read there: they stayed "new" for
-    // good (test report 5e4c6af, B4).
+    // good.
     if (item.thread.length) this.ext.replies.markRead(p, item);
     // A pending change: the file's review with just this change, and what accepting it takes
     // along (its linked group, a move's other half) in the same file. Editable, with the same

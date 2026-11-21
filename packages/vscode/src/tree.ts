@@ -116,7 +116,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
     const t = await this.buildTreeItem(el, mode);
     t.id = elId(el);
     // Every row read out in words: only change rows were, and the others' "💬 3 (1 new)", "⚠" and
-    // "·" were left to the screen reader (test report 5e4c6af, accessibility).
+    // "·" were left to the screen reader.
     if (!t.accessibilityInformation) {
       const label = typeof t.label === "string" ? t.label : (t.label?.label ?? "");
       const desc = typeof t.description === "string" ? t.description : "";
@@ -193,7 +193,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
   async step(dir: 1 | -1): Promise<void> {
     const rows = this.rowsInOrder();
     const cur = this.panelSelection();
-    // From a round or group row too: the change after (or before) it, not the panel's first or last (test report v0.16.0, B4).
+    // From a round or group row too: the change after (or before) it, not the panel's first or last.
     const i = nextItemIndex(
       rows.map((e) => e.node?.type === "item"),
       cur ? rows.findIndex((e) => elId(e) === elId(cur)) : -1,
@@ -204,7 +204,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
     // Or by file and line, if you'd rather go through the document (stet.navigationOrder).
     if (vscode.workspace.getConfiguration("stet").get<string>("navigationOrder", "panel") === "document" && cur?.node?.type === "item") {
       const items = rows.filter((e) => e.node?.type === "item");
-      // Projects in the panel's order, not by path: they were crossed the other way round (test report 5e4c6af).
+      // Projects in the panel's order, not by path: they were crossed the other way round.
       const rank = [...new Set(rows.map((e) => e.project.mainPath))];
       const placed = await Promise.all(
         items.map(async (e) => {
@@ -260,7 +260,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
       const t = new vscode.TreeItem(el.project.name, E);
       t.iconPath = new vscode.ThemeIcon("repo");
       t.tooltip = el.project.mainPath;
-      // Each project's own counts: the status bar adds them up (test report v0.16.0).
+      // Each project's own counts: the status bar adds them up.
       const model = this.ext.model(el.project, mode);
       const done = el.project.snapshot.uncommitted.length;
       t.description = mode === "history" ? model.outcome(() => true) : [model.openText(() => true), ...(done ? [`${done} to commit`] : [])].join(" · ");
@@ -272,7 +272,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
     const snap = el.project.snapshot;
     switch (n.type) {
       case "agent": {
-        // An agent that hasn't proposed anything yet says what to do, not "0 pending" (test report v0.16.0).
+        // An agent that hasn't proposed anything yet says what to do, not "0 pending".
         const fresh = !history && n.agent.state === "active" && !snap.changesets.some((c) => c.agent === n.agent.id);
         const t = new vscode.TreeItem(fitLabel(n.agent.id, 28), fresh && !model.children(n).length ? vscode.TreeItemCollapsibleState.None : E);
         const parts = [history ? model.outcome((i) => i.agent === n.agent.id) : fresh ? "no proposals yet" : model.openText((i) => i.agent === n.agent.id)];
@@ -408,7 +408,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
 
   /**
    * Where a change is in your file (the editor's text if open, else the file on disk), and
-   * whether it is there at all: you may have edited the words around it since (test report v0.16.0).
+   * whether it is there at all: you may have edited the words around it since.
    */
   async placeOf(p: Project, it: Item): Promise<{ line: number; found: boolean }> {
     const key = `${p.mainPath}|${it.id}`;
@@ -430,7 +430,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
 
   /**
    * Lines of all open changes of a project in its files on disk, found in one go after each
-   * refresh: row by row, a panel of 424 changes took 6.5 s to redraw (test report v0.16.0, B2).
+   * refresh: row by row, a panel of 424 changes took 6.5 s to redraw.
    */
   lineBatches = new Map<string, Promise<Map<string, { line: number; span: unknown }>>>();
 

@@ -20,7 +20,7 @@ const fail = (msg) => {
 };
 
 const PACKAGES = ["packages/core/package.json", "packages/cli/package.json", "packages/vscode/package.json"];
-const CLI_SRC = "packages/cli/src/index.ts";
+const CLI_SRC = "packages/cli/src/version.ts";
 const VERSION_CONST = /const VERSION = "([^"]+)";/;
 const README_VERSION = /^Version (\S+?)\. /m;
 

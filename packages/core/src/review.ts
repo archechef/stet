@@ -76,7 +76,7 @@ const NEXT_TO = /^[\s\p{P}]*$/u;
 /**
  * Grow regions to take in edits next to them, separated by nothing but spaces and punctuation in
  * the same paragraph: the reviewer rewording a change as a whole, whose words a diff counts partly
- * outside it (test report v0.16.0, B9). Null if an edit is apart from every change, or a change
+ * outside it. Null if an edit is apart from every change, or a change
  * would grow into another.
  */
 function growRegions(content: string, regions: ReviewDocument["regions"], edits: { from: number; to: number }[]): ReviewDocument["regions"] | null {

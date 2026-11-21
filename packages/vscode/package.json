@@ -41,8 +41,7 @@
   },
   "activationEvents": [
     "workspaceContains:**/*.tex",
-    "workspaceContains:**/*.typ",
-    "onStartupFinished"
+    "workspaceContains:**/*.typ"
   ],
   "scripts": {
     "build": "tsc -b ../core && tsc -p . && node esbuild.mjs",

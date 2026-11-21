@@ -1,7 +1,7 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
 import { DOCUMENT_LANGUAGES, documentProfile, type FilePatterns, PROFILES } from "./lang/index.js";
-import { DEFAULT_PREVIEW, type PreviewConfig } from "./preview.js";
+import { DEFAULT_PREVIEW, PREVIEW_ENGINES, PREVIEW_ISOLATIONS, PREVIEW_TEX, type PreviewConfig } from "./preview.js";
 
 export { matchesAny } from "./lang/index.js";
 
@@ -27,8 +27,10 @@ export interface GroupingConfig {
   moves: { enabled: boolean; minWords: number; maxChangedWords: number | null };
 }
 
-export type ShareMode = "manual" | "saved" | "committed";
-export const SHARE_MODES: readonly ShareMode[] = ["manual", "saved", "committed"];
+export const SHARE_MODES = ["manual", "saved", "committed"] as const;
+export type ShareMode = (typeof SHARE_MODES)[number];
+
+export const AUTO_COMMIT = ["on-finish", "when-clean", "never"] as const;
 
 export interface StetConfig {
   mainBranch: string;
@@ -43,7 +45,7 @@ export interface StetConfig {
    * finishes the review; "when-clean" after every accept whose files had no other uncommitted
    * edits. "never" is the old name of "on-finish".
    */
-  autoCommit: "on-finish" | "when-clean" | "never";
+  autoCommit: (typeof AUTO_COMMIT)[number];
   /**
    * Which of the user's own edits agents see (spec §7.3): "manual" (default) the saved files as of
    * the user's last *Share my edits* (`stet share`); "saved" the saved files whenever an agent
@@ -61,7 +63,7 @@ export interface StetConfig {
   language: string;
   /** PDF previews of changes (spec §14). */
   preview: PreviewConfig;
-  /** The largest file an agent can propose, in MB: a 60 MB file went into the store whole (test report D10). */
+  /** The largest file an agent can propose, in MB: a 60 MB file went into the store whole. */
   maxFileMB: number;
 }
 
@@ -155,7 +157,7 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (!REF_NAME.test(cfg.agentBranchPrefix) || !cfg.agentBranchPrefix.endsWith("/"))
     bad(`agentBranchPrefix '${cfg.agentBranchPrefix}' (use a plain name ending in '/', e.g. 'stet/')`);
   if (typeof cfg.worktreeRoot !== "string" || !cfg.worktreeRoot) bad("worktreeRoot");
-  if (!["on-finish", "when-clean", "never"].includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}'`);
+  if (!AUTO_COMMIT.includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}' (${AUTO_COMMIT.join(", ")})`);
   if (!SHARE_MODES.includes(cfg.shareEdits)) bad(`shareEdits '${cfg.shareEdits}' (use ${SHARE_MODES.join(", ")})`);
   if (typeof cfg.maxFileMB !== "number" || !(cfg.maxFileMB > 0)) bad("maxFileMB (a number of megabytes)");
   if (!DOCUMENT_LANGUAGES.some((p) => p.id === cfg.language)) bad(`language '${cfg.language}' (${DOCUMENT_LANGUAGES.map((p) => p.id).join(" or ")})`);
@@ -168,11 +170,11 @@ export function validateConfig(cfg: StetConfig): StetConfig {
     (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+$/.test(pv.rootFile) || !ts?.source.test(pv.rootFile) || pv.rootFile.startsWith("/"))
   )
     bad(`preview.rootFile '${pv.rootFile}' (one of the document's ${ts?.sourceName ?? "source files"} relative to the project, or null)`);
-  if (!["auto", "pdflatex", "xelatex", "lualatex"].includes(pv.engine)) bad(`preview.engine '${pv.engine}' (auto, pdflatex, xelatex or lualatex)`);
-  if (!["auto", "container", "process"].includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (auto, container or process)`);
+  if (!PREVIEW_ENGINES.includes(pv.engine)) bad(`preview.engine '${pv.engine}' (${PREVIEW_ENGINES.join(", ")})`);
+  if (!PREVIEW_ISOLATIONS.includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (${PREVIEW_ISOLATIONS.join(", ")})`);
   if (typeof pv.image !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.image)) bad(`preview.image '${pv.image}'`);
   if (typeof pv.texImage !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.texImage)) bad(`preview.texImage '${pv.texImage}'`);
-  if (!["auto", "host", "image"].includes(pv.tex)) bad(`preview.tex '${pv.tex}' (auto, host or image)`);
+  if (!PREVIEW_TEX.includes(pv.tex)) bad(`preview.tex '${pv.tex}' (${PREVIEW_TEX.join(", ")})`);
   if (typeof pv.texExtras !== "boolean") bad("preview.texExtras (true or false)");
   if (typeof pv.texExtrasImage !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.texExtrasImage)) bad(`preview.texExtrasImage '${pv.texExtrasImage}'`);
   if (typeof pv.timeout !== "number" || !(pv.timeout >= 5 && pv.timeout <= 3600)) bad("preview.timeout (seconds, 5 to 3600)");

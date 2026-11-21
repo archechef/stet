@@ -157,7 +157,7 @@ export class StetExtension implements Host, vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("stet.runtime")) void this.applyRuntime();
         if (e.affectsConfiguration("workbench.colorCustomizations")) void this.view.updateHighlightContext();
-        // Only the projects whose setting changed: in a multi-root workspace each folder has its own (test report v0.16.0, B8).
+        // Only the projects whose setting changed: in a multi-root workspace each folder has its own.
         for (const p of this.projects.values()) if (e.affectsConfiguration("stet.shareEdits", vscode.Uri.file(p.mainPath))) void this.applyShareMode(p, true);
       }),
       vscode.window.onDidChangeWindowState((s) => {
@@ -190,7 +190,7 @@ export class StetExtension implements Host, vscode.Disposable {
         if (uri) void this.view.offerContrastStyle(uri);
       }),
       // Which the user chose last, a change in the panel or a place in a file: commands from the
-      // palette act on that one (test report 2026-11-20, B8).
+      // palette act on that one.
       this.tree.onDidChangeSelection((e) => {
         this.lastPick = "panel";
         if (e.selection[0]) this.panel.lastSelected = e.selection[0];
@@ -221,7 +221,7 @@ export class StetExtension implements Host, vscode.Disposable {
       try {
         const loc = await Stet.locate(f.uri.fsPath);
         // Agent workspaces are for the agent; review happens in the project window. The panel
-        // says so, rather than "not set up" (test report 2026-11-20, B9).
+        // says so, rather than "not set up".
         if (loc.agentWorkspace) {
           this.agentOf ??= loc.mainPath;
           continue;
@@ -260,7 +260,7 @@ export class StetExtension implements Host, vscode.Disposable {
       if (this.ctx.globalState.get<boolean>(memo)) continue;
       await this.ctx.globalState.update(memo, true);
       // A document file VS Code knows no language for (a .typ file without a Typst extension) is
-      // "plaintext": a fix there would change every plain-text file (test report 5e4c6af, UX).
+      // "plaintext": a fix there would change every plain-text file.
       const lang = profileByName(doc.uri.fsPath);
       if (doc.languageId === "plaintext" && lang.document) {
         void vscode.window.showInformationMessage(
@@ -349,7 +349,7 @@ export class StetExtension implements Host, vscode.Disposable {
     this.panel.lineBatches.clear();
     const all = [...this.projects.values()];
     const snaps = all.map((p) => p.snapshot);
-    // Yours to review: changes waiting for the agent's revision don't count (test report UX).
+    // Yours to review: changes waiting for the agent's revision don't count.
     const pending = snaps.reduce((n, s) => n + s.items.filter((i) => i.status === "pending").length, 0);
     const uncommitted = snaps.reduce((n, s) => n + s.uncommitted.length, 0);
     const sync = snaps.flatMap(behindAgents);
@@ -482,7 +482,7 @@ export class StetExtension implements Host, vscode.Disposable {
     const several = changesAt(located, ed.selection.active);
     if (several.length) {
       const pick = await vscode.window.showQuickPick(
-        // The full id: the label's number is the change's within its round, so 2.1 showed as "1" (test report 5e4c6af).
+        // The full id: the label's number is the change's within its round, so 2.1 showed as "1".
         several.map((l) => ({
           label: `${l.item.id}: ${itemLabel(l.item, this.model(p).get).replace(/^\S+\s+/, "")}`,
           description: l.item.agent,
@@ -514,7 +514,7 @@ export class StetExtension implements Host, vscode.Disposable {
     let t = await this.target(arg);
     if (this.pickCancelled) return undefined;
     // From the palette or a key binding, with a round or group selected in the panel: the change
-    // under the cursor (test report v0.16.0, B7).
+    // under the cursor.
     if (t?.node?.type !== "item" && arg === undefined) {
       const here = await this.atCursor();
       if (here === CANCELLED) return undefined;
@@ -639,8 +639,6 @@ export class StetExtension implements Host, vscode.Disposable {
 export interface TestApi {
   editor: EditorIntegration;
 }
-
-/** "Which one?" was cancelled: nothing to act on, not "no change here". */
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   const ext = new StetExtension(ctx);

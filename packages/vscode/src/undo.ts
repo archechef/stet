@@ -13,7 +13,7 @@ const UNDO_SHOWN_MS = 15_000;
 export class UndoStack {
   constructor(private readonly ext: StetExtension) {}
 
-  /** *Undo* for a few seconds after each decision (test report 2026-11-20). */
+  /** *Undo* for a few seconds after each decision. */
   readonly undoButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
 
   /** Decisions made in this window, latest last, for *Undo* (`u`): one per press, back to the oldest. */
@@ -30,7 +30,7 @@ export class UndoStack {
 
   private showUndo(): void {
     // The panel's title has Undo while there is something to undo: mouse users had only the
-    // status-bar button for 15 seconds (test report v0.16.0).
+    // status-bar button for 15 seconds.
     void vscode.commands.executeCommand("setContext", "stet.canUndo", this.decisions.length > 0);
     const d = this.decisions.at(-1);
     if (!d) return void this.undoButton.hide();
@@ -81,7 +81,7 @@ export class UndoStack {
       }
       if (!todo.length) return;
       // All at once, with progress when it takes a moment: one by one, 400 changes took 16 s
-      // without a word (test report 5e4c6af, B5).
+      // without a word.
       const r = await vscode.window.withProgress(
         {
           location: todo.length > 20 ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,

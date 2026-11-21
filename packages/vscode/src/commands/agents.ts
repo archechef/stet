@@ -84,7 +84,7 @@ export class AgentCommands {
     const all = this.ext.allProjects().flatMap((project) => project.snapshot.agents.filter((a) => a.state === "active").map((agent) => ({ project, agent })));
     if (!all.length) return void vscode.window.showInformationMessage("No agent workspaces yet.", "New agent workspace").then((c) => c && this.newAgent());
     const pick = await vscode.window.showQuickPick(
-      // With several projects, the same agent name can be in both: say whose (test report v0.16.0).
+      // With several projects, the same agent name can be in both: say whose.
       all.map((x) => ({
         label: x.agent.id,
         description: this.ext.allProjects().length > 1 ? `${x.project.name} · ${x.agent.kind}` : x.agent.kind,
@@ -183,7 +183,7 @@ export class AgentCommands {
     if (!a) return;
     const pending = a.project.snapshot.items.filter((i) => i.agent === a.agent.id && isLiveItem(i)).length;
     const unsubmitted = await a.project.stet.unsubmittedFiles(a.agent).catch(() => [] as string[]);
-    // Keeping the folder comes first, so Enter never deletes anything (test report D5).
+    // Keeping the folder comes first, so Enter never deletes anything.
     const { del, order } = archiveChoices(unsubmitted.length);
     const ok = await vscode.window.showWarningMessage(
       `Archive agent ${a.agent.id}?`,

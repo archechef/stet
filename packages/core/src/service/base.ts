@@ -48,7 +48,7 @@ export class ReviewBase {
       // Still open while HEAD's file is what it was at the accept: the change went into the working
       // copy only. Once the user commits the file, it holds the change, or what they made of it
       // since (edited, moved, removed). Looking for the old text instead re-applied changes the
-      // user had edited: a pure insertion's empty old text is found anywhere (bug report 2026-11-12).
+      // user had edited: a pure insertion's empty old text is found anywhere.
       if (await this.committedSinceAccept(it, head, headBlobs)) {
         const f = await view.read(it.file);
         const probe = { ...it, oldText: applied, newText: applied, range: { start: it.range.start, end: it.range.start + applied.length } };
@@ -63,8 +63,7 @@ export class ReviewBase {
     const share = await this.sharedTree(cfg, head);
     const shared = share && share.tree !== (await this.stet.repo.run(["rev-parse", `${head}^{tree}`])) ? share.tree : null;
     let toApply = stillOpen;
-    // Accepted items the base should hold but can't: agents would never see them (bug report
-    // 2026-11-18), so they are recorded and shown to the reviewer.
+    // Accepted items the base should hold but can't: agents would never see them, so they are recorded and shown to the reviewer.
     const missing: { id: string; reason: string }[] = [];
     if (share) {
       const sview = this.stet.treeView(share.tree);
@@ -76,7 +75,7 @@ export class ReviewBase {
           continue;
         }
         const f = await sview.read(it.file);
-        // With its accepted neighbours: one right next to it changed its surroundings (bug report 2026-11-18).
+        // With its accepted neighbours: one right next to it changed its surroundings.
         if (f && anchorNear({ ...it, newText: it.resolution!.appliedText }, f.text, await this.stet.refText(it), await this.stet.neighbours(it)))
           toApply.push(it);
         else if (!f || !this.holdsApplied(it, f.text)) missing.push({ id: it.id, reason: "it can't be located in your shared edits" });
@@ -117,7 +116,7 @@ export class ReviewBase {
   /**
    * Accepted items whose commit is no longer on the main branch (a `git reset --hard`, a rebase
    * that dropped it). Stet kept saying "accepted and committed" while the text was gone, and
-   * refused to undo them (test report 2026-11-20, D9). An item whose change is still in the
+   * refused to undo them. An item whose change is still in the
    * working copy is uncommitted again: it can be undone, and the next commit takes it. One whose
    * change is gone is pending again, and the agent is told. Checked only when main moved other
    * than forward.
@@ -188,9 +187,9 @@ export class ReviewBase {
     return out;
   }
 
-  /** The tree of the user's edits that agents see per `shareEdits`, or null for "HEAD only". */
   /**
-   * The user's edits agents see instead of HEAD, and when they were taken: `at` null = now (they
+   * The tree of the user's edits that agents see instead of HEAD (per `shareEdits`; null for
+   * "HEAD only"), and when they were taken: `at` null = now (they
    * hold every accepted item), "" = a share from before 0.6.1 (time unknown).
    */
   private async sharedTree(cfg: StetConfig, head: string): Promise<{ tree: string; at: string | null } | null> {

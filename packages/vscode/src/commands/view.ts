@@ -21,7 +21,7 @@ export class ViewOptions {
   /**
    * In a High Contrast theme, proposed text drawn as an inlay hint (the wrapping style) has no
    * border and no colour, and screen readers skip it: offer once to use the highlighted style,
-   * which has the border (test report v0.16.0, accessibility).
+   * which has the border.
    */
   async offerContrastStyle(uri: vscode.Uri): Promise<void> {
     const memo = "stet.askedContrastStyle";
@@ -37,7 +37,7 @@ export class ViewOptions {
     await this.ext.ctx.globalState.update(memo, true);
     const use = "Use the highlighted style";
     const pick = await vscode.window.showInformationMessage(
-      // Neither style is read by screen readers (decorations aren't): said so, not implied (test report 5e4c6af).
+      // Neither style is read by screen readers (decorations aren't): said so, not implied.
       "In High Contrast themes, proposed text that wraps with the line has no border or colour of its own. Use the highlighted style instead, which has a border? (It doesn't wrap with the line.) Screen readers read neither style; the Stet panel and each change's hover say what it proposes.",
       use,
       "Keep wrapping",
@@ -59,8 +59,7 @@ export class ViewOptions {
 
   /**
    * Share my edits, set from View options: for one project, which is asked for when the window has
-   * several; set on its workspace folder, so another paper's agents don't see this one's drafts
-   * (test report v0.16.0, B8). The project's own config follows (`applyShareMode`).
+   * several; set on its workspace folder, so another paper's agents don't see this one's drafts. The project's own config follows (`applyShareMode`).
    */
   private async setShareOption(value: unknown): Promise<void> {
     const p = await this.ext.setupWizard.pickProject();

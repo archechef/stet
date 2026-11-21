@@ -7,8 +7,8 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import {
   type AcceptResult,
+  AGENT_KINDS,
   type Agent,
-  type AgentKind,
   archivedMessage,
   type CliCommand,
   checkToolUse,
@@ -19,12 +19,16 @@ import {
   documentProfile,
   findInbox,
   followInbox,
+  GROUP_KINDS,
   type GroupHint,
   type GroupKind,
   hookStatus,
+  ITEM_STATUSES,
   type Item,
   type ItemStatus,
   installHooks,
+  isAgentKind,
+  isGroupKind,
   isLive,
   isNoteId,
   moveOthers,
@@ -71,6 +75,7 @@ import {
   red,
   yellow,
 } from "./output.js";
+import { VERSION } from "./version.js";
 
 /** What a command runs with. */
 export interface Ctx {
@@ -98,7 +103,7 @@ export interface Command {
   options: OptionName[];
   /** It works on the project: opened from the current folder before it runs. */
   project?: true;
-  /** The reviewer's: refused in an agent's workspace, where an agent without a sandbox could accept its own proposals (test report 2026-11-20). */
+  /** The reviewer's: refused in an agent's workspace, where an agent without a sandbox could accept its own proposals. */
   reviewer?: boolean | ((args: string[]) => boolean);
   /** Its exit code, when not 0. */
   // biome-ignore lint/suspicious/noConfusingVoidType: most commands end with `return out(…)`.
@@ -117,9 +122,9 @@ async function agentId(stet: Stet, opt: Opts, cwd: string): Promise<string> {
   return (await stet.agentForCwd(cwd)).id;
 }
 
-const STATUSES: readonly ItemStatus[] = ["pending", "needs_revision", "accepted", "rejected", "withdrawn", "superseded", "stale"];
+const STATUSES: readonly ItemStatus[] = ITEM_STATUSES;
 
-/** `--status a,b`, checked: a typo matched nothing and said "Nothing to review" (test report B5). */
+/** `--status a,b`, checked: a typo matched nothing and said "Nothing to review". */
 function statusOption(v: string): ItemStatus[] {
   const out = v
     .split(",")
@@ -148,7 +153,7 @@ function need(v: string | undefined, what: string): string {
 const isGroupId = (s: string) => ["group", "part"].includes(parseId(s).kind);
 const isRoundId = (s: string) => parseId(s).kind === "round";
 
-/** A round's (C3) pending changes, for accepting or rejecting it whole (test report UX: "Unknown item 'C1'"). */
+/** A round's (C3) pending changes, for accepting or rejecting it whole ("Unknown item 'C1'"). */
 async function roundItems(stet: Stet, id: string): Promise<string[]> {
   const cs = (await stet.listChangesets()).find((c) => c.id === parseId(id).id);
   if (!cs) throw notFound(`Unknown changeset ${parseId(id).id}.`);
@@ -156,8 +161,6 @@ async function roundItems(stet: Stet, id: string): Promise<string[]> {
   if (!ids.length) throw new StetError(`${cs.id} has no pending changes.`);
   return ids;
 }
-
-export const VERSION = "0.16.0";
 
 function readAll(stream: NodeJS.ReadableStream): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -183,7 +186,7 @@ async function guard(): Promise<number> {
     return 2;
   };
   // The hook Stet installs names the project and the agent. The project is opened from there and
-  // the workspace's git link checked, never followed (security report 5e4c6af, S1), and the guard
+  // the workspace's git link checked, never followed, and the guard
   // fails closed: an error used to let every tool call through (S6).
   const project = process.env.STET_PROJECT;
   const agentId = process.env.STET_AGENT;
@@ -266,11 +269,11 @@ export const COMMANDS: Command[] = [
     usage: ["stet init [--main <branch>] [--language <latex|typst>]           set up Stet in this repository"],
     options: ["main", "language"],
     async run({ opt, cwd, self, out }) {
-      // A second run only refreshes the setup: say so, instead of the first-time message (test report UX).
+      // A second run only refreshes the setup: say so, instead of the first-time message.
       const { setUp: already, languages } = await Stet.inspectSetup(cwd);
       const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), ...(opt.language ? { language: opt.language } : {}), cli: self });
       const cfg = await stet.config();
-      // Files of both languages: which has more, and how to choose the other (test report 5e4c6af).
+      // Files of both languages: which has more, and how to choose the other.
       const mixed = !opt.language && !already && languages.length > 1;
       const hooks = await hookStatus(stet.repo, stet.commonDir);
       // Agents start from the last commit: edits not committed yet are not theirs to see.
@@ -280,7 +283,7 @@ export const COMMANDS: Command[] = [
           (already
             ? `Stet was already set up for ${stet.mainPath} (main branch '${cfg.mainBranch}'); its setup is refreshed.\n`
             : `Stet is set up for ${stet.mainPath} (main branch '${cfg.mainBranch}').\n`) +
-          // Which language agents are told about, and how to change it (test report 5e4c6af, UX).
+          // Which language agents are told about, and how to change it.
           `Language: ${documentProfile(cfg).name} (agents' instructions follow it; set "language" in .git/stet/config.json to change it).\n` +
           (mixed
             ? yellow(
@@ -340,8 +343,8 @@ export const COMMANDS: Command[] = [
     async run({ args, opt, cwd, stet, self, out }) {
       const [sub, name] = args;
       if (sub === "new") {
-        const kind = (opt.kind ?? "other") as AgentKind;
-        if (!["claude-code", "codex", "other"].includes(kind)) throw new StetError(`Unknown kind '${kind}'.`);
+        const kind = opt.kind ?? "other";
+        if (!isAgentKind(kind)) throw usageError(`Unknown kind '${kind}' (use ${AGENT_KINDS.join(", ")}).`);
         if (!(await stet.config()).cli) await Stet.init(cwd, { cli: self });
         const a = await stet.newAgent(need(name, "agent name"), { kind, ...(opt.path ? { path: opt.path } : {}) });
         const launch =
@@ -499,13 +502,13 @@ export const COMMANDS: Command[] = [
       const changesets = await stet.listChangesets();
       if (opt.json) return out(() => {}, { items, groups: groups.filter((g) => g.items.some((i) => items.some((x) => x.id === i))) });
       const share = await stet.shareStatus().catch(() => null);
-      // Only when there are agents to share with (test report UX: it showed before any agent existed).
+      // Only when there are agents to share with (it showed before any agent existed).
       const agents = (await stet.listAgents()).filter((a) => a.state === "active");
       const shareHint =
         agents.length && share?.unshared && share.mode === "manual" ? [dim("Agents don't see your latest saved edits yet: `stet share` shares them.")] : [];
       const missing = await stet.missingFromBase().catch(() => []);
       if (missing.length) shareHint.push(yellow(missingText(missing)));
-      // Accepted but not committed: easy to forget without a word here (test report UX).
+      // Accepted but not committed: easy to forget without a word here.
       const uncommitted = await stet.uncommittedAccepted();
       if (uncommitted.length)
         shareHint.push(
@@ -629,13 +632,13 @@ export const COMMANDS: Command[] = [
         () => {
           const lines = [itemSummary(it, line)];
           if (it.note) lines.push(`${dim("note:")} ${it.note}`);
-          // A revision: what it revises, and what the reviewer asked for there (test report B4).
+          // A revision: what it revises, and what the reviewer asked for there.
           if (d.revises) {
             const prev = d.revises.item;
             lines.push(`${dim("revises:")} ${d.revises.id}${prev ? ` (${prev.status})` : ""}${d.revises.asked ? `, where you asked: ${d.revises.asked}` : ""}`);
             if (prev?.kind === "modify") lines.push(`  ${dim("it proposed:")} ${itemDiff(prev, !!opt.full)}`);
           }
-          // The text that went in (accepted with your wording) or would (your wording): test report B11.
+          // The text that went in (accepted with your wording) or would (your wording).
           if (d.yours) {
             lines.push(
               `${dim(d.yours.accepted ? "accepted with your wording:" : "your wording (not accepted yet):")} ${itemDiff({ ...it, newText: d.yours.text }, !!opt.full)}`,
@@ -654,7 +657,7 @@ export const COMMANDS: Command[] = [
           if (it.groups.length) lines.push(`${dim("groups:")} ${it.groups.join(", ")}`);
           if (it.conflictsWith.length) lines.push(`${yellow("conflicts with:")} ${it.conflictsWith.join(", ")}`);
           if (!d.yours) lines.push("", itemDiff(it, !!opt.full));
-          // Without colours, the markers need a word (test report UX).
+          // Without colours, the markers need a word.
           if (!colored() && it.kind === "modify") lines.push(dim("([-…-] is removed, {+…+} is added)"));
           if (it.thread.length) lines.push("", ...it.thread.map((t) => `${dim(localTime(t.at))} ${bold(t.author)}: ${indented(t.text)}`));
           return lines.join("\n");
@@ -889,7 +892,7 @@ export const COMMANDS: Command[] = [
     reviewer: true,
     async run({ args, opt, cwd, stet, out }) {
       const kind = need(opt.kind, "--kind") as GroupKind;
-      if (!["atomic", "linked", "related"].includes(kind)) throw new StetError(`Unknown group kind '${kind}'.`);
+      if (!isGroupKind(kind)) throw usageError(`Unknown group kind '${kind}' (use ${GROUP_KINDS.join(", ")}).`);
       const onlyAgent =
         opt.agent ??
         (await stet

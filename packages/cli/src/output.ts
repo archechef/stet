@@ -34,7 +34,7 @@ export const colored = (): boolean => color;
 /**
  * Stet's own colour codes are written as markers with a random tag and become escape sequences
  * only in `forTerminal`, after every control character from agent text is gone: agent text could
- * otherwise carry Stet's own colours (security report 5e4c6af, S10).
+ * otherwise carry Stet's own colours.
  */
 const TAG = randomBytes(8).toString("hex");
 const sgr = (code: string) => `\uE000${TAG}${code}\uE001`;
@@ -80,7 +80,7 @@ export const localTime = (iso: string) => {
 export const sizeOf = (n: number) => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 export function itemSummary(it: Item, line?: number): string {
-  // A file that takes effect (a latexmkrc, .gitattributes, AGENTS.md…): flagged (security report 5e4c6af, S12).
+  // A file that takes effect (a latexmkrc, .gitattributes, AGENTS.md…): flagged.
   const effect = itemEffect(it);
   return itemLine(it, line) + (effect ? yellow(` ⚠ takes effect: ${effect}`) : "");
 }
@@ -111,13 +111,13 @@ export function itemLine(it: Item, line?: number): string {
   return `${bold(it.id)} ${statusColor(it.status)} ${dim(where)}  ${breaks ? `${breaks}: ` : ""}${change}${revises}`;
 }
 
-/** A reply or note on several lines, indented, so it can't pass for thread lines of its own (security report 5e4c6af, S10). */
+/** A reply or note on several lines, indented, so it can't pass for thread lines of its own. */
 export const indented = (t: string) => printable(t).replace(/\n/g, "\n    ");
 
 /** `full`: whole files, not their first lines. */
 export function itemDiff(it: Item, full = false): string {
   if (it.kind === "binary") {
-    // Text with bytes that aren't UTF-8: shown, the bytes marked (security report 5e4c6af, S7).
+    // Text with bytes that aren't UTF-8: shown, the bytes marked.
     if (!it.shownText) return dim("(binary file)");
     const { shown, more } = firstLines(lineDiff(it.shownText.old ?? "", it.shownText.new ?? ""), full ? Infinity : SHOWN_LINES);
     return [
@@ -129,7 +129,7 @@ export function itemDiff(it: Item, full = false): string {
   if (it.kind !== "modify") {
     const lines: string[] = [];
     // Whole files with --full; else the first lines of each side, and how many more there are
-    // (security report 5e4c6af, S8: the rest was cut without a word).
+    // (the rest was cut without a word).
     const side = (text: string, mark: (s: string) => string, sign: string) => {
       const { shown, more } = firstLines(text.split("\n"), full ? Infinity : SHOWN_LINES);
       lines.push(...shown.map((l) => mark(sign + l)));

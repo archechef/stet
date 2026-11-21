@@ -103,7 +103,7 @@ export class Store {
     for (const d of ["agents", "changesets", "groups", "items", "notes"] as const) await mkdir(this.dir(d), { recursive: true });
     if (!(await pathExists(join(this.root, "config.json")))) await writeJsonAtomic(join(this.root, "config.json"), configDelta(defaultConfig(mainBranch)));
     if (!(await pathExists(join(this.root, "state.json")))) {
-      const state: StoreState = { schema: 1, nextItem: 1, nextChangeset: 1, nextGroup: 1, nextEvent: 1, base: null };
+      const state: StoreState = { schema: 1, nextChangeset: 1, nextGroup: 1, nextEvent: 1, base: null };
       await writeJsonAtomic(join(this.root, "state.json"), state);
     }
     if (!(await pathExists(join(this.root, "events.jsonl")))) await writeFile(join(this.root, "events.jsonl"), "");
@@ -179,8 +179,7 @@ export class Store {
    * Create the lock file with its owner in it, failing (EEXIST) if it exists. The owner is written
    * to a file of its own first, which is then linked as the lock: the lock appears whole or not at
    * all. Created empty and then written, a process stopped in between (a window reloaded, a
-   * command killed) left an empty lock that named no owner, which nobody took over (bug report
-   * 2026-11-20). Where links aren't possible, it is created and written as before.
+   * command killed) left an empty lock that named no owner, which nobody took over. Where links aren't possible, it is created and written as before.
    */
   private async createLock(owner: string, token: string): Promise<void> {
     const tmp = `${this.lockPath}.${token}.new`;
@@ -247,10 +246,10 @@ export class Store {
   }
 
   /** Allocate sequential ids. Call while holding the lock. */
-  async allocate(kind: "item" | "changeset" | "group" | "note", n = 1): Promise<string[]> {
+  async allocate(kind: "changeset" | "group" | "note", n = 1): Promise<string[]> {
     const s = await this.state();
-    const key = kind === "item" ? "nextItem" : kind === "changeset" ? "nextChangeset" : kind === "group" ? "nextGroup" : "nextNote";
-    const prefix = kind === "item" ? "S" : kind === "changeset" ? "C" : kind === "group" ? "G" : "N";
+    const key = kind === "changeset" ? "nextChangeset" : kind === "group" ? "nextGroup" : "nextNote";
+    const prefix = kind === "changeset" ? "C" : kind === "group" ? "G" : "N";
     const next = s[key] ?? 1;
     const ids = Array.from({ length: n }, (_, i) => `${prefix}${next + i}`);
     s[key] = next + n;
@@ -321,7 +320,7 @@ export class Store {
   /**
    * The items, shared and not copied: for lookups repeated many times in one locked operation,
    * which must not change them. `items()` copies every record on every call: locating the other
-   * 750 changes of a file during an accept took 4 s (test report 2026-11-20, B3). Outside the
+   * 750 changes of a file during an accept took 4 s. Outside the
    * lock, the same as `items()`.
    */
   async itemsReadOnly(): Promise<readonly Item[]> {
@@ -348,7 +347,7 @@ export class Store {
   /**
    * Rewrite `changed` in the store's folder: a record (item, group, changeset, agent, note) was
    * written or removed. Watchers of the folder (the VS Code panel) see the records' own files
-   * only in subfolders, and not every operation appends an event (bug report 2026-11-20: merging
+   * only in subfolders, and not every operation appends an event (merging
    * changes into one, removing a group).
    */
   private async signalChange() {
@@ -423,8 +422,7 @@ export class Store {
 }
 
 /**
- * Order of records by id: items by round and number (1.2 before 1.10: as decimals, 1.10 was 1.1,
- * test report v0.16.0), the others (C3, G12, N4) by their number.
+ * Order of records by id: items by round and number (1.2 before 1.10: as decimals, 1.10 was 1.1), the others (C3, G12, N4) by their number.
  */
 export function byId(a: string, b: string): number {
   if (/^\d+\.\d+$/.test(a) && /^\d+\.\d+$/.test(b)) return compareItemIds(a, b);

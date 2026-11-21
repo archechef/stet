@@ -67,7 +67,7 @@ export class AgentFiles {
   /** Stage the whole workspace (Stet's own files excluded) on top of `tip`; returns the tree and changed paths. */
   private async stage(git: Repo, env: Record<string, string>, tip: string): Promise<{ tree: string; changed: string[] }> {
     await git.run(["read-tree", tip], { env });
-    // git refuses some paths outright (a folder named .GIT, say): say which, not git's error (test report B7).
+    // git refuses some paths outright (a folder named .GIT, say): say which, not git's error.
     const added = await gitRaw(["add", "-A", "--", ".", ...WORKSPACE_EXCLUDES], { cwd: git.cwd, config: git.config, env, allowFail: true });
     if (added.code !== 0) {
       const bad = [...added.stderr.matchAll(/invalid path '([^']+)'/g)].map((m) => m[1]!);

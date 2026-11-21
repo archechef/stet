@@ -168,7 +168,7 @@ function toolConfigs(ctx: WorkspaceContext, tracked: Set<string>): [string, stri
 /**
  * Tool settings in the workspace that differ from what Stet last wrote there (`written`: file →
  * SHA-256, from `writeWorkspaceFiles`). An agent can edit them, and the programs they configure
- * run outside its sandbox at its next session (security report 5e4c6af, S5).
+ * run outside its sandbox at its next session.
  */
 export async function changedToolConfigs(worktree: string, written: Record<string, string>): Promise<string[]> {
   const out: string[] = [];

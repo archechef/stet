@@ -1,9 +1,12 @@
 /** The command table: help from it, options checked per command, and runs in the test's own process. */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { edit, PAPER, setup } from "../../core/test/helpers.js";
 import { COMMANDS } from "../src/commands.js";
 import { EXIT, help, main } from "../src/main.js";
 import { GLOBAL_OPTIONS, OPTIONS } from "../src/options.js";
+import { VERSION } from "../src/version.js";
 
 /** Run `stet` in-process, collecting its output. */
 async function stet(cwd: string, ...argv: string[]) {
@@ -60,5 +63,18 @@ describe("the command table (code quality report 6a517ae, refactoring 5)", () =>
     expect(refused.code).toBe(EXIT.error);
     expect(refused.err).toContain("is for the reviewer, and this is an agent's workspace");
     expect((await stet(worktree, "agent", "list")).code).toBe(0);
+  });
+});
+
+describe("the version (code quality report 6a517ae)", () => {
+  it("is the package's, in the file the release script sets", () => {
+    const root = join(__dirname, "..", "..", "..");
+    const pkg = JSON.parse(readFileSync(join(root, "packages", "cli", "package.json"), "utf8"));
+    expect(VERSION).toBe(pkg.version);
+    // scripts/release.mjs finds the version by these two lines; they must still point at VERSION.
+    const release = readFileSync(join(root, "scripts", "release.mjs"), "utf8");
+    const file = /const CLI_SRC = "([^"]+)";/.exec(release)?.[1];
+    expect(file).toBeDefined();
+    expect(/const VERSION = "([^"]+)";/.exec(readFileSync(join(root, file!), "utf8"))?.[1]).toBe(pkg.version);
   });
 });

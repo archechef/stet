@@ -52,7 +52,7 @@ describe("archiving an agent", () => {
     expect(res.content[0]!.text).toMatch(/archived this workspace/);
   });
 
-  it.skipIf(!existsSync(CLI_DIST))("guard hook blocks with the explanation, also when the folder is gone", async () => {
+  it("guard hook blocks with the explanation, also when the folder is gone", async () => {
     const { stet, repo, agent } = await withPending();
     const guard = (env: Record<string, string>, input: object) =>
       new Promise<{ code: number | null; err: string }>((resolve) => {

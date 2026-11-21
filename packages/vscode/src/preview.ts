@@ -23,7 +23,6 @@ export class PreviewPanel implements vscode.Disposable {
   private readonly results = new Map<string, PreviewResult>();
   private readonly queue: Target[] = [];
   private running = false;
-  private readonly ready = new vscode.EventEmitter<string>();
 
   constructor(
     private readonly setup: (p: Project) => Promise<void>,
@@ -58,7 +57,7 @@ export class PreviewPanel implements vscode.Disposable {
       this.panel.webview.onDidReceiveMessage((m) => {
         if (m?.type === "setup" && this.current) void this.setup(this.current.project).then(() => this.refresh());
         if (m?.type === "extras" && this.current) void this.extras(this.current.project).then(() => this.refresh());
-        if (m?.type === "page" && this.current) void this.sendPage(m.version, Number(m.n));
+        if (m?.type === "page" && this.current && Number.isInteger(m.n) && m.n >= 1) void this.sendPage(m.version, m.n);
       });
     }
     this.follow(t);
@@ -146,7 +145,7 @@ export class PreviewPanel implements vscode.Disposable {
     }
     const roots = r?.status === "ready" ? [vscode.Uri.file(r.pages ? previewCacheRoot(t.project) : dirname(r.after.file))] : [];
     w.options = { enableScripts: true, localResourceRoots: roots };
-    // Which project, when the window has several: their ids are the same (test report v0.16.0, accessibility).
+    // Which project, when the window has several: their ids are the same.
     const several = (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
     this.panel.title = `Preview ${t.item.id}${several ? ` (${t.project.name})` : ""}`;
     const img = (file: string) => `${w.asWebviewUri(vscode.Uri.file(file))}?v=${Date.now()}`;
@@ -162,7 +161,6 @@ export class PreviewPanel implements vscode.Disposable {
 
   dispose(): void {
     this.panel?.dispose();
-    this.ready.dispose();
   }
 }
 
@@ -172,7 +170,7 @@ export class PreviewPanel implements vscode.Disposable {
  */
 export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, projectName: string, projectKey: string): Promise<boolean> {
   if (env.status === "ready" && env.isolation === "container") return false;
-  // Per project and reason: one "Don't show again" silenced every project (test report 5e4c6af, B8).
+  // Per project and reason: one "Don't show again" silenced every project.
   const key = `stet.previewNotice:${projectKey}:${env.status}:${env.isolation ?? ""}:${env.message}`;
   if (memo.get<boolean>(key)) return false;
   const never = "Don't show again";

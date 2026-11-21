@@ -8,6 +8,7 @@ import { notFound, StetError } from "../errors.js";
 import {
   canUndo,
   compareItemIds,
+  DROPPED_STATUSES,
   type Group,
   type GroupPart,
   type Item,
@@ -35,7 +36,7 @@ export class Decisions {
 
   /**
    * What Finish review would commit, without committing: the accepted items, and the files that
-   * also hold edits of the user's (committed along, whole files). For its question (test report v0.16.0, D6).
+   * also hold edits of the user's (committed along, whole files). For its question.
    */
   async commitPreview(): Promise<{ items: Item[]; yourEdits: string[] }> {
     return this.stet.store.withLock(async () => {
@@ -71,7 +72,7 @@ export class Decisions {
 
   /**
    * Of `paths`, those whose working copy holds more than the accepted `items` applied to `head`:
-   * the user's own edits, which a commit of the whole file takes along (test report D8). A file
+   * the user's own edits, which a commit of the whole file takes along. A file
    * where that can't be told (an item no longer found in `head`) counts as one.
    */
   private async filesWithOtherEdits(items: Item[], paths: string[], head: string): Promise<string[]> {
@@ -105,7 +106,6 @@ export class Decisions {
     return out;
   }
 
-  /** Live items that must be accepted (or rejected) together with `items`: their linked groups' parts (§6.4.5–6). */
   /**
    * Dissolve the moves (§6.4.7) of items that no longer stand (superseded, withdrawn): the other
    * items become ordinary deletions and insertions, and the move's own group goes. `known`:
@@ -155,24 +155,24 @@ export class Decisions {
    * Warnings for the linked groups of these items that are now decided differently: some members
    * accepted, others rejected, withdrawn, stale or still pending (parts decided one at a time, or `--only`). The
    * agent was told (group_partial, group_broken); the reviewer heard nothing, and a \ref could be
-   * committed without its \label (test report 2026-11-20, D3).
+   * committed without its \label.
    */
   async partlyDecided(items: Item[]): Promise<string[]> {
     const out: string[] = [];
     const cfg = await this.stet.config();
-    // Typst stops at a reference to a missing label; LaTeX prints "??" (test report 5e4c6af, D1).
+    // Typst stops at a reference to a missing label; LaTeX prints "??".
     const breaks = (ms: Item[]) => ms.some((m) => !!this.stet.profile(cfg, m.file).references?.strict);
     for (const gid of new Set(items.flatMap((i) => i.groups))) {
       const g = await this.stet.store.getGroup(gid);
       if (g?.kind !== "linked") continue;
       const members = (await Promise.all(g.items.map((i) => this.stet.store.getItem(i)))).filter((x): x is Item => !!x && x.status !== "superseded");
       const yes = members.filter((m) => m.status === "accepted");
-      const no = members.filter((m) => m.status === "rejected" || m.status === "withdrawn" || m.status === "stale");
+      const no = members.filter((m) => DROPPED_STATUSES.includes(m.status));
       const open = members.filter((m) => isLive(m.status));
       if (!yes.length) continue;
       if (!no.length) {
         // Accepted a part, the rest still to decide: say so, or a \label is committed and its
-        // \refs left dangling without a word (test report v0.16.0, D3).
+        // \refs left dangling without a word.
         if (open.length)
           out.push(
             `${g.id} (${oneLine(g.title, 80)}) is a linked group, now partly accepted: ${yes.map((m) => m.id).join(", ")} accepted, ` +
@@ -226,7 +226,7 @@ export class Decisions {
       throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before accepting.`);
 
     // Files that take effect (a latexmkrc, .gitattributes, AGENTS.md…): only when asked for
-    // explicitly (security report 5e4c6af, S12).
+    // explicitly.
     const effects = items.filter((i) => itemEffect(i));
     if (effects.length && !opts.confirmEffects) {
       throw new StetError(
@@ -246,7 +246,7 @@ export class Decisions {
             `accepting only part of a linked group can break the document. Accept the whole group, or override explicitly.`,
         );
       }
-      // Typst stops at a reference to a missing label; say so (test report 5e4c6af, D1).
+      // Typst stops at a reference to a missing label; say so.
       const strict = [...items, ...missing].some((m) => !!this.stet.profile(cfg, m.file).references?.strict);
       warnings.push(
         `Accepted without linked items ${missing.map((m) => m.id).join(", ")}; the group is now broken${strict ? ", and the document may not compile until they are accepted too" : ""}.`,
@@ -265,7 +265,7 @@ export class Decisions {
     const message =
       `Nothing was applied, because ${failed.length === 1 ? "a change" : "some changes"} could not be applied:\n` +
       failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n") +
-      // What to do next, for a change whose words were edited meanwhile (test report v0.16.0, UX).
+      // What to do next, for a change whose words were edited meanwhile.
       (lost.length
         ? `\nYou edited ${lost.length > 1 ? "their" : "its"} text or the text around ${lost.length > 1 ? "them" : "it"} since (${lost.join(", ")}): reject ${lost.length > 1 ? "them" : "it"}, or ask the agent for a revision against your current text.`
         : "");
@@ -275,7 +275,7 @@ export class Decisions {
   /**
    * Throws what `accept` would, with `unsaved` (an editor's unsaved texts, by file) in place of
    * those files; writes nothing. An editor saves its buffers only for an accept that will work:
-   * a failed accept had already saved them (test report v0.16.0, D7).
+   * a failed accept had already saved them.
    */
   async checkAccept(
     ids: string[],
@@ -395,7 +395,7 @@ export class Decisions {
     for (const [csId, its] of byCs) {
       const cs = await this.stet.store.getChangeset(csId);
       // Agent-written titles on one line, without control characters: tools that print `git log`
-      // raw would run escape sequences (security report 5e4c6af, S13).
+      // raw would run escape sequences.
       const title = cs ? oneLine(cs.title, 200) : "";
       if (cs && !titles.includes(title)) titles.push(title);
       lines.push(`- ${cs ? `${title} (${cs.agent}, ${csId})` : csId}: ${its.map((i) => i.id).join(", ")}`);
@@ -486,7 +486,7 @@ export class Decisions {
 
   /**
    * Undo the decisions of several changes at once, in one lock and one write: undoing an accept
-   * of 400 changes one by one took 16 s (test report 5e4c6af, B5). Accepted changes are taken out
+   * of 400 changes one by one took 16 s. Accepted changes are taken out
    * together; all of them, or none when one can't be.
    */
   async undoMany(ids: string[]): Promise<UndoResult> {
@@ -501,7 +501,7 @@ export class Decisions {
       const reopened = new Map<string, Item>();
       for (const item of items.filter((i) => i.status === "needs_revision")) {
         // A revision request the agent hasn't answered yet (an answer supersedes the change):
-        // taken back, the change is pending again, and the agent is told (test report v0.16.0, B5).
+        // taken back, the change is pending again, and the agent is told.
         await this.reopen(item, "revision request taken back", "needs_revision");
         reopened.set(item.id, item);
       }
@@ -530,95 +530,92 @@ export class Decisions {
 
   /** Take accepted changes (whole units, see `decidedWith`) out of the working copy. Call under lock. */
   private async undoAccepted(unit: Item[]): Promise<UndoResult> {
-    {
-      const committed = unit.find((i) => i.resolution?.committed);
-      if (committed) {
-        const c = committed.resolution!.committed!;
-        throw new StetError(`${committed.id} is committed already (${c.slice(0, 8)}): Stet can't undo it any more. Revert it with git if you need to.`);
-      }
-      const cfg = await this.stet.config();
-      const onBranch = await this.stet.projectBranch();
-      if (onBranch !== cfg.mainBranch)
-        throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before undoing.`);
-
-      // The inverse changes: from the applied text back to the old one. Each is found against its
-      // base with what is accepted there made (this change, and the other accepted ones not
-      // committed yet), as the working copy has it: text where nothing changed since is then
-      // known for what it is, and another accepted change's same words are never taken for this
-      // one's (test report v0.16.0, D1).
-      const unitIds = new Set(unit.map((i) => i.id));
-      const acceptedOthers = (await this.stet.store.items()).filter(
-        (o) => o.kind === "modify" && o.status === "accepted" && o.resolution && !o.resolution.committed && !unitIds.has(o.id),
-      );
-      const refs = new Map<string, string>();
-      const inverse: Item[] = [];
-      for (const it of unit) {
-        const applied = it.resolution!.appliedText;
-        if (it.kind === "modify") {
-          const ref = (await this.stet.refText(it)) ?? "";
-          const sameText = (o: Item) => o.kind === "modify" && o.id !== it.id && o.file === it.file && o.baseCommit === it.baseCommit && !!o.resolution;
-          const made = [it, ...unit.filter(sameText), ...acceptedOthers.filter(sameText)]
-            .map((o) => ({ id: o.id, range: o.range, oldText: o.oldText, text: o.resolution!.appliedText }))
-            .sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
-          let after = "";
-          let pos = 0;
-          let start = it.range.start;
-          for (const m of made) {
-            // Changes that overlap another or no longer match their base are left out (this one never is).
-            if (m.id !== it.id && (m.range.start < pos || ref.slice(m.range.start, m.range.end) !== m.oldText)) continue;
-            if (m.id === it.id) start = after.length + (m.range.start - pos);
-            after += ref.slice(pos, m.range.start) + m.text;
-            pos = m.range.end;
-          }
-          after += ref.slice(pos);
-          const range = { start, end: start + applied.length };
-          refs.set(it.id, after);
-          inverse.push({ ...it, oldText: applied, newText: it.oldText, range, context: captureContext(after, range.start, range.end) });
-        } else if (it.kind === "add-file") inverse.push({ ...it, kind: "delete-file", oldText: applied, newText: "" });
-        else if (it.kind === "delete-file") inverse.push({ ...it, kind: "add-file", oldText: "", newText: it.oldText });
-        else if (it.kind === "rename-file") inverse.push({ ...it, file: it.oldFile!, oldFile: it.file, oldText: applied, newText: it.oldText });
-        else {
-          const { oldFile, ...rest } = it;
-          inverse.push({ ...rest, ...(oldFile ? { file: oldFile, oldFile: it.file } : {}), oldBlob: it.newBlob ?? null, newBlob: it.oldBlob ?? null });
-        }
-      }
-      const res = await applyItems(inverse, this.stet.workingView(), {
-        refText: async (i) => refs.get(i.id) ?? (await this.stet.refText(i)),
-      });
-      if (res.failed.length) {
-        throw new StetError(
-          "Nothing was undone, because some changes are no longer as accepted (you edited them since?):\n" +
-            res.failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n"),
-        );
-      }
-      await this.stet.writeWorking(
-        res.changes,
-        unit.map((i) => ({ id: i.id, appliedText: "", edited: false })),
-        true,
-      );
-      for (const it of unit) await this.reopen(it, "accept undone", "accepted");
-      await rm(this.stet.journalPath, { force: true });
-
-      // Items the accept made stale are pending again.
-      const ids = new Set(unit.map((i) => i.id));
-      const restored: Item[] = [];
-      for (const it of await this.stet.store.items()) {
-        const last = it.history[it.history.length - 1];
-        const by = last?.staleBy;
-        if (it.status !== "stale" || !by || !ids.has(by)) continue;
-        await this.reopen(it, `the accept of ${by} was undone`, "stale");
-        restored.push(it);
-      }
-      await this.stet.groupOps.updateGroups([...unit, ...restored]);
-      return { reopened: unit, restored };
+    const committed = unit.find((i) => i.resolution?.committed);
+    if (committed) {
+      const c = committed.resolution!.committed!;
+      throw new StetError(`${committed.id} is committed already (${c.slice(0, 8)}): Stet can't undo it any more. Revert it with git if you need to.`);
     }
+    const cfg = await this.stet.config();
+    const onBranch = await this.stet.projectBranch();
+    if (onBranch !== cfg.mainBranch)
+      throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before undoing.`);
+
+    // The inverse changes: from the applied text back to the old one. Each is found against its
+    // base with what is accepted there made (this change, and the other accepted ones not
+    // committed yet), as the working copy has it: text where nothing changed since is then
+    // known for what it is, and another accepted change's same words are never taken for this
+    // one's.
+    const unitIds = new Set(unit.map((i) => i.id));
+    const acceptedOthers = (await this.stet.store.items()).filter(
+      (o) => o.kind === "modify" && o.status === "accepted" && o.resolution && !o.resolution.committed && !unitIds.has(o.id),
+    );
+    const refs = new Map<string, string>();
+    const inverse: Item[] = [];
+    for (const it of unit) {
+      const applied = it.resolution!.appliedText;
+      if (it.kind === "modify") {
+        const ref = (await this.stet.refText(it)) ?? "";
+        const sameText = (o: Item) => o.kind === "modify" && o.id !== it.id && o.file === it.file && o.baseCommit === it.baseCommit && !!o.resolution;
+        const made = [it, ...unit.filter(sameText), ...acceptedOthers.filter(sameText)]
+          .map((o) => ({ id: o.id, range: o.range, oldText: o.oldText, text: o.resolution!.appliedText }))
+          .sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
+        let after = "";
+        let pos = 0;
+        let start = it.range.start;
+        for (const m of made) {
+          // Changes that overlap another or no longer match their base are left out (this one never is).
+          if (m.id !== it.id && (m.range.start < pos || ref.slice(m.range.start, m.range.end) !== m.oldText)) continue;
+          if (m.id === it.id) start = after.length + (m.range.start - pos);
+          after += ref.slice(pos, m.range.start) + m.text;
+          pos = m.range.end;
+        }
+        after += ref.slice(pos);
+        const range = { start, end: start + applied.length };
+        refs.set(it.id, after);
+        inverse.push({ ...it, oldText: applied, newText: it.oldText, range, context: captureContext(after, range.start, range.end) });
+      } else if (it.kind === "add-file") inverse.push({ ...it, kind: "delete-file", oldText: applied, newText: "" });
+      else if (it.kind === "delete-file") inverse.push({ ...it, kind: "add-file", oldText: "", newText: it.oldText });
+      else if (it.kind === "rename-file") inverse.push({ ...it, file: it.oldFile!, oldFile: it.file, oldText: applied, newText: it.oldText });
+      else {
+        const { oldFile, ...rest } = it;
+        inverse.push({ ...rest, ...(oldFile ? { file: oldFile, oldFile: it.file } : {}), oldBlob: it.newBlob ?? null, newBlob: it.oldBlob ?? null });
+      }
+    }
+    const res = await applyItems(inverse, this.stet.workingView(), {
+      refText: async (i) => refs.get(i.id) ?? (await this.stet.refText(i)),
+    });
+    if (res.failed.length) {
+      throw new StetError(
+        "Nothing was undone, because some changes are no longer as accepted (you edited them since?):\n" +
+          res.failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n"),
+      );
+    }
+    await this.stet.writeWorking(
+      res.changes,
+      unit.map((i) => ({ id: i.id, appliedText: "", edited: false })),
+      true,
+    );
+    for (const it of unit) await this.reopen(it, "accept undone", "accepted");
+    await rm(this.stet.journalPath, { force: true });
+
+    // Items the accept made stale are pending again.
+    const ids = new Set(unit.map((i) => i.id));
+    const restored: Item[] = [];
+    for (const it of await this.stet.store.items()) {
+      const last = it.history[it.history.length - 1];
+      const by = last?.staleBy;
+      if (it.status !== "stale" || !by || !ids.has(by)) continue;
+      await this.reopen(it, `the accept of ${by} was undone`, "stale");
+      restored.push(it);
+    }
+    await this.stet.groupOps.updateGroups([...unit, ...restored]);
+    return { reopened: unit, restored };
   }
 
   /**
    * An item and those decided together with it, in the same state: its move partners, its linked
    * unit, and the rest of its linked group decided in the same accept or reject. Accepting G1
-   * whole and undoing one of its parts left a \label renamed without its \refs (test report
-   * 2026-11-20, D2).
+   * whole and undoing one of its parts left a \label renamed without its \refs.
    */
   private async decidedWith(item: Item): Promise<Item[]> {
     const out = new Map<string, Item>([[item.id, item]]);

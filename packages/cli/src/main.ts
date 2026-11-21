@@ -1,9 +1,10 @@
 /** `stet`'s command line: parsed against the command table, run, and turned into an exit code. */
 import { parseArgs } from "node:util";
 import { type CliCommand, DOCUMENT_LANGUAGES, notFound, Stet, StetError, usageError } from "@stet/core";
-import { COMMANDS, type Command, type Ctx, SECTIONS, VERSION } from "./commands.js";
+import { COMMANDS, type Command, type Ctx, SECTIONS } from "./commands.js";
 import { GLOBAL_OPTIONS, OPTIONS, type OptionName, type Opts } from "./options.js";
 import { forTerminal, red, useColor } from "./output.js";
+import { VERSION } from "./version.js";
 
 /** Exit codes, for scripts: 1 any other error, 2 a wrong command line, 3 an unknown id or name. */
 export const EXIT = { error: 1, usage: 2, unknown: 3 } as const;
@@ -36,7 +37,7 @@ export function help(): string {
   ].join("\n\n");
 }
 
-/** The options `command` takes (and the global ones). A wrong option is a usage error, not a stack trace (test report B1). */
+/** The options `command` takes (and the global ones). A wrong option is a usage error, not a stack trace. */
 function parseFor(command: Command | undefined, argv: string[]): { opt: Opts; args: string[] } {
   const names = new Set<OptionName>([...GLOBAL_OPTIONS, ...(command?.options ?? [])]);
   const options = Object.fromEntries(Object.entries(OPTIONS).filter(([k]) => names.has(k as OptionName)));

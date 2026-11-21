@@ -51,7 +51,7 @@ function real(p: string, depth = 0): string {
       return join(realpathSync.native(cur), ...tail.reverse());
     } catch {
       // A link whose target doesn't exist yet: a write through it creates the target, so the
-      // target is what counts (security report 5e4c6af, S6).
+      // target is what counts.
       const link = depth < 40 ? linkTarget(cur) : null;
       if (link !== null) return real(join(resolve(dirname(cur), link), ...tail.reverse()), depth + 1);
       if (dirname(cur) === cur) return resolve(p);

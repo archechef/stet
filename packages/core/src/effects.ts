@@ -1,7 +1,6 @@
 /**
  * Files that take effect once accepted: a build, git, an editor or an AI agent runs or reads them.
- * They are flagged in review, and accepting one needs an explicit confirmation (security report
- * 5e4c6af, S12).
+ * They are flagged in review, and accepting one needs an explicit confirmation.
  */
 const EFFECTS: [RegExp, string][] = [
   [/(^|\/)\.?latexmkrc$/i, "latexmk runs it as Perl code when the document is built"],

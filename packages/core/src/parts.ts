@@ -136,8 +136,8 @@ export async function settleParts(
   // Union-find over the drafts. A part with nothing pending is decided and stays as it is.
   const parent = drafts.map((_, k) => k);
   const find = (k: number): number => (parent[k] === k ? k : (parent[k] = find(parent[k]!)));
-  // Once each: parts joined because they share a change listed it twice (test report 5e4c6af, B1;
-  // security report S17, where `accept G1.1` then failed).
+  // Once each: parts joined because they share a change listed it twice, and
+  // `accept G1.1` then failed.
   const itemsOf = (root: number) => [...new Set(drafts.flatMap((d, k) => (find(k) === root ? d.items : [])))];
   const open = (root: number) => itemsOf(root).some((i) => isLive(byId.get(i)!.status));
   const titleOf = (root: number) => drafts[root]!.title;
@@ -155,7 +155,7 @@ export async function settleParts(
     for (const i of d.items) {
       const prev = partOf.get(i);
       // Usually two parts naming the same line: say how to name one change on it.
-      // Groups merged because they share changes overlap by design: joined without a word (test report v0.16.0).
+      // Groups merged because they share changes overlap by design: joined without a word.
       if (prev !== undefined)
         join(
           prev,
@@ -236,7 +236,7 @@ export async function settleParts(
 
   // A key and its uses, where a use of a missing key is an error (Typst): the label or the
   // bibliography entry in one part and its `@` uses in another broke the build when one part was
-  // accepted alone (test report 5e4c6af, D1).
+  // accepted alone.
   const win = (it: Item, text: string) => it.context.before + text + it.context.after;
   for (const d of members) {
     for (const k of profileOf(d.file).references?.definitions(d) ?? []) {

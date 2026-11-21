@@ -1,6 +1,5 @@
 /** Linked groups: what is linked, and deciding a group differently in its parts. */
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { joinTitles } from "../src/grouping.js";
 import type { Item } from "../src/model.js";
@@ -69,7 +68,7 @@ describe("accepting one part of a label rename (test report v0.16, D3)", () => {
     expect(await stet.partlyDecided(await stet.reject([label.id]))).toEqual([]);
   });
 
-  it.skipIf(!existsSync(CLI_DIST))("`stet accept` prints the warning", async () => {
+  it("`stet accept` prints the warning", async () => {
     const { repo, label } = await renamed();
     const r = spawnSync(process.execPath, [CLI_DIST, "accept", label.id], { cwd: repo, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
     expect(r.status).toBe(0);

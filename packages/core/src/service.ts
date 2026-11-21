@@ -154,7 +154,6 @@ export class Stet {
   // -------------------------------------------------------------------------
   // Opening / init
 
-  /** Locate the repository containing `cwd` (main worktree or any agent worktree). */
   /**
    * The repository around `cwd`. `agentWorkspace`: `cwd` is in an agent's workspace (another
    * worktree of the project), where the reviewer's commands and setup don't belong.
@@ -351,11 +350,11 @@ export class Stet {
   /**
    * `locateInWorkingCopy` for many items, or `locateInText` with `text` (items of one file): the
    * store and each file are read once. Item by item, every item read the whole store again:
-   * listing 750 changes took 25 s (test report 2026-11-20, B3).
+   * listing 750 changes took 25 s.
    */
   async locateMany(items: Item[], text?: string, known?: readonly Item[]): Promise<Map<string, { line: number; span: Span | null }>> {
     // `known`: all items as the caller has them (the extension's snapshot). Reading them from the
-    // store again on every keystroke took seconds while background checks ran (test report v0.16.0).
+    // store again on every keystroke took seconds while background checks ran.
     const all = known ?? (await this.store.items());
     const files = new Map<string, Promise<TextFile | null>>();
     const fileOf = (p: string) => {

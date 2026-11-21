@@ -1,6 +1,8 @@
 /** Persistent data model (spec §5). */
 
-export type AgentKind = "claude-code" | "codex" | "other";
+export const AGENT_KINDS = ["claude-code", "codex", "other"] as const;
+export type AgentKind = (typeof AGENT_KINDS)[number];
+export const isAgentKind = (s: string): s is AgentKind => (AGENT_KINDS as readonly string[]).includes(s);
 
 export interface Agent {
   id: string;
@@ -32,16 +34,16 @@ export interface Agent {
  * - `batched`: once the reviewer has paused for a while, all at once (not after every click);
  * - `off`: not at all, until switched on again (then everything since arrives).
  */
-export type NotifyMode = "now" | "batched" | "off";
-export const NOTIFY_MODES: readonly NotifyMode[] = ["now", "batched", "off"];
+export const NOTIFY_MODES = ["now", "batched", "off"] as const;
+export type NotifyMode = (typeof NOTIFY_MODES)[number];
 export const notifyMode = (a: Agent): NotifyMode => a.notify ?? "batched";
 
 /**
  * Kinds of news that can wake a watching agent, each switched on or off per agent. Kinds left
  * out don't wake it, but the agent still finds them when it next checks.
  */
-export type NotifyTrigger = "accepted" | "rejected" | "revision" | "comment" | "note" | "document" | "save";
-export const NOTIFY_TRIGGERS: readonly NotifyTrigger[] = ["accepted", "rejected", "revision", "comment", "note", "document", "save"];
+export const NOTIFY_TRIGGERS = ["accepted", "rejected", "revision", "comment", "note", "document", "save"] as const;
+export type NotifyTrigger = (typeof NOTIFY_TRIGGERS)[number];
 export const NOTIFY_TRIGGER_TEXT: Record<NotifyTrigger, string> = {
   accepted: "Accepted changes",
   rejected: "Rejected changes",
@@ -74,7 +76,9 @@ export function triggerOf(e: { type: EventType; data?: Record<string, unknown> }
   }
 }
 
-export type GroupKind = "atomic" | "linked" | "related";
+export const GROUP_KINDS = ["atomic", "linked", "related"] as const;
+export type GroupKind = (typeof GROUP_KINDS)[number];
+export const isGroupKind = (s: string): s is GroupKind => (GROUP_KINDS as readonly string[]).includes(s);
 export type GroupSource = "agent" | "commit" | "auto";
 
 export interface Group {
@@ -136,7 +140,10 @@ export interface Changeset {
 
 export type ItemKind = "modify" | "add-file" | "delete-file" | "rename-file" | "binary";
 
-export type ItemStatus = "pending" | "needs_revision" | "accepted" | "rejected" | "withdrawn" | "superseded" | "stale";
+export const ITEM_STATUSES = ["pending", "needs_revision", "accepted", "rejected", "withdrawn", "superseded", "stale"] as const;
+export type ItemStatus = (typeof ITEM_STATUSES)[number];
+/** Decided against: a linked group with such members is broken. */
+export const DROPPED_STATUSES: readonly ItemStatus[] = ["rejected", "withdrawn", "stale"];
 
 export const LIVE_STATUSES: readonly ItemStatus[] = ["pending", "needs_revision"];
 export const isLive = (s: ItemStatus) => LIVE_STATUSES.includes(s);
@@ -418,7 +425,6 @@ export const FEEDBACK_TYPES: readonly EventType[] = [
 
 export interface StoreState {
   schema: 1;
-  nextItem: number;
   nextChangeset: number;
   nextGroup: number;
   /** Absent in stores made before reviewer notes (2026-11-11): starts at 1. */
@@ -429,8 +435,10 @@ export interface StoreState {
    * uncommitted items it should hold but could not (absent when there are none).
    */
   base: { key: string; commit: string; missing?: { id: string; reason: string }[] } | null;
-  /** The user's saved files as of their last *Share my edits*, on top of main at `head`. */
-  /** The last *Share my edits*; `at` (since 0.6.1) tells which accepted items it already holds. */
+  /**
+   * The user's saved files as of their last *Share my edits*, on top of main at `head`; `at`
+   * (since 0.6.1) tells which accepted items it already holds.
+   */
   shared?: { head: string; tree: string; at?: string } | null;
   /** The main branch's commit at the last check for accepted changes whose commit was dropped (`git reset`). */
   mainHead?: string;

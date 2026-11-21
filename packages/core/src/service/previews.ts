@@ -99,7 +99,7 @@ export class Previews {
       return t && { file: i.file, baseText: t.text, eol: t.eol, range: i.range, newText: i.newText };
     };
     // Apply what accepting it would apply: one end of a move or of a linked part alone can leave
-    // the document broken (\begin{proof} without its \end, bug report 2026-11-19).
+    // the document broken (\begin{proof} without its \end).
     const together = (list: Item[]) => list.filter((i) => i.id !== item.id && isTex(i) && i.baseCommit === item.baseCommit);
     const unit = isLive(item.status) ? together(linkedRest([item.id], await this.stet.lookup())) : [];
     const request = async (others: Item[], tag: string): Promise<PreviewRequest | null> => {
@@ -113,7 +113,7 @@ export class Previews {
     const list = (xs: Item[]) => xs.map((i) => i.id).join(", ");
     // Tried in turn, until one compiles without new errors: the change with what is accepted with
     // it; plus the changes of its round that complete it (an environment opened in one change and
-    // closed in another, bug report 2026-11-19); its whole round. Else the best of them.
+    // closed in another); its whole round. Else the best of them.
     const round = together((await this.stet.store.items()).filter((i) => i.changeset === item.changeset && isLive(i.status)));
     const pair = completing(
       item,

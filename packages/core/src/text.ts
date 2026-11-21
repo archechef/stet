@@ -78,11 +78,6 @@ export function similarity(a: string, b: string): number {
 }
 
 /**
- * Whether `p` is a safe repository-relative path to write in the user's project: relative,
- * no `.`/`..` segments, and nothing that reaches the git dir on any platform (`.git`,
- * Windows aliases such as `GIT~1` or `.git.`, alternate data streams).
- */
-/**
  * How alike two passages are, word by word: twice the words they share in order over all their
  * words (1 = the same, 0 = nothing in common). Below `min`, returns 0 without the full comparison.
  */
@@ -165,6 +160,11 @@ export function paragraphSimilarity(a: string[], b: string[], min: number, share
   return common / short >= 0.8 ? Math.max(d, min) : d;
 }
 
+/**
+ * Whether `p` is a safe repository-relative path to write in the user's project: relative,
+ * no `.`/`..` segments, and nothing that reaches the git dir on any platform (`.git`,
+ * Windows aliases such as `GIT~1` or `.git.`, alternate data streams).
+ */
 export function isSafeRepoPath(p: string): boolean {
   if (!p || p.includes("\0") || /^[\\/]/.test(p) || /^[A-Za-z]:/.test(p)) return false;
   return p.split(/[\\/]/).every((seg) => {
@@ -181,7 +181,7 @@ export function isSafeRepoPath(p: string): boolean {
  */
 export function printable(s: string): string {
   // A lone CR is a line break to TeX, Typst and Markdown, but moves a terminal's cursor back over
-  // what it printed: shown as the line break it is (security report 5e4c6af, S10). Control,
+  // what it printed: shown as the line break it is. Control,
   // direction and invisible characters are shown as visible markers, not dropped: dropped, the
   // file still got them unseen (S11).
   return s.replace(/\r\n?/g, "\n").replace(INVISIBLE, (ch) => `⟨U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`);
@@ -277,7 +277,7 @@ function aroundBreak(s: { words: string[]; gaps: string[] }, at: number, max: nu
  * Old and new text of a change for a one-line summary, each at most `max` characters: what both
  * share at the start and end is cut (marked …), so the summary shows where they differ. Cut to
  * the same prefix, a formula's change looked like no change at all, and a long label hid what a
- * change did (test report 2026-11-20, B4). Whitespace-only text is made visible.
+ * change did. Whitespace-only text is made visible.
  */
 export function changeSummary(oldText: string, newText: string, max = 30): [string, string] {
   const flat = (s: string) => (normalizeWs(s) ? printable(s).replace(/\s+/g, " ").trim() : shownWs(printable(s)));
@@ -301,7 +301,7 @@ export function changeSummary(oldText: string, newText: string, max = 30): [stri
     from = sp >= from - ctx && sp >= 0 && sp < pre ? sp + 1 : from;
   }
   // A change inside a function call starts at the call's name: "#cite(<a>) → #cite(<a>, form: …"
-  // read as "…a>) → …a>, form: …" (test report 5e4c6af, UX).
+  // read as "…a>) → …a>, form: …".
   const call = callStart(a.slice(0, pre));
   if (call >= 0 && call < from && pre - call <= 30) from = call;
   const cut = (s: string) => {
@@ -333,7 +333,7 @@ function callStart(s: string): number {
 
 /**
  * A change's old and new text for a summary, with the words around a short change (a number, a
- * symbol): "width: 80%" → "width: 90%" said more than "80" → "90" (test report 5e4c6af, UX).
+ * symbol): "width: 80%" → "width: 90%" said more than "80" → "90".
  */
 export function summaryTexts(it: { oldText: string; newText: string; context: { before: string; after: string } }): [string, string] {
   const short = (t: string) => !t.includes("\n") && (t.trim().length <= 4 || !/\p{L}{2}/u.test(t));
@@ -348,7 +348,7 @@ export function summaryTexts(it: { oldText: string; newText: string; context: { 
 /**
  * A change as words, for screen readers: in a formula only what differs ("in the formula … : 2
  * becomes 3"), labels and references spelled out. Raw source buried a one-character change in
- * symbols (test report 5e4c6af, accessibility). Null when the summary says it well enough.
+ * symbols. Null when the summary says it well enough.
  */
 export function spokenChange(oldText: string, newText: string): string | null {
   const said = (t: string) =>
@@ -379,7 +379,7 @@ export const shQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 /**
  * Not text Stet can change word by word: it has NUL bytes, or isn't UTF-8 (a Latin-1 file, say).
  * Such files are proposed and applied whole, byte for byte; read as UTF-8 and written back, every
- * character outside ASCII would have become U+FFFD, on every line (test report 2026-11-20, D1).
+ * character outside ASCII would have become U+FFFD, on every line.
  */
 export function isBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8000);

@@ -79,7 +79,7 @@ export const isRef = (v: unknown): v is Ref => !!v && typeof v === "object" && t
 /**
  * Whether a command's argument means it came from the Review panel (a key there, or a row's
  * button or menu), so the focus stays there for the next change. From the palette or a key
- * binding of the user's the argument is undefined: the focus stays where it is (test report v0.16.0, B6).
+ * binding of the user's the argument is undefined: the focus stays where it is.
  */
 export const fromPanel = (arg: unknown): boolean => arg === "panel" || (!!arg && typeof arg === "object" && "project" in arg && !isRef(arg));
 
@@ -90,7 +90,7 @@ const byId = (a: { id: string }, b: { id: string }) => compareItemIds(a.id, b.id
 /** Which changes a tree shows: the Review panel the open ones, the History view the decided ones. */
 export type TreeMode = "review" | "history";
 
-/** What the Review panel shows (test report 2026-11-20: filters by agent, file and status; search). */
+/** What the Review panel shows (filters by agent, file and status; search). */
 export interface PanelFilter {
   agent?: string;
   file?: string;
@@ -227,7 +227,7 @@ export class TreeModel {
       case "agent":
         return [
           ...this.openNotes(node.agent.id).map((note): Node => ({ type: "note", note })),
-          // Resolved notes, with their replies, in History (test report v0.16.0: they vanished from VS Code).
+          // Resolved notes, with their replies, in History (they vanished from VS Code).
           ...this.resolvedNotes(node.agent.id).map((note): Node => ({ type: "note", note })),
           ...this.snap.changesets
             .filter((c) => c.agent === node.agent.id && this.csVisible(c))
@@ -269,7 +269,7 @@ export class TreeModel {
 
   /**
    * "3 pending · 1 awaiting revision" for the open changes matching `pred`: those waiting for the
-   * agent's revision are not yours to review, as in the badge (test report v0.16.0, B14).
+   * agent's revision are not yours to review, as in the badge.
    */
   openText(pred: (i: Item) => boolean): string {
     const pending = this.snap.items.filter((i) => i.status === "pending" && pred(i)).length;
@@ -368,7 +368,7 @@ export const shortId = (id: string): string => String(numberInRound(id) ?? id);
 const changedCount = (cs: { was: string; now: string }[]) => cs.reduce((n, c) => n + Math.max(words(c.was), words(c.now)), 0);
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
 
-/** Title of a change's More… list: its id, then its label without the number again ("1.1: 1 …", test report v0.16.0, B13). */
+/** Title of a change's More… list: its id, then its label without the number again ("1.1: 1 …"). */
 export function actionsTitle(it: Item, get?: (id: string) => Item | undefined): string {
   return `${it.id}: ${itemLabel(it, get).slice(shortId(it.id).length).trim()}`;
 }
@@ -401,10 +401,9 @@ export function itemLabel(it: Item, get?: (id: string) => Item | undefined): str
   }
 }
 
-/** Label of a round (changeset): its number and the agent's title. */
 /**
  * A label cut to `max` characters at a word, with "…": long agent names and round titles pushed
- * the counts and line numbers out of a narrow panel (test report 2026-11-20). Tooltips keep it whole.
+ * the counts and line numbers out of a narrow panel. Tooltips keep it whole.
  */
 export function fitLabel(s: string, max: number): string {
   if (s.length <= max) return s;
@@ -413,6 +412,7 @@ export function fitLabel(s: string, max: number): string {
   return (sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,;:.-]+$/, "") + "…";
 }
 
+/** Label of a round (changeset): its number and the agent's title. */
 export const roundLabel = (cs: Changeset): string => `Round ${roundOf(cs.id)}: ${fitLabel(cs.title, 40)}`;
 
 export const STATUS_TEXT: Record<ItemStatus, string> = {
@@ -472,13 +472,13 @@ export function moveNote(item: Item, get: (id: string) => Item | undefined, line
   return { text: `⇡ moved here from ${where} (${ids}) with ${n} word${n > 1 ? "s" : ""} changed: ${list}`, changed: true };
 }
 
-/** Short text for ghost-text decorations (no newlines, bounded length). */
 /**
  * Text for a notification: VS Code turns `[text](command:…)` in one into a working link, so agent
- * text in it must not keep that form (security report 5e4c6af, S4).
+ * text in it must not keep that form.
  */
 export const noLinks = (s: string): string => printable(s).replace(/\]\s*\(/g, "] (");
 
+/** Short text for ghost-text decorations (no newlines, bounded length). */
 export function ghostText(s: string, max = 80): string {
   // Whitespace alone (a paragraph split or joined) would be invisible: shown as ¶ and ␣.
   if (s && !s.trim())
@@ -513,11 +513,10 @@ export function positionIn(start: { line: number; character: number }, text: str
   return { line: start.line + (before.match(/\n/g)?.length ?? 0), character: offset - nl - 1 };
 }
 
-/** Whether ghost text can show `s` in full: one line, not longer than ghostText's limit. */
 /**
  * The words around a change on its line, for editing it in an input box: the box holds
  * `pre + text + post` with the change selected, so its bounds are visible and the words next to
- * it aren't typed twice (test report v0.16.0, D2: "relies on a simplea simple idea"). At most
+ * it aren't typed twice ("relies on a simplea simple idea"). At most
  * about `max` characters each side, cut at a space.
  */
 export function editFrame(item: Pick<Item, "context">, max = 60): { pre: string; post: string } {
@@ -587,7 +586,7 @@ export function nextItemIndex(isItem: boolean[], cur: number, dir: 1 | -1): numb
 
 /**
  * The active agents behind the user's latest text. The check runs a little after each refresh;
- * until then an agent archived meanwhile was still named in the status bar (test report v0.16.0, B11).
+ * until then an agent archived meanwhile was still named in the status bar.
  */
 export function behindAgents(snap: Pick<Snapshot, "agents" | "syncNeeded">): string[] {
   return snap.agents.filter((a) => a.state === "active" && snap.syncNeeded.has(a.id)).map((a) => a.id);
@@ -595,7 +594,7 @@ export function behindAgents(snap: Pick<Snapshot, "agents" | "syncNeeded">): str
 
 /**
  * Replies of the agent in a thread after its first `seen` entries: what the reviewer hasn't seen
- * yet (test report v0.16.0: replies arrived without a sign).
+ * yet (replies arrived without a sign).
  */
 export function unreadReplies(thread: readonly { author: string }[], seen: number): number {
   return thread.slice(seen).filter((e) => e.author === "agent").length;
@@ -619,7 +618,7 @@ export function manyQuestion(
   verb: "Accept" | "Reject",
   count: number,
   rest: string[],
-  /** Pending changes in other parts of their linked groups: asked about too (test report 5e4c6af, D2). */
+  /** Pending changes in other parts of their linked groups: asked about too. */
   otherParts: string[] = [],
 ): { title: string; choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] } {
   const choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] = [];
@@ -647,6 +646,7 @@ export function manyQuestion(
   return { title: `The ${count} selected changes are linked with ${[...rest, ...otherParts].join(", ")}`, choices };
 }
 
+/** Whether inline text can show `s` in full: one line, at most `max` characters. */
 export const fitsInline = (s: string, max = 80): boolean => !/[\r\n]/.test(s) && s.length <= max;
 
 /** The full new text of a proposal, for the editor's inline widget. Agent text: fenced, never rendered. */
@@ -655,15 +655,15 @@ export function proposalMarkdown(item: Item): string {
   return `*Proposed text, replacing the struck-through text above:*\n\n${fence(item.newText, lang)}`;
 }
 
-/** Markdown fenced block that is safe for any content. */
-/** The reviewer's wording of a change, for hovers: the code block on lines of its own (test report v0.16.0, B12). */
+/** The reviewer's wording of a change, for hovers: the code block on lines of its own. */
 export function draftMarkdown(item: Pick<Item, "draft" | "file">): string {
   return `✎ **Your wording** (from the review of this file), which Accept uses:\n\n${fence(item.draft ?? "", profileByName(item.file).fence)}`;
 }
 
+/** Markdown fenced block that is safe for any content. */
 export function fence(text: string, lang = ""): string {
   // Agent text: a lone CR would end a line for Markdown inside the fence, and direction overrides
-  // would reorder what is shown (security report 5e4c6af, S3 and S9).
+  // would reorder what is shown.
   text = printable(text);
   const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((m) => m.length));
   const f = "`".repeat(longest + 1);
@@ -673,7 +673,7 @@ export function fence(text: string, lang = ""): string {
 /** A unified-style diff for hovers. */
 export function diffBlock(oldText: string, newText: string): string {
   // Several lines on both sides (a .bib entry whose key alone changed): the changed lines with one
-  // line around them, not the whole entry twice (test report 5e4c6af, UX).
+  // line around them, not the whole entry twice.
   if (oldText.split("\n").length >= 3 && newText.split("\n").length >= 3) return fence(lineDiff(printable(oldText), printable(newText), 1).join("\n"), "diff");
   const lines = [
     ...(oldText
@@ -740,7 +740,7 @@ type Pos = { line: number; character: number };
 /**
  * Of changes located in a file, the one a command at `pos` means: the one the cursor is in, else
  * the nearest on its line, not the line's first, which may be another change in the same
- * paragraph (test report 2026-11-20, B8).
+ * paragraph.
  */
 export function changeAt<T extends { range: { start: Pos; end: Pos } }>(located: T[], pos: Pos): T | undefined {
   const before = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && a.character <= b.character);
@@ -760,7 +760,7 @@ export function changeAt<T extends { range: { start: Pos; end: Pos } }>(located:
 
 /**
  * The changes the cursor is inside of, when there are several (overlapping changes of two agents):
- * commands ask which one rather than pick one silently (test report v0.16.0). Empty otherwise.
+ * commands ask which one rather than pick one silently. Empty otherwise.
  */
 export function changesAt<T extends { range: { start: Pos; end: Pos } }>(located: T[], pos: Pos): T[] {
   const before = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && a.character <= b.character);
@@ -770,7 +770,7 @@ export function changesAt<T extends { range: { start: Pos; end: Pos } }>(located
 
 /**
  * The buttons of the archive dialog, the safe one first (Enter takes it): archiving can't be
- * undone, and deleting the folder came first (test report 2026-11-20, D5). `unsubmitted`: files
+ * undone, and deleting the folder came first. `unsubmitted`: files
  * the agent changed and didn't submit, named on the delete button.
  */
 export function archiveChoices(unsubmitted: number): { keep: string; del: string; order: string[] } {
@@ -782,7 +782,7 @@ export function archiveChoices(unsubmitted: number): { keep: string; del: string
 /**
  * The question to ask before deciding several changes at once, or null to go ahead. A round
  * always asks; a group or part asks unless it is linked (its changes must go together anyway).
- * Shift+A asked for a round only, and Shift+R never did (test report 2026-11-20).
+ * Shift+A asked for a round only, and Shift+R never did.
  */
 export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what: string; changeset: boolean; linked: boolean }): string | null {
   if (s.count < 2 || (s.linked && !s.changeset)) return null;
@@ -793,18 +793,18 @@ export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what
 export function dissolveQuestion(g: { id: string; kind: string; title: string }): string | null {
   if (g.kind === "linked")
     return `Dissolve linked group ${g.id} “${g.title}”? Its changes can then be accepted one by one, which can break the document. This can't be undone.`;
-  // A related group too: dissolving it can't be undone either (test report v0.16.0).
+  // A related group too: dissolving it can't be undone either.
   if (g.kind === "related") return `Dissolve group ${g.id} “${g.title}”? Its changes are then listed one by one in their round. This can't be undone.`;
   return null;
 }
 
 /**
  * A change as a screen reader reads it: what, where and its state in words, with no symbols or
- * colour (decorations aren't read; test report 2026-11-20, accessibility).
+ * colour (decorations aren't read).
  */
 export function itemSpoken(it: Item, line?: number, unread = 0): string {
   const where = `in ${it.file}${line && it.kind === "modify" ? ` line ${line}` : ""}`;
-  // As the row says it (test report v0.16.0, accessibility): "revision requested", your wording,
+  // As the row says it: "revision requested", your wording,
   // the conversation.
   const extra = [
     ...(it.draft !== undefined && isLiveItem(it) ? ["your wording"] : []),
@@ -828,7 +828,7 @@ export const esc = (s: string) => printable(s).replace(/[\\`*_{}[\]()#+\-.!|<>~=
 /**
  * A link's tooltip in trusted Markdown: one line, its quotes and backslashes escaped. A blank line
  * in a group title used to end the link, and the rest became trusted Markdown with Stet's command
- * links in it (security report 5e4c6af, S2).
+ * links in it.
  */
 export const linkTitle = (s: string) => oneLine(s, 400).replace(/["\\]/g, "\\$&");
 
@@ -836,7 +836,7 @@ export const linkTitle = (s: string) => oneLine(s, 400).replace(/["\\]/g, "\\$&"
  * Agent-written titles, rationales and replies as the panel, hovers, pickers and notifications
  * show them: titles on one line, and control, direction and invisible characters as visible
  * markers. They reached labels and hovers raw, so a change could show reordered compared with what
- * is applied (security report 5e4c6af, S9). The changes' own text is left as it is.
+ * is applied. The changes' own text is left as it is.
  */
 export function shownAgentText(s: { changesets: Changeset[]; groups: Group[]; items: Item[]; notes: Note[] }) {
   const line = (t: string) => noLinks(t).replace(/\s+/g, " ").trim();

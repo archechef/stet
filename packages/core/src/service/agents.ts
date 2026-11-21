@@ -40,7 +40,7 @@ export class Agents {
       const cfg = await this.stet.config();
       const branch = cfg.agentBranchPrefix + id;
       // An archived agent's name can be used again once its folder and branch are gone (the
-      // manual's way to recreate a workspace; test report B2). Its decided changes keep its name.
+      // manual's way to recreate a workspace). Its decided changes keep its name.
       const old = await this.stet.store.getAgent(id);
       if (old?.state === "active") throw new StetError(`Agent '${id}' already exists.`);
       if (old && ((await pathExists(old.worktree)) || (await this.stet.repo.revParse(`refs/heads/${old.branch}`))))
@@ -129,7 +129,7 @@ export class Agents {
   /** The agent whose worktree contains `cwd`; adopts matching worktrees made by other tools. */
   async agentForCwd(cwd: string): Promise<Agent> {
     // A known workspace's git link is checked before git runs there: a link to a repository the
-    // agent made would make git read that repository's config (security report 5e4c6af, S1).
+    // agent made would make git read that repository's config.
     const registered = (await this.stet.store.agents()).find((a) => a.state !== "archived" && isInside(cwd, a.worktree));
     if (registered) await this.checkWorktree(registered.worktree);
     const wt = new Repo(cwd, this.stet.untrustedConfig);
@@ -179,7 +179,7 @@ export class Agents {
   ): Promise<{ agent: Agent; withdrawn: string[]; worktreeRemoved: boolean }> {
     return this.stet.store.withLock(async () => {
       const agent = await this.requireAgent(id);
-      // Deleting the folder loses what the agent didn't submit: only when asked for (test report D4).
+      // Deleting the folder loses what the agent didn't submit: only when asked for.
       if (opts.removeWorktree && !opts.discardUnsubmitted && (await pathExists(agent.worktree))) {
         const unsubmitted = await this.unsubmittedFiles(agent).catch(() => [] as string[]);
         if (unsubmitted.length) {

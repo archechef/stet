@@ -59,7 +59,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   const probe = new Repo(cwd);
   const name = await probe.tryRun(["config", "user.name"]);
   const email = await probe.tryRun(["config", "user.email"]);
-  // What git commits with, also when set by GIT_AUTHOR_* / GIT_COMMITTER_* (test report B10).
+  // What git commits with, also when set by GIT_AUTHOR_* / GIT_COMMITTER_*.
   const ident = name && email ? null : await probe.tryRun(["var", "GIT_AUTHOR_IDENT"]);
   const fromEnv = ident && (await probe.tryRun(["var", "GIT_COMMITTER_IDENT"])) ? ident.replace(/\s+\d+\s+[+-]\d{4}$/, "") : null;
   add(

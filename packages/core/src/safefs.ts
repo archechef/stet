@@ -106,8 +106,7 @@ export async function writeInside(root: string, rel: string, data: string | Buff
   const t = await inspect(root, rel, { replaceLinks: true });
   await prepare(root, t);
   // The folder is checked again after the file is created and after it is moved into place: a
-  // folder swapped for a link between the check and the write would have taken it elsewhere
-  // (security report 5e4c6af, S14). A file that landed elsewhere is removed.
+  // folder swapped for a link between the check and the write would have taken it elsewhere. A file that landed elsewhere is removed.
   const dir = dirname(t.path);
   const want = join(await realpath(root), relative(root, dir));
   const where = async () => samePath(await realpath(dir).catch(() => ""), want);

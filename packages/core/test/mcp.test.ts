@@ -1,6 +1,5 @@
 /** Stet's MCP server: the protocol, tool arguments, malformed messages, and workspaces it refuses. */
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
@@ -60,7 +59,7 @@ describe("the protocol, the review loop and the guard hook", () => {
     expect(r.result.content[0].text).toMatch(/not a Stet agent workspace/);
   });
 
-  it.skipIf(!existsSync(CLI_DIST))("runs over stdio from the built CLI", async () => {
+  it("runs over stdio from the built CLI", async () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const a = await stet.newAgent("a");
     const child = spawn(process.execPath, [CLI_DIST, "mcp"], { cwd: a.worktree, stdio: ["pipe", "pipe", "inherit"] });
@@ -84,7 +83,7 @@ describe("the protocol, the review loop and the guard hook", () => {
     expect(lines[1].result.content[0].text).toMatch(/Agent a on branch stet\/a/);
   });
 
-  it.skipIf(!existsSync(CLI_DIST))("guard hook blocks via exit code 2", async () => {
+  it("guard hook blocks via exit code 2", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER });
     const a = await stet.newAgent("a");
     const run = (input: object) =>

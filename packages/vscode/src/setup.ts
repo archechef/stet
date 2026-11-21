@@ -35,7 +35,7 @@ export class SetupWizard {
     if (!folder) return;
     const dir = folder.uri.fsPath;
     // An agent's workspace is set up already, as part of its project: setting it up again made it
-    // a project of its own (test report v0.16.0, B10).
+    // a project of its own.
     const loc = await Stet.locate(dir).catch(() => null);
     if (loc?.agentWorkspace) {
       const open = await vscode.window.showInformationMessage(
@@ -48,7 +48,7 @@ export class SetupWizard {
     try {
       const repo = new Repo(dir);
       // Git must know who commits before anything is created: else the first commit failed with
-      // git's own message, and left a repository with no commit and staged files (test report v0.16.0, B1).
+      // git's own message, and left a repository with no commit and staged files.
       let identity: { name: string; email: string } | null = null;
       if (!(await gitIdentity(dir))) {
         identity = await this.askIdentity();
@@ -57,7 +57,7 @@ export class SetupWizard {
       const files = (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*"), "**/{.git,node_modules}/**", 5000)).map((u) =>
         vscode.workspace.asRelativePath(u, false),
       );
-      // A folder without any document file is likely the wrong one (test report v0.16.0).
+      // A folder without any document file is likely the wrong one.
       const names = DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ");
       if (!files.some((f) => DOCUMENT_LANGUAGES.some((p) => matchesAny(f, p.defaultFiles ?? [])))) {
         const go = await vscode.window.showWarningMessage(
@@ -70,7 +70,7 @@ export class SetupWizard {
       const isRepo = (await repo.tryRun(["rev-parse", "--is-inside-work-tree"])) === "true";
       if (!isRepo || !(await repo.revParse("HEAD"))) {
         // One question for a new repository and its first commit (it was two in a row), with the
-        // build files left out if you like: they went into that commit (test report v0.16.0).
+        // build files left out if you like: they went into that commit.
         const ignores = files.includes(".gitignore") ? [] : buildIgnores(files);
         const commit = "Commit files";
         const ignoring = "Commit, ignoring build files";
@@ -109,7 +109,7 @@ export class SetupWizard {
       const opts: Parameters<typeof Stet.init>[1] = bundled ? { cli: bundled.cli } : {};
       const { setUp: already, languages: counts } = await Stet.inspectSetup(dir, loc);
       // Files of both languages: asked, not guessed (a Typst thesis with one old .tex file was
-      // set up as LaTeX without a word: test report 5e4c6af).
+      // set up as LaTeX without a word).
       if (!already) {
         if (counts.length > 1) {
           const name = (id: string) => DOCUMENT_LANGUAGES.find((l) => l.id === id)?.name ?? id;
@@ -130,8 +130,8 @@ export class SetupWizard {
       const dirty = await stet.uncommittedEdits();
       const edits = dirty ? " You have uncommitted edits: agents start from your last commit, so commit them first, or use Share my edits." : "";
       const hasAgents = (await stet.listAgents()).some((a) => a.state === "active");
-      // A second run refreshes the setup; it says so, instead of the first-time message (test report v0.16.0).
-      // Which language was detected: agents' instructions follow it (test report 5e4c6af, UX).
+      // A second run refreshes the setup; it says so, instead of the first-time message.
+      // Which language was detected: agents' instructions follow it.
       const lang = ` It is a ${documentProfile(await stet.config()).name} project for Stet (setting "language" in .git/stet/config.json).`;
       if (already) return void vscode.window.showInformationMessage(`Stet was already set up for ${folder.name}; its setup is refreshed.${lang}${edits}`);
       const next = await vscode.window.showInformationMessage(

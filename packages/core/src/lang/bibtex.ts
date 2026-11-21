@@ -84,8 +84,7 @@ function splitBib(oldText: string, newText: string): Edit[] | null {
   }
   const edits: Edit[] = [];
   // Deleted entries at the end of the file (nothing but whitespace after them) take the blank line
-  // before them, not the file's last line break: else the file ended in a blank line (test
-  // report 5e4c6af, B7).
+  // before them, not the file's last line break: else the file ended in a blank line.
   const gone = (e: BibEntry) => !newByKey.has(e.key) && !renamed.has(e.key);
   let tail = o.entries.length;
   while (tail > 0 && gone(o.entries[tail - 1]!)) tail--;
