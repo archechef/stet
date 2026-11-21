@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { canUndo, hasPreview, type Item, isLiveItem, movesOut, oneLine, profileByName } from "@stet/core";
+import { canUndo, hasPreview, type Item, isLiveItem, movesOut, oneLine, plural, profileByName } from "@stet/core";
 import type { Ref, TreeModel } from "./model.js";
 import { linkTitle } from "./text.js";
 
@@ -61,7 +61,7 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
     : [];
   if (unit.length === own.length && !others.length) return null;
   const part = model.partOf(item);
-  const n = (k: number) => `${k} change${k === 1 ? "" : "s"}`;
+  const n = (k: number) => `${plural(k, "change")}`;
   const choices: AcceptChoice[] = [];
   // One set of phrases wherever Accept is offered: "Accept part 1 of 2",
   // "Accept all of G1", "Accept only 1.10 (breaks G1)".

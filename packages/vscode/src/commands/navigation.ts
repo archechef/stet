@@ -12,6 +12,9 @@ import { ReviewFiles } from "../review.js";
 import { setting } from "../settings.js";
 import { toLf } from "../text.js";
 
+/** The URI scheme of the plain diffs' read-only documents. */
+export const DIFF_SCHEME = "stet-diff";
+
 export class Navigation {
   constructor(private readonly ext: StetExtension) {}
 
@@ -84,7 +87,7 @@ export class Navigation {
       }));
     }
     const key = projectQuery(p.mainPath);
-    const mk = (side: string) => vscode.Uri.from({ scheme: "stet-diff", path: `/${item.file}`, query: `${key}&id=${item.id}&side=${side}` });
+    const mk = (side: string) => vscode.Uri.from({ scheme: DIFF_SCHEME, path: `/${item.file}`, query: `${key}&id=${item.id}&side=${side}` });
     await vscode.commands.executeCommand("vscode.diff", mk("before"), mk("after"), `${item.id} ${item.file}${inProject(p)} (current ↔ proposed)`, {
       preview: true,
       viewColumn: this.columnFor(mk("after")),
@@ -97,7 +100,7 @@ export class Navigation {
    */
   diffLeft(p: Project, file: string): vscode.Uri {
     if (setting("diffShowsProposals")) return p.fileUri(file);
-    return vscode.Uri.from({ scheme: "stet-diff", path: `/${file}`, query: `${projectQuery(p.mainPath)}&side=current` });
+    return vscode.Uri.from({ scheme: DIFF_SCHEME, path: `/${file}`, query: `${projectQuery(p.mainPath)}&side=current` });
   }
 
   /** The file a `stet-diff:` document of your current text shows. */

@@ -25,9 +25,16 @@ import { type RecordKind, recordProblem } from "./records.js";
 /**
  * A held lock is refreshed every `heartbeat` ms. It counts as abandoned when its owner process is
  * gone (same machine), or when it was not refreshed for `stale` ms (owner on another machine) or
- * `liveOwner` ms (owner still running here, but hung). Adjustable for tests.
+ * `liveOwner` ms (owner still running here, but hung). Waiting for it gives up after `timeout` ms.
+ * Tests pass shorter ones to the `Store`.
  */
-export const LOCK_TIMING = { heartbeat: 5_000, stale: 30_000, liveOwner: 10 * 60_000, timeout: 60_000 };
+export interface LockTiming {
+  heartbeat: number;
+  stale: number;
+  liveOwner: number;
+  timeout: number;
+}
+export const LOCK_TIMING: Readonly<LockTiming> = Object.freeze({ heartbeat: 5_000, stale: 30_000, liveOwner: 10 * 60_000, timeout: 60_000 });
 
 /** Whether a process with this pid exists on this machine. */
 function processAlive(pid: number): boolean {
@@ -77,7 +84,7 @@ type Kind = RecordKind;
 
 /** A record as read from disk, in today's shape (see `upgradeItem`). */
 function upgrade<T>(kind: Kind, v: T): T {
-  return kind === "items" && v ? (upgradeItem(v as unknown as Item) as T) : v;
+  return kind === "items" ? (upgradeItem(v as unknown as Item) as T) : v;
 }
 
 /** A record Stet can't use: said where, so that it can be restored or removed. */
@@ -88,7 +95,10 @@ const damaged = (file: string, why: string) =>
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export class Store {
-  constructor(readonly root: string) {}
+  constructor(
+    readonly root: string,
+    private readonly timing: Readonly<LockTiming> = LOCK_TIMING,
+  ) {}
 
   /** Record files that could not be parsed or fail their check, with why (skipped by listings; reported by `stet doctor`). */
   readonly unreadable = new Set<string>();
@@ -155,14 +165,14 @@ export class Store {
       } catch (e: any) {
         if (e.code !== "EEXIST" && e.code !== "EPERM") throw e;
         if (await this.takeOverIfAbandoned()) continue;
-        if (Date.now() - started > LOCK_TIMING.timeout) throw new Error(`Timed out waiting for the Stet lock (${this.lockPath}).`);
+        if (Date.now() - started > this.timing.timeout) throw new Error(`Timed out waiting for the Stet lock (${this.lockPath}).`);
         await sleep(30 + Math.random() * 70);
       }
     }
     const beat = setInterval(() => {
       const t = new Date();
       utimes(this.lockPath, t, t).catch(() => undefined);
-    }, LOCK_TIMING.heartbeat);
+    }, this.timing.heartbeat);
     beat.unref();
     this.session = new Map();
     this.token = token;
@@ -216,7 +226,7 @@ export class Store {
     const here = !!info?.pid && info.host === hostname();
     const alive = here && processAlive(info!.pid!);
     // A live owner here keeps its lock unless it has been silent for very long (hung).
-    const abandoned = here ? !alive || age > LOCK_TIMING.liveOwner : age > LOCK_TIMING.stale;
+    const abandoned = here ? !alive || age > this.timing.liveOwner : age > this.timing.stale;
     if (!abandoned) return false;
     // Move exactly this lock file away; if someone else was faster, the rename fails or moves a
     // newer lock, which we then put back.

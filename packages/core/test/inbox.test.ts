@@ -131,26 +131,20 @@ describe("agent inbox", () => {
 
 describe("notification modes", () => {
   it("batched (the default) waits until the reviewer pauses, then writes everything at once", async () => {
-    const quiet = INBOX_TIMING.quiet;
-    INBOX_TIMING.quiet = 300;
-    try {
-      const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
-      const a = await stet.newAgent("a");
-      expect(notifyMode(a)).toBe("batched");
-      const w = new InboxWriter(stet, "a");
-      await w.tick();
-      edit(a.worktree, "main.tex", "the problem", "the task");
-      edit(a.worktree, "main.tex", "$a+b=c$", "$a+b=d$");
-      const { items } = await stet.submit("a", { title: "t" });
-      await stet.reject([items[0]!.id]);
-      expect(await w.tick()).toEqual([]); // the reviewer is still at it
-      await stet.reject([items[1]!.id]);
-      expect(await w.tick()).toEqual([]);
-      await new Promise((r) => setTimeout(r, 350));
-      expect((await w.tick()).map((l) => l.key)).toEqual([expect.stringMatching(/^feedback#/), expect.stringMatching(/^feedback#/)]);
-    } finally {
-      INBOX_TIMING.quiet = quiet;
-    }
+    const { stet } = await setup({ "main.tex": PAPER }, { cli: FAKE_CLI });
+    const a = await stet.newAgent("a");
+    expect(notifyMode(a)).toBe("batched");
+    const w = new InboxWriter(stet, "a", { ...INBOX_TIMING, quiet: 300 });
+    await w.tick();
+    edit(a.worktree, "main.tex", "the problem", "the task");
+    edit(a.worktree, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", { title: "t" });
+    await stet.reject([items[0]!.id]);
+    expect(await w.tick()).toEqual([]); // the reviewer is still at it
+    await stet.reject([items[1]!.id]);
+    expect(await w.tick()).toEqual([]);
+    await new Promise((r) => setTimeout(r, 350));
+    expect((await w.tick()).map((l) => l.key)).toEqual([expect.stringMatching(/^feedback#/), expect.stringMatching(/^feedback#/)]);
   });
 
   it("off writes nothing; switched on again, what arrived meanwhile is written", async () => {

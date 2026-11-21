@@ -21,6 +21,7 @@ import {
   oneLine,
   paragraphChange,
   partId,
+  plural,
   profileByName,
   roundOf,
   spokenChange,
@@ -138,7 +139,7 @@ export function itemSpoken(it: Item, line?: number, unread = 0): string {
   // the conversation.
   const extra = [
     ...(it.draft !== undefined && isLiveItem(it) ? ["your wording"] : []),
-    ...(it.thread.length ? [`${it.thread.length} message${it.thread.length === 1 ? "" : "s"}${unread ? `, ${unread} new` : ""}`] : []),
+    ...(it.thread.length ? [`${plural(it.thread.length, "message")}${unread ? `, ${unread} new` : ""}`] : []),
   ];
   const state = [STATUS_TEXT[it.status], ...extra].join(", ");
   if (it.kind !== "modify") return `Change ${it.id}, ${it.kind.replace("-", " ")} ${where}, ${state}`;
@@ -207,7 +208,7 @@ export function statusView(s: {
     (s.behind.length ? " $(sync)" : "") +
     (s.unshared.length ? " $(cloud-upload)" : "") +
     (s.missing.length ? " $(warning)" : "");
-  const tip = [`Stet: ${s.pending} change${s.pending === 1 ? "" : "s"} to review`];
+  const tip = [`Stet: ${plural(s.pending, "change")} to review`];
   if (s.unread) tip.push(`${s.unread} new repl${s.unread === 1 ? "y" : "ies"} from agents (marked in the panel; read when you go to the change or note)`);
   if (s.projects.length > 1) {
     for (const p of s.projects) tip.push(`  ${p.name}: ${p.pending} to review${p.uncommitted ? `, ${p.uncommitted} to commit` : ""}`);

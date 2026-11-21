@@ -1,20 +1,18 @@
 /** The store lock: owners, stale and empty locks, and fencing a process that lost it. */
 import { existsSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Item } from "../src/model.js";
 import { LOCK_TIMING, Store } from "../src/store.js";
 import { outsideDir, PAPER, setup } from "./helpers.js";
 
 describe("store lock (Codex review 2026-09, F5)", () => {
-  const saved = { ...LOCK_TIMING };
-  afterEach(() => Object.assign(LOCK_TIMING, saved));
+  const fast = (t: Partial<typeof LOCK_TIMING>) => ({ ...LOCK_TIMING, heartbeat: 40, stale: 250, timeout: 5000, ...t });
 
   it("keeps a live owner's lock beyond the stale threshold", async () => {
-    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 250, timeout: 5000 });
     const root = outsideDir();
-    const a = new Store(root);
-    const b = new Store(root);
+    const a = new Store(root, fast({}));
+    const b = new Store(root, fast({}));
     const log: string[] = [];
     const first = a.withLock(async () => {
       log.push("A in");
@@ -29,11 +27,10 @@ describe("store lock (Codex review 2026-09, F5)", () => {
   });
 
   it("takes over a lock whose owner is gone, and never removes someone else's lock", async () => {
-    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 250, timeout: 5000 });
     const root = outsideDir();
     // A crashed owner on this machine (pid that does not exist), with a fresh timestamp.
     writeFileSync(join(root, "lock"), JSON.stringify({ pid: 2 ** 22 + 12345, host: (await import("node:os")).hostname(), token: "dead", at: Date.now() }));
-    const s = new Store(root);
+    const s = new Store(root, fast({}));
     let entered = false;
     await s.withLock(async () => {
       entered = true;
@@ -45,13 +42,12 @@ describe("store lock (Codex review 2026-09, F5)", () => {
   });
 
   it("keeps the lock of a live owner on this machine even when its heartbeat stalls", async () => {
-    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 250, liveOwner: 60_000, timeout: 600 });
     const root = outsideDir();
     const { hostname } = await import("node:os");
     writeFileSync(join(root, "lock"), JSON.stringify({ pid: process.pid, host: hostname(), token: "busy" }));
     const old = new Date(Date.now() - 10_000); // silent far longer than `stale`
     utimesSync(join(root, "lock"), old, old);
-    await expect(new Store(root).withLock(async () => undefined)).rejects.toThrow(/Timed out/);
+    await expect(new Store(root, fast({ liveOwner: 60_000, timeout: 600 })).withLock(async () => undefined)).rejects.toThrow(/Timed out/);
     expect(JSON.parse(readFileSync(join(root, "lock"), "utf8")).token).toBe("busy");
   });
 
@@ -103,22 +99,20 @@ describe("store lock (Codex review 2026-09, F5)", () => {
   });
 
   it("takes over an empty lock left by a process stopped while taking it (bug report 2026-11-20)", async () => {
-    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 250, timeout: 5000 });
     const root = outsideDir();
     writeFileSync(join(root, "lock"), "");
     const old = new Date(Date.now() - 10_000);
     utimesSync(join(root, "lock"), old, old);
     let entered = false;
-    await new Store(root).withLock(async () => void (entered = true));
+    await new Store(root, fast({})).withLock(async () => void (entered = true));
     expect(entered).toBe(true);
     expect(existsSync(join(root, "lock"))).toBe(false);
   });
 
   it("waits for an empty lock that is still fresh (its owner may be writing it)", async () => {
-    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 60_000, timeout: 300 });
     const root = outsideDir();
     writeFileSync(join(root, "lock"), "");
-    await expect(new Store(root).withLock(async () => undefined)).rejects.toThrow(/Timed out/);
+    await expect(new Store(root, fast({ stale: 60_000, timeout: 300 })).withLock(async () => undefined)).rejects.toThrow(/Timed out/);
     expect(readFileSync(join(root, "lock"), "utf8")).toBe("");
   });
 
@@ -132,13 +126,12 @@ describe("store lock (Codex review 2026-09, F5)", () => {
   });
 
   it("takes over a lock whose heartbeat stopped", async () => {
-    Object.assign(LOCK_TIMING, { heartbeat: 40, stale: 250, timeout: 5000 });
     const root = outsideDir();
     writeFileSync(join(root, "lock"), JSON.stringify({ pid: process.pid, host: "another-machine", token: "old" }));
     const old = new Date(Date.now() - 10_000);
     utimesSync(join(root, "lock"), old, old);
     let entered = false;
-    await new Store(root).withLock(async () => void (entered = true));
+    await new Store(root, fast({})).withLock(async () => void (entered = true));
     expect(entered).toBe(true);
   });
 });

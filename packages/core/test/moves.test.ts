@@ -270,22 +270,17 @@ describe("parts and moves", () => {
   it("joins proposed parts that would split a move", async () => {
     const mk = (id: string, oldText: string, newText: string, move?: Item["move"]) =>
       ({ id, kind: "modify", status: "pending", oldText, newText, context: { before: "", after: "" }, ...(move ? { move } : {}) }) as Item;
-    // As stored by 0.7.0 (single ids) and since (lists).
-    for (const move of [
-      { from: "1.1", to: "1.2", changed: 0 },
-      { from: ["1.1"], to: ["1.2"], changed: 0 },
-    ]) {
-      const members = [mk("1.1", "A passage.", "", move), mk("1.2", "", "A passage.", move), mk("1.3", "x", "y")];
-      const r = await settleParts(
-        [
-          { title: "Out", items: ["1.1"] },
-          { title: "In", items: ["1.2"] },
-          { title: "Other", items: ["1.3"] },
-        ],
-        members,
-      );
-      expect(r.parts!.map((p) => p.items)).toEqual([["1.1", "1.2"], ["1.3"]]);
-      expect(r.notes.join(" ")).toMatch(/move one passage/);
-    }
+    const move = { from: ["1.1"], to: ["1.2"], changed: 0 };
+    const members = [mk("1.1", "A passage.", "", move), mk("1.2", "", "A passage.", move), mk("1.3", "x", "y")];
+    const r = await settleParts(
+      [
+        { title: "Out", items: ["1.1"] },
+        { title: "In", items: ["1.2"] },
+        { title: "Other", items: ["1.3"] },
+      ],
+      members,
+    );
+    expect(r.parts!.map((p) => p.items)).toEqual([["1.1", "1.2"], ["1.3"]]);
+    expect(r.notes.join(" ")).toMatch(/move one passage/);
   });
 });

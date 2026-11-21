@@ -246,7 +246,7 @@ describe("labels and text", () => {
 describe("moves (spec §6.4.7)", () => {
   const PASSAGE = "Our tool splits every proposal into small items. The author accepts or rejects them one at a time.";
   const moveSnap = (changed = 0, newText = PASSAGE): Snapshot => {
-    const move = { from: "7.1", to: "7.2", changed };
+    const move = { from: ["7.1"], to: ["7.2"], changed };
     return {
       ...snap(),
       changesets: [cs("C7", ["7.1", "7.2", "7.3"], ["G7"])],

@@ -624,15 +624,11 @@ export class StetMcpServer {
         }
         case "stet_group": {
           const parts = args.parts === undefined ? undefined : partHints(args.parts);
-          const r = await stet.group(
-            agent,
-            strings(args.itemIds ?? [], "itemIds"),
-            groupKind(args.kind),
-            String(args.title ?? ""),
-            args.rationale ? String(args.rationale) : undefined,
+          const r = await stet.group(agent, strings(args.itemIds ?? [], "itemIds"), groupKind(args.kind), String(args.title ?? ""), {
+            rationale: args.rationale ? String(args.rationale) : undefined,
             parts,
-            typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : undefined,
-          );
+            reason: typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : undefined,
+          });
           if (r.merged) return text(`Merged into ${itemLine(r.merged)}`);
           const g = r.group!;
           return text(

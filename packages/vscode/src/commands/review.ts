@@ -1,5 +1,5 @@
 /** Deciding changes: accept, reject, edit, comment, revise, review a file, finish the review. */
-import { type Group, type Item, isLiveItem, itemEffect, partId, pendingInRound, roundOf } from "@stet/core";
+import { type Group, type Item, isLiveItem, itemEffect, partId, pendingInRound, plural, roundOf } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, acceptQuestion, changeActions, withIcon } from "../actions.js";
 import { announce } from "../announce.js";
@@ -52,7 +52,7 @@ export class ReviewCommands {
       "vscode.diff",
       this.ext.navigation.diffLeft(p, file),
       ReviewFiles.uriFor(p, file),
-      `${file}${inProject(p)}: yours ↔ ${live} proposed change${live === 1 ? "" : "s"} (editable)`,
+      `${file}${inProject(p)}: yours ↔ ${plural(live, "proposed change")} (editable)`,
       { preview: false, viewColumn: this.ext.navigation.columnFor(ReviewFiles.uriFor(p, file)) },
     );
   }
@@ -183,9 +183,7 @@ export class ReviewCommands {
           r.map((i) => i.id),
           "rejection",
         );
-        if (warnings.length)
-          void vscode.window.showWarningMessage([`Rejected ${r.map((i) => i.id).join(", ")}${this.ext.replies.inWhich(p)}.`, ...warnings].join(" "));
-        else announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.ext.replies.inWhich(p)}`, 4000);
+        this.rejected(p, r, warnings);
       }),
     );
   }
@@ -397,11 +395,16 @@ export class ReviewCommands {
           r.map((i) => i.id),
           "rejection",
         );
-        if (warnings.length)
-          void vscode.window.showWarningMessage([`Rejected ${r.map((i) => i.id).join(", ")}${this.ext.replies.inWhich(p)}.`, ...warnings].join(" "));
-        else announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.ext.replies.inWhich(p)}`, 4000);
+        this.rejected(p, r, warnings);
       }),
     );
+  }
+
+  /** Say what was rejected, with the notes the rejection left (as a warning). */
+  private rejected(p: Project, r: Item[], warnings: string[] = []): void {
+    const what = `Rejected ${r.map((i) => i.id).join(", ")}${this.ext.replies.inWhich(p)}`;
+    if (warnings.length) void vscode.window.showWarningMessage([`${what}.`, ...warnings].join(" "));
+    else announce(`$(close) ${what}`, 4000);
   }
 
   async rejectAll(arg: unknown): Promise<void> {
@@ -420,7 +423,7 @@ export class ReviewCommands {
           r.map((i) => i.id),
           "rejection",
         );
-        announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.ext.replies.inWhich(p)}`, 4000);
+        this.rejected(p, r);
       }),
     );
   }

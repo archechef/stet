@@ -9,6 +9,7 @@ import {
   type NotifyTrigger,
   notifyMode,
   notifyTriggers,
+  plural,
 } from "@stet/core";
 import * as vscode from "vscode";
 import { announce } from "../announce.js";
@@ -203,9 +204,7 @@ export class AgentCommands {
     if (r) {
       void vscode.window.showInformationMessage(
         `Archived ${a.agent.id}.` +
-          (r.withdrawn.length
-            ? ` Withdrew ${r.withdrawn.length} pending change${r.withdrawn.length === 1 ? "" : "s"} (${r.withdrawn.join(", ")}).`
-            : " It had no pending changes.") +
+          (r.withdrawn.length ? ` Withdrew ${plural(r.withdrawn.length, "pending change")} (${r.withdrawn.join(", ")}).` : " It had no pending changes.") +
           (r.worktreeRemoved ? " Its folder and branch are deleted." : ` Its folder is kept: ${a.agent.worktree}.`) +
           " If its session is still open, the agent is told on its next action; you can close that session.",
       );

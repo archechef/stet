@@ -360,7 +360,7 @@ function scenarios(L: DocLang) {
       const r = await submit(doc(C, A), doc(C.replace("prove", "show"), A.replace("bound", "estimate")));
       const ids = r.items.map((i) => i.id);
       await expect(r.stet.group("a", ids, "linked", "Wording")).rejects.toThrow(/Not linked.*"related".*"reason"/s);
-      const { group } = await r.stet.group("a", ids, "linked", "Wording", undefined, undefined, "the proof refers to the new verb");
+      const { group } = await r.stet.group("a", ids, "linked", "Wording", { reason: "the proof refers to the new verb" });
       expect(group!.rationale).toBe("Linked because: the proof refers to the new verb");
     });
   });

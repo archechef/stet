@@ -26,11 +26,17 @@ import {
 } from "../model.js";
 import type { AcceptResult, Stet, UndoResult } from "../service.js";
 import { detectEol, isSafeRepoPath, oneLine, toLf } from "../text.js";
-import { now } from "./common.js";
+import { now, requirePending } from "./common.js";
 import type { Records } from "./pending.js";
 
 export class Decisions {
   constructor(private readonly stet: Stet) {}
+
+  /** Refuse to write the user's files or commit while the project folder is off the main branch. */
+  private async requireMainBranch(main: string, then: string): Promise<void> {
+    const on = await this.stet.projectBranch();
+    if (on !== main) throw new StetError(`Your project folder is on '${on ?? "a detached HEAD"}', not '${main}'. Switch back ${then}.`);
+  }
 
   /** Accepted items whose changes are in the working copy but not yet committed. */
   async uncommittedAccepted(): Promise<Accepted[]> {
@@ -60,9 +66,7 @@ export class Decisions {
   async commitAcceptedItems(opts: { subject?: string } = {}): Promise<{ commit: string | null; items: Item[]; yourEdits: string[] }> {
     return this.stet.store.withLock(async () => {
       const cfg = await this.stet.config();
-      const onBranch = await this.stet.projectBranch();
-      if (onBranch !== cfg.mainBranch)
-        throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back first.`);
+      await this.requireMainBranch(cfg.mainBranch, "first");
       await this.stet.baseOps.ensureBase(); // marks items the user already committed
       const items = (await this.uncommittedAccepted()).sort((a, b) => compareItemIds(a.id, b.id));
       if (!items.length) return { commit: null, items, yourEdits: [] };
@@ -222,12 +226,10 @@ export class Decisions {
   private async planAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean; confirmEffects?: boolean }, view: FileView) {
     const cfg = await this.stet.config();
     const items = await this.withMovePartners(await this.stet.requireItems(ids));
-    for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
+    for (const it of items) requirePending(it);
     const bad = items.flatMap((i) => [i.file, ...(i.oldFile !== undefined ? [i.oldFile] : [])]).filter((f) => !isSafeRepoPath(f));
     if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
-    const onBranch = await this.stet.projectBranch();
-    if (onBranch !== cfg.mainBranch)
-      throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before accepting.`);
+    await this.requireMainBranch(cfg.mainBranch, "before accepting");
 
     // Files that take effect (a latexmkrc, .gitattributes, AGENTS.md…): only when asked for
     // explicitly.
@@ -437,7 +439,7 @@ export class Decisions {
   async reject(ids: string[], opts: { reason?: string; mode?: "all" | "revise-rest" | "only" } = {}): Promise<Item[]> {
     return this.stet.store.withLock(async () => {
       const items = opts.mode === "only" ? await this.stet.requireItems(ids) : await this.withMovePartners(await this.stet.requireItems(ids));
-      for (const it of items) if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
+      for (const it of items) requirePending(it);
       const rest = linkedRest(
         items.map((i) => i.id),
         await this.stet.lookup(),
@@ -542,9 +544,7 @@ export class Decisions {
       );
     }
     const cfg = await this.stet.config();
-    const onBranch = await this.stet.projectBranch();
-    if (onBranch !== cfg.mainBranch)
-      throw new StetError(`Your project folder is on '${onBranch ?? "a detached HEAD"}', not '${cfg.mainBranch}'. Switch back before undoing.`);
+    await this.requireMainBranch(cfg.mainBranch, "before undoing");
 
     // The inverse changes: from the applied text back to the old one. Each is found against its
     // base with what is accepted there made (this change, and the other accepted ones not
@@ -597,7 +597,7 @@ export class Decisions {
     await this.stet.writeWorking(
       res.changes,
       unit.map((i) => ({ id: i.id, appliedText: "", edited: false })),
-      true,
+      { undo: true },
     );
     for (const it of unit) await this.reopen(it, "accept undone", "accepted");
     await rm(this.stet.journalPath, { force: true });
@@ -676,7 +676,7 @@ export class Decisions {
   async requestRevision(id: string, text: string): Promise<Item> {
     return this.stet.store.withLock(async () => {
       const [it] = await this.stet.requireItems([id]);
-      if (!isLive(it!.status)) throw new StetError(`${it!.id} is ${it!.status}, not pending.`);
+      requirePending(it!);
       await this.requestRevisionLocked(it!, text);
       return it!;
     });
@@ -702,7 +702,7 @@ export class Decisions {
       const items = await this.stet.requireItems(ids);
       for (const it of items) {
         if (it.agent !== agentId) throw new StetError(`${it.id} belongs to ${it.agent}.`);
-        if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
+        requirePending(it);
         this.stet.setStatus(it, "withdrawn", "agent", reason);
         await this.stet.store.putItem(it);
         await this.stet.store.appendEvent({ type: "withdrawn", agent: agentId, items: [it.id], data: reason ? { reason } : {} });

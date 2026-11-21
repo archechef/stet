@@ -198,6 +198,9 @@ const INVISIBLE =
   // biome-ignore lint/suspicious/noMisleadingCharacterClass: single code points, listed on purpose.
   /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]/gu;
 
+/** A count and its noun: `plural(1, "change")` is "1 change", `plural(3, "change")` "3 changes". */
+export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
 /** Text on one line (whitespace collapsed), cut to `max` characters with an ellipsis. */
 export function oneLine(s: string, max = 120): string {
   const t = printable(s).replace(/\s+/g, " ").trim();

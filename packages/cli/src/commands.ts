@@ -42,6 +42,7 @@ import {
   parseId,
   partId,
   pendingInRound,
+  plural,
   Repo,
   roundOf,
   SHARE_MODES,
@@ -509,7 +510,7 @@ export const COMMANDS: Command[] = [
       const uncommitted = await stet.uncommittedAccepted();
       if (uncommitted.length)
         shareHint.push(
-          `${uncommitted.length} accepted change${uncommitted.length === 1 ? "" : "s"} not committed yet (${uncommitted.map((i) => i.id).join(", ")}): \`stet commit\` finishes the review.`,
+          `${plural(uncommitted.length, "accepted change")} not committed yet (${uncommitted.map((i) => i.id).join(", ")}): \`stet commit\` finishes the review.`,
         );
       if (!items.length) {
         const next = !agents.length
@@ -897,7 +898,11 @@ export const COMMANDS: Command[] = [
           .then((a) => a.id)
           .catch(() => null));
       const parts = await readJsonArg<{ title: string; items: string[] }[]>(opt.parts);
-      const r = await stet.group(onlyAgent, args, kind, need(opt.title, "-t <title>"), opt.message, parts ?? undefined, opt.reason);
+      const r = await stet.group(onlyAgent, args, kind, need(opt.title, "-t <title>"), {
+        rationale: opt.message,
+        parts: parts ?? undefined,
+        reason: opt.reason,
+      });
       return out(() => {
         if (r.merged) return `Merged into ${bold(r.merged.id)}.`;
         const g = r.group!;

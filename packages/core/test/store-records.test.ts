@@ -13,6 +13,11 @@ describe("items stored by an older Stet (code quality report 6a517ae)", () => {
     expect(own.resolution!.committedWithEdits).toBeUndefined();
   });
 
+  it("a move whose ends were single ids (Stet 0.7.0) has lists", () => {
+    const it = upgradeItem({ resolution: null, history: [], move: { from: "1.2", to: "1.5", changed: 0 } } as unknown as Item);
+    expect(it.move).toEqual({ from: ["1.2"], to: ["1.5"], changed: 0 });
+  });
+
   it("a change made stale by an accept, said so only in its note, names that accept", () => {
     const it = upgradeItem({ resolution: null, history: [{ at: "", status: "stale", by: "stet", note: "overlaps accepted 1.2" }] } as unknown as Item);
     expect(it.history[0]!.staleBy).toBe("1.2");

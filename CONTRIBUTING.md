@@ -47,7 +47,7 @@ The core in more detail:
 - git hooks, workspace files and `doctor`;
 - `AgentFiles`, the safe git access to agent workspaces.
 
-What `@stet/core` exports (`packages/core/src/index.ts`) is what the command line and the extension use: the `Stet` service, the MCP server, the guard, setup and their types. Keep helpers internal; `Stet`'s parts are marked `@internal` and left out of the built types (`stripInternal`), and `packages/core/test/api.test.ts` checks the built `.d.ts`. Something a language does differently belongs in its profile (`packages/core/src/lang/`), not in shared code.
+What `@stet/core` exports (`packages/core/src/index.ts`) is what the command line and the extension use: the `Stet` service, the MCP server, the guard, setup and their types. Keep helpers internal; `Stet`'s parts are marked `@internal` and left out of the built types (`stripInternal`), and `packages/core/test/api.test.ts` checks the built `.d.ts`. Something a language does differently belongs in its profile (`packages/core/src/lang/`), not in shared code. A change to how a record in `.git/stet/` is stored keeps the old shape readable: `upgradeItem` (`packages/core/src/model.ts`) turns every older format into today's as the store reads it, so the rest of the code sees one shape.
 
 Design and rationale: [docs/spec.md](docs/spec.md). The milestone notes in §16 record what was built, tested and reviewed, and why.
 

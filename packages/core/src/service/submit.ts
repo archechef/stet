@@ -11,7 +11,7 @@ import { describeNote } from "../notes.js";
 import { absorbLinked, type PartDraft } from "../parts.js";
 import type { Stet, SubmitResult, SyncResult } from "../service.js";
 import { type Edit, splitText } from "../split.js";
-import { detectEol, isBinary, isSafeRepoPath, lineRange, normalizeWs, sha256, textWithBadBytes, toLf } from "../text.js";
+import { detectEol, isBinary, isSafeRepoPath, lineRange, normalizeWs, plural, sha256, textWithBadBytes, toLf } from "../text.js";
 import { isWorkspaceFile } from "../workspace.js";
 import { now } from "./common.js";
 import { PendingWrites } from "./pending.js";
@@ -149,7 +149,7 @@ export class Submission {
         // one held the store lock for over a minute.
         const nFiles = new Set(result.items.map((i) => i.file)).size;
         if (result.changeset && (result.items.length > LARGE_SUBMIT.items || nFiles > LARGE_SUBMIT.files)) {
-          const what = `${result.items.length} changes in ${nFiles} file${nFiles === 1 ? "" : "s"}`;
+          const what = `${result.items.length} changes in ${plural(nFiles, "file")}`;
           result.warnings.push(`This round is very large (${what}): it is slow for Stet and hard to review. Submit in smaller rounds, one topic each.`);
           result.changeset.stetNote = `A very large round: ${what}.`;
           await this.stet.store.putChangeset(result.changeset);
@@ -554,7 +554,7 @@ export class Submission {
           byId.set(it.id, it);
         }
       }
-      result.warnings.push(...(await this.stet.groupOps.settleParts(g, getItem, merged.has(g))));
+      result.warnings.push(...(await this.stet.groupOps.settleParts(g, getItem, { merged: merged.has(g) })));
       await rec.putGroup(g);
     }
     for (const it of byId.values()) if (!created.includes(it)) await rec.putItem(it);

@@ -1,5 +1,5 @@
 /** The questions the extension asks, and their answers: before accepting, finishing, archiving. No `vscode` import. */
-import { StetError } from "@stet/core";
+import { plural, StetError } from "@stet/core";
 
 /** The button of Finish review's question that saves unsaved editors into the commit. */
 export const FINISH_SAVE = "Save and commit";
@@ -24,7 +24,7 @@ export function finishQuestion(
     );
   detail.push("After the commit, Undo no longer takes these changes back (git revert can).");
   return {
-    message: `Commit ${count} accepted change${count === 1 ? "" : "s"}${project ? ` in ${project}` : ""}?`,
+    message: `Commit ${plural(count, "accepted change")}${project ? ` in ${project}` : ""}?`,
     detail: detail.join("\n"),
     buttons: unsaved.length ? ["Commit", FINISH_SAVE] : ["Commit"],
   };
@@ -80,7 +80,7 @@ export const AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  */
 export function archiveChoices(unsubmitted: number): { keep: string; del: string; order: string[] } {
   const keep = "Archive, keep folder";
-  const del = unsubmitted ? `Archive and delete folder, with ${unsubmitted} unsubmitted file${unsubmitted === 1 ? "" : "s"}` : "Archive and delete folder";
+  const del = unsubmitted ? `Archive and delete folder, with ${plural(unsubmitted, "unsubmitted file")}` : "Archive and delete folder";
   return { keep, del, order: [keep, del] };
 }
 

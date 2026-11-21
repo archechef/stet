@@ -338,7 +338,7 @@ describe("grouping", () => {
     expect(merged!.newText).toBe("examine the problem of checking");
     // Linked without a dependency Stet sees: refused, unless the agent gives a reason.
     await expect(stet.group("a", [merged!.id, items[2]!.id], "linked", "together")).rejects.toThrow(/Not linked: Stet sees no dependency.*"reason"/);
-    const { group } = await stet.group("a", [merged!.id, items[2]!.id], "linked", "together", undefined, undefined, "the wording only works together");
+    const { group } = await stet.group("a", [merged!.id, items[2]!.id], "linked", "together", { reason: "the wording only works together" });
     expect(group!.items).toEqual([merged!.id, items[2]!.id]);
     expect(group!.rationale).toBe("Linked because: the wording only works together");
     await stet.ungroup(group!.id);

@@ -1,7 +1,7 @@
 /** *Set up project*: a folder made a Stet project, with git and an identity for commits if it has none. */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { buildIgnores, DOCUMENT_LANGUAGES, documentProfile, gitIdentity, matchesAny, Repo, Stet } from "@stet/core";
+import { buildIgnores, DOCUMENT_LANGUAGES, documentProfile, gitIdentity, matchesAny, plural, Repo, Stet } from "@stet/core";
 import * as vscode from "vscode";
 import type { StetExtension } from "./extension.js";
 import type { Project } from "./project.js";
@@ -114,7 +114,7 @@ export class SetupWizard {
         if (counts.length > 1) {
           const name = (id: string) => DOCUMENT_LANGUAGES.find((l) => l.id === id)?.name ?? id;
           const pick = await vscode.window.showQuickPick(
-            counts.map(([id, n], k) => ({ label: name(id), description: `${n} file${n === 1 ? "" : "s"}${k === 0 ? " (most)" : ""}`, id })),
+            counts.map(([id, n], k) => ({ label: name(id), description: `${plural(n, "file")}${k === 0 ? " (most)" : ""}`, id })),
             {
               title: `${folder.name} has ${counts.map(([id, n]) => `${n} ${name(id)}`).join(" and ")} files: which language is the project written in?`,
               placeHolder: "Agents' instructions and examples follow it",

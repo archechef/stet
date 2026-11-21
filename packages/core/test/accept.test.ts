@@ -194,9 +194,7 @@ describe("what a failed accept says, for code to act on (code quality report 6a5
       items.map((i) => i.id),
       "linked",
       "Together",
-      undefined,
-      undefined,
-      "they go together",
+      { reason: "they go together" },
     );
     expect(await stet.accept(["9.9"]).catch((x) => x.code)).toBe("not_found");
     expect(await stet.reject([items[0]!.id]).catch((x) => x.code)).toBe("linked");

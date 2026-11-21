@@ -17,6 +17,7 @@ export interface Located {
 
 export interface Host {
   projectFor(uri: vscode.Uri): Project | undefined;
+  allProjects(): Project[];
   model(p: Project): TreeModel;
   readonly onDidChange: vscode.Event<void>;
   /** The PDF preview of a change as hover Markdown, if previews are shown in hovers (starts building it if needed). */
@@ -203,21 +204,24 @@ export class EditorIntegration
   private timer: NodeJS.Timeout | undefined;
   /** Which change each inline hint shows, for its tooltip (see resolveInlayHint). */
   private hintItems = new WeakMap<vscode.InlayHint, { uri: vscode.Uri; item: Item }>();
+  private providers: vscode.Disposable[] = [];
+  private providerRoots: string | null = null;
 
   constructor(
     private host: Host,
     private locator: Locator,
   ) {
-    // Every file, not only .tex and .typ: agents change .sty, .bib, .latexmkrc, Makefiles too, and
-    // outside a project the providers return nothing (`projectFor`).
-    const selector: vscode.DocumentSelector = { scheme: "file" };
+    this.registerProviders();
     this.disposables.push(
-      vscode.languages.registerCodeLensProvider(selector, this),
-      vscode.languages.registerHoverProvider(selector, this),
-      // New text as inlay hints: unlike decoration text, they take part in word wrap.
-      vscode.languages.registerInlayHintsProvider(selector, this),
-      vscode.languages.registerCodeActionsProvider(selector, this, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }),
-      host.onDidChange(() => this.update()),
+      {
+        dispose: () => {
+          for (const d of this.providers) d.dispose();
+        },
+      },
+      host.onDidChange(() => {
+        this.registerProviders();
+        this.update();
+      }),
       vscode.window.onDidChangeVisibleTextEditors(() => this.update()),
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.contentChanges.length) this.update(300);
@@ -243,7 +247,7 @@ export class EditorIntegration
     // The moved-in half of a move shows a note instead of its text (see moveNote).
     const all = located.map(({ item, range }) => {
       const m = marks(ed.document, item, range);
-      return item.move?.to === item.id ? { ...m, inserted: [] } : m;
+      return item.move && !movesOut(item) ? { ...m, inserted: [] } : m;
     });
     ed.setDecorations(
       this.removed,
@@ -394,6 +398,29 @@ export class EditorIntegration
         return ca;
       }),
     );
+  }
+
+  /**
+   * The CodeLens, hover, inlay hint and Quick Fix providers, for the files of the open projects:
+   * every file there, not only .tex and .typ (agents change .sty, .bib, .latexmkrc, Makefiles
+   * too). Registered again when the projects change.
+   */
+  private registerProviders(): void {
+    const roots = this.host.allProjects().map((p) => p.mainPath);
+    const key = roots.join("\n");
+    if (key === this.providerRoots) return;
+    this.providerRoots = key;
+    for (const d of this.providers) d.dispose();
+    const selector: vscode.DocumentFilter[] = roots.map((r) => ({ scheme: "file", pattern: new vscode.RelativePattern(vscode.Uri.file(r), "**") }));
+    this.providers = selector.length
+      ? [
+          vscode.languages.registerCodeLensProvider(selector, this),
+          vscode.languages.registerHoverProvider(selector, this),
+          // New text as inlay hints: unlike decoration text, they take part in word wrap.
+          vscode.languages.registerInlayHintsProvider(selector, this),
+          vscode.languages.registerCodeActionsProvider(selector, this, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }),
+        ]
+      : [];
   }
 
   dispose(): void {

@@ -11,6 +11,7 @@ import {
   isLiveItem,
   parseId,
   pathExists,
+  plural,
   profileByName,
   SHARE_MODES,
   type ShareMode,
@@ -20,7 +21,7 @@ import * as vscode from "vscode";
 import type { ChangeAction } from "./actions.js";
 import { announce } from "./announce.js";
 import { AgentCommands } from "./commands/agents.js";
-import { Navigation } from "./commands/navigation.js";
+import { DIFF_SCHEME, Navigation } from "./commands/navigation.js";
 import { NoteCommands } from "./commands/notes.js";
 import { ReviewCommands } from "./commands/review.js";
 import { ViewOptions } from "./commands/view.js";
@@ -183,13 +184,13 @@ export class StetExtension implements Host, vscode.Disposable {
       this.preview,
       this.review,
       this.edits,
-      vscode.workspace.registerTextDocumentContentProvider("stet-diff", this.diffContent),
+      vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, this.diffContent),
       // The diff's left side (your text, read-only) follows your edits.
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.scheme !== "file" || !e.contentChanges.length) return;
         for (const d of vscode.workspace.textDocuments) {
           if (
-            d.uri.scheme === "stet-diff" &&
+            d.uri.scheme === DIFF_SCHEME &&
             new URLSearchParams(d.uri.query).get("side") === "current" &&
             this.navigation.currentOf(d.uri)?.toString() === e.document.uri.toString()
           )
@@ -383,11 +384,11 @@ export class StetExtension implements Host, vscode.Disposable {
     this.panel.treeChanged.fire(undefined);
     void this.review.refresh();
     void this.edits.refresh();
-    for (const d of vscode.workspace.textDocuments) if (d.uri.scheme === "stet-diff") this.diffContent.fire(d.uri);
+    for (const d of vscode.workspace.textDocuments) if (d.uri.scheme === DIFF_SCHEME) this.diffContent.fire(d.uri);
     void this.reviewing.updateFileContext();
     this.panel.historyChanged.fire(undefined);
     this.changed.fire();
-    this.tree.badge = pending ? { value: pending, tooltip: `${pending} proposed change${pending === 1 ? "" : "s"} to review` } : undefined;
+    this.tree.badge = pending ? { value: pending, tooltip: `${plural(pending, "proposed change")} to review` } : undefined;
     if (all.length) {
       const fresh = all.reduce((n, p) => n + this.replies.unreadOf(p, () => true), 0);
       const view = statusView({

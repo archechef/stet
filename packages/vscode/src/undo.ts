@@ -1,4 +1,5 @@
 /** Undo: the decisions made in this window, latest last, and the *Undo* button after each. */
+import { plural } from "@stet/core";
 import * as vscode from "vscode";
 import { announce } from "./announce.js";
 import type { StetExtension } from "./extension.js";
@@ -85,7 +86,7 @@ export class UndoStack {
       const r = await vscode.window.withProgress(
         {
           location: todo.length > 20 ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,
-          title: `Stet: undoing the ${d.what} of ${todo.length} change${todo.length === 1 ? "" : "s"}…`,
+          title: `Stet: undoing the ${d.what} of ${plural(todo.length, "change")}…`,
         },
         () => d.project.stet.undoMany(todo),
       );

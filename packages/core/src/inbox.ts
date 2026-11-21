@@ -20,9 +20,14 @@ export const INBOX_FILE = ".stet/inbox";
 /**
  * How often the writer looks for changes; how often it checks fully anyway (the user's saved
  * edits change no store file); and, for agents notified `batched`, how long the reviewer must
- * have paused before news is written.
+ * have paused before news is written. Tests pass shorter ones to the `InboxWriter`.
  */
-export const INBOX_TIMING = { poll: 3_000, full: 30_000, quiet: 30_000 };
+export interface InboxTiming {
+  poll: number;
+  full: number;
+  quiet: number;
+}
+export const INBOX_TIMING: Readonly<InboxTiming> = Object.freeze({ poll: 3_000, full: 30_000, quiet: 30_000 });
 
 export interface InboxLine {
   at: string;
@@ -54,13 +59,14 @@ export class InboxWriter {
   constructor(
     private readonly stet: Stet,
     private readonly agentId: string,
+    private readonly timing: Readonly<InboxTiming> = INBOX_TIMING,
   ) {}
 
   start(): void {
     if (this.timer || this.done) return;
     const run = () => void this.tick().catch(() => undefined);
     run();
-    this.timer = setInterval(run, INBOX_TIMING.poll);
+    this.timer = setInterval(run, this.timing.poll);
     this.timer.unref();
   }
 
@@ -123,9 +129,9 @@ export class InboxWriter {
     this.signature = signature;
     // Off: nothing is written, so all of it arrives once notifications are on again.
     if (mode === "off") return [];
-    if (!force && !changed && !this.waiting && now - this.lastFull < INBOX_TIMING.full) return [];
+    if (!force && !changed && !this.waiting && now - this.lastFull < this.timing.full) return [];
     // Batched: wait until the reviewer has paused, then write everything at once.
-    if (!force && mode === "batched" && now - this.lastActivity < INBOX_TIMING.quiet) {
+    if (!force && mode === "batched" && now - this.lastActivity < this.timing.quiet) {
       this.waiting = true;
       return [];
     }

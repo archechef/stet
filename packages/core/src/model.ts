@@ -235,20 +235,19 @@ export interface Item {
  * elsewhere. Usually one of each; several blocks that end up next to each other form one
  * insertion with several deletions (and blocks next to each other at the start, one deletion with
  * several insertions). Ids in text order: `from` as the blocks appear in the insertion, `to` as
- * they appear in the deletion. A single id (string) is how Stet 0.7.0 stored them.
+ * they appear in the deletion.
  * `changed`: words that differ (0 = word for word; spacing and line breaks aside).
  */
 export interface MoveInfo {
-  from: string | string[];
-  to: string | string[];
+  from: string[];
+  to: string[];
   changed: number;
 }
 
-const ids = (v: string | string[]) => (Array.isArray(v) ? v : [v]);
 /** The items of a move that remove text. */
-export const moveFrom = (m: MoveInfo): string[] => ids(m.from);
+export const moveFrom = (m: MoveInfo): string[] => m.from;
 /** The items of a move that insert text. */
-export const moveTo = (m: MoveInfo): string[] => ids(m.to);
+export const moveTo = (m: MoveInfo): string[] => m.to;
 /** Does the item remove text for its move (rather than insert it)? */
 export const movesOut = (it: Pick<Item, "id" | "move">): boolean => !!it.move && moveFrom(it.move).includes(it.id);
 /** The other items of an item's move (empty if it is none). */
@@ -486,11 +485,29 @@ export function compareItemIds(a: string, b: string): number {
 }
 
 /**
- * An item as stored by an older Stet, in today's shape: a commit made by hand was kept as
- * `external:<commit>`, and an item made stale by an accept said so only in its history note.
- * The store applies it to every item it reads.
+ * Every format an older Stet wrote, and how it is read today. The store applies these to every
+ * record it reads, and writes records in today's shape, so the rest of Stet sees only that.
+ * Records are upgraded as they are read rather than rewritten when a store is opened: the guard
+ * and the MCP server open stores too, and must not write to them. (`StoreState.schema` stays 1;
+ * it changes only for a format that can't be read this way.) Not covered here: old ids of the
+ * form `S412` keep their id and sort first (`compareItemIds`), and an accepted item
+ * without `headBlob` gets it from git when the review base is next updated.
+ */
+
+/** A move's ends as one id each (Stet 0.7.0), as lists. */
+function upgradeMove(m: MoveInfo | undefined): void {
+  if (!m) return;
+  const raw = m as { from: string | string[]; to: string | string[] };
+  if (!Array.isArray(raw.from)) m.from = [raw.from];
+  if (!Array.isArray(raw.to)) m.to = [raw.to];
+}
+
+/**
+ * An item in today's shape: a commit made by hand was kept as `external:<commit>`, an item made
+ * stale by an accept said so only in its history note, and a move's ends were single ids.
  */
 export function upgradeItem(it: Item): Item {
+  upgradeMove(it.move);
   const r = it.resolution;
   if (r?.committed?.startsWith("external:")) {
     r.committed = r.committed.slice("external:".length);

@@ -1,5 +1,5 @@
 /** Markdown for hovers and tooltips: a change, a proposal, the reviewer's wording, a diff. No `vscode` import. */
-import { describeItem, firstLines, type Item, isLiveItem, lineDiff, partIndexOf, printable, profileByName } from "@stet/core";
+import { describeItem, firstLines, type Item, isLiveItem, lineDiff, partIndexOf, plural, printable, profileByName } from "@stet/core";
 import type { TreeModel } from "./model.js";
 import { esc, fence, STATUS_TEXT } from "./text.js";
 
@@ -80,8 +80,7 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   // A decided change shows its whole conversation (History's tooltip showed only three messages,
   // and later replies were lost); a pending one the latest three, as more is in its comment thread.
   const last = isLiveItem(item) ? item.thread.slice(-3) : item.thread;
-  if (last.length < item.thread.length)
-    lines.push(`*${item.thread.length - last.length} earlier message${item.thread.length - last.length === 1 ? "" : "s"} in the comment thread*`);
+  if (last.length < item.thread.length) lines.push(`*${plural(item.thread.length - last.length, "earlier message")} in the comment thread*`);
   if (last.length) lines.push(last.map((t) => `> **${t.author === "user" ? "You" : esc(item.agent)}:** ${esc(t.text)}`).join("\n>\n"));
   return lines.join("\n\n");
 }

@@ -5,7 +5,7 @@ import { notFound, StetError } from "../errors.js";
 import { DROPPED_STATUSES, type Group, type GroupKind, type Item, isLive, itemId, numberInRound, partId } from "../model.js";
 import { absorbLinked, settleParts } from "../parts.js";
 import type { Stet } from "../service.js";
-import { now } from "./common.js";
+import { now, requirePending } from "./common.js";
 
 /** Changes of a simulated accept, as neighbours of `it` (same file and base). */
 export function appliedAsNeighbours(applied: { item: Item; text: string }[], it: Item): Neighbour[] {
@@ -25,6 +25,13 @@ export function unlinkedRefusal(comps: string[][]): string {
       : ")") +
     `. Group them as "related" and link only the changes that need each other, or pass a "reason" if accepting only some really breaks the document (the reviewer sees it).`
   );
+}
+
+/** What `group` takes besides the changes, their kind and the title. */
+export interface GroupExtras {
+  rationale?: string;
+  parts?: { title: string; items: string[] }[];
+  reason?: string;
 }
 
 export class GroupOps {
@@ -52,8 +59,9 @@ export class GroupOps {
   /**
    * Check the parts of a linked group (§6.4.6) and join the ones that break the rules. Accepting
    * is simulated on the review base the members were made against. Returns notes for the agent.
+   * `merged`: the group absorbed an earlier one, whose parts may overlap its own (no notes about that).
    */
-  async settleParts(g: Group, get: (id: string) => Promise<Item | undefined>, merged = false): Promise<string[]> {
+  async settleParts(g: Group, get: (id: string) => Promise<Item | undefined>, { merged = false } = {}): Promise<string[]> {
     if (g.kind !== "linked" || !g.parts) {
       delete g.parts;
       return [];
@@ -160,15 +168,17 @@ export class GroupOps {
     }
   }
 
+  /** Group changes. `more`: the agent's explanation, its parts (linked groups only), and why the
+   *  changes are linked when Stet sees no dependency. */
   async group(
     agentId: string | null,
     ids: string[],
     kind: GroupKind,
     title: string,
-    rationale?: string,
-    parts?: { title: string; items: string[] }[],
-    reason?: string,
+    more: GroupExtras = {},
   ): Promise<{ group: Group | null; merged: Item | null; warnings: string[] }> {
+    const { parts, reason } = more;
+    let rationale = more.rationale;
     return this.stet.store.withLock(async () => {
       if (parts?.length && kind !== "linked") throw new StetError("Only linked groups have parts.");
       const partList = (parts ?? []).map((p) => ({ title: p.title, items: p.items.map((i) => i.toUpperCase()) }));
@@ -179,7 +189,7 @@ export class GroupOps {
       for (const it of items) {
         if (agentId && it.agent !== agentId) throw new StetError(`${it.id} belongs to ${it.agent}.`);
         if (it.agent !== agent) throw new StetError("All items of a group must come from the same agent.");
-        if (!isLive(it.status)) throw new StetError(`${it.id} is ${it.status}, not pending.`);
+        requirePending(it);
       }
       if (kind === "atomic") return { group: null, merged: await this.mergeAtomic(items, title, rationale), warnings: [] };
       // An agent's linked group needs a dependency Stet can see, or a reason (§6.4.6).

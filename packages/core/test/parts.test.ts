@@ -227,19 +227,14 @@ describe("parts in review", () => {
     edit(wt, "main.tex", "the approach works", "the method works");
     const r = await stet.submit("a", { title: "wording" });
     const [x, y, z] = r.items.map((i) => i.id);
-    await expect(stet.group("a", [x!, y!], "related", "t", undefined, [{ title: "one", items: [x!] }])).rejects.toThrow(/Only linked/);
-    const { group: g } = await stet.group(
-      "a",
-      [x!, y!, z!],
-      "linked",
-      "Wording",
-      undefined,
-      [
+    await expect(stet.group("a", [x!, y!], "related", "t", { parts: [{ title: "one", items: [x!] }] })).rejects.toThrow(/Only linked/);
+    const { group: g } = await stet.group("a", [x!, y!, z!], "linked", "Wording", {
+      parts: [
         { title: "Intro", items: [x!] },
         { title: "Rest", items: [y!, z!] },
       ],
-      "test of linked groups",
-    );
+      reason: "test of linked groups",
+    });
     expect(g!.parts).toEqual([
       { title: "Intro", items: [x] },
       { title: "Rest", items: [y, z] },

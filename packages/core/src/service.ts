@@ -423,9 +423,9 @@ export class Stet {
    * Write accepted changes to the working copy, all or nothing (spec §7.4). Every destination is
    * checked first (no links, nothing outside the project or in .git); the original contents are
    * journaled; any failure restores them. `recoverInterrupted` finishes or undoes an accept that
-   * was cut off (crash, killed process).
+   * was cut off (crash, killed process). `undo`: this write takes an accept back.
    */
-  async writeWorking(changes: Map<string, FileChange>, resolutions: AcceptJournal["items"], undo = false): Promise<void> {
+  async writeWorking(changes: Map<string, FileChange>, resolutions: AcceptJournal["items"], { undo = false } = {}): Promise<void> {
     // Items come from the store, which is plain files: re-check every path before touching disk.
     const bad = [...changes.keys()].filter((p) => !isSafeRepoPath(p));
     if (bad.length) throw new StetError(`Refusing to write outside the project or into its git directory: ${bad.join(", ")}`);
