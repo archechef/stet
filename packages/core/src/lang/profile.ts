@@ -7,9 +7,9 @@
  * without `typesetter`, no PDF previews.
  */
 import type { GroupingConfig } from "../config.js";
+import type { DoctorCheck } from "../doctor.js";
 import type { Item } from "../model.js";
 import type { PreviewConfig, PreviewEnv } from "../preview.js";
-import type { DoctorCheck } from "../doctor.js";
 import type { Edit } from "../split.js";
 import type { Token } from "../tokenizer.js";
 

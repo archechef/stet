@@ -25,10 +25,13 @@ We show that this approach is effective in practice. It scales to large document
 `,
 );
 // A formula: one item for review, but only the changed parts should be marked.
-writeFileSync(join(repo, "math.tex"), String.raw`\begin{align}
+writeFileSync(
+  join(repo, "math.tex"),
+  String.raw`\begin{align}
   f(x) &= \sum_{i=1}^{n} a_i x^i + b
 \end{align}
-`);
+`,
+);
 // One long paragraph line: a long proposal in it must wrap across screen lines.
 writeFileSync(
   join(repo, "wrap.tex"),
@@ -41,10 +44,19 @@ git(repo, "commit", "-qm", "init");
 const stet = await Stet.init(repo);
 const agent = await stet.newAgent("claude-1", { kind: "claude-code" });
 const f = join(agent.worktree, "main.tex");
-writeFileSync(f, readFileSync(f, "utf8").replace("the problem of reviewing", "the task of reviewing").replace("effective in practice", "effective in real use"));
+writeFileSync(
+  f,
+  readFileSync(f, "utf8").replace("the problem of reviewing", "the task of reviewing").replace("effective in practice", "effective in real use"),
+);
 const m = join(agent.worktree, "math.tex");
 writeFileSync(m, readFileSync(m, "utf8").replace("x^i + b", "x^{i+1} - b"));
 const w = join(agent.worktree, "wrap.tex");
-writeFileSync(w, readFileSync(w, "utf8").replace("several lines.", "several lines. The agent adds a long sentence right here, which is much longer than the forty-three characters VS Code shows of an inline hint by default, so that it has to wrap over two or three screen lines to be read at all."));
+writeFileSync(
+  w,
+  readFileSync(w, "utf8").replace(
+    "several lines.",
+    "several lines. The agent adds a long sentence right here, which is much longer than the forty-three characters VS Code shows of an inline hint by default, so that it has to wrap over two or three screen lines to be read at all.",
+  ),
+);
 const r = await stet.submit("claude-1", { title: "Polish wording", rationale: "Clearer terms." });
 console.log(JSON.stringify({ repo, worktree: agent.worktree, items: r.items.map((i) => i.id) }));

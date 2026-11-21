@@ -48,7 +48,24 @@ describe("ids and repository paths (security audit 2026-09)", () => {
 
   it("classifies repository paths", () => {
     for (const p of ["main.tex", "sections/intro.tex", "a/.gitignore", ".github/x.yml", "fig/git~x.png"]) expect(isSafeRepoPath(p), p).toBe(true);
-    for (const p of ["", "../x", "a/../../x", "/etc/x", "C:/x", "c:x", ".git", ".git/config", "a/.GIT/x", ".git./x", ".git /x", "GIT~1/config", "git~2", "a/b:stream", "a//b", "./a"])
+    for (const p of [
+      "",
+      "../x",
+      "a/../../x",
+      "/etc/x",
+      "C:/x",
+      "c:x",
+      ".git",
+      ".git/config",
+      "a/.GIT/x",
+      ".git./x",
+      ".git /x",
+      "GIT~1/config",
+      "git~2",
+      "a/b:stream",
+      "a//b",
+      "./a",
+    ])
       expect(isSafeRepoPath(p), p).toBe(false);
   });
 });

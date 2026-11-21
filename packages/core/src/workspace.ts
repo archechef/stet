@@ -1,10 +1,11 @@
 /** Files Stet writes into agent workspaces: instructions, MCP config, guardrails (spec §9, §10). */
-import { appendInside, readInside, writeInside } from "./safefs.js";
-import { sha256, shQuote } from "./text.js";
+
 import { Repo } from "./git.js";
 import { agentInstructions, STET_MARKER } from "./instructions.js";
 import type { LanguageProfile } from "./lang/index.js";
 import type { Agent } from "./model.js";
+import { appendInside, readInside, writeInside } from "./safefs.js";
+import { sha256, shQuote } from "./text.js";
 
 /** How to invoke the `stet` CLI (absolute paths, so it works without PATH setup). */
 export interface CliCommand {
@@ -67,7 +68,9 @@ export interface WorkspaceContext {
  */
 export function cliShellCommand(cli: CliCommand, sub: string, env: Record<string, string> = {}): string {
   const all = { ...cli.env, ...env };
-  const envPrefix = Object.entries(all).map(([k, v]) => `${k}=${shQuote(v)} `).join("");
+  const envPrefix = Object.entries(all)
+    .map(([k, v]) => `${k}=${shQuote(v)} `)
+    .join("");
   return envPrefix + [cli.command, ...cli.args].map((a) => shQuote(fwd(a))).join(" ") + " " + sub;
 }
 
@@ -136,7 +139,9 @@ function codexConfig(ctx: WorkspaceContext): string {
     `[mcp_servers.stet]`,
     `command = ${str(s.command)}`,
     `args = [${s.args.map(str).join(", ")}]`,
-    `env = { ${Object.entries(s.env).map(([k, v]) => `${k} = ${str(v)}`).join(", ")} }`,
+    `env = { ${Object.entries(s.env)
+      .map(([k, v]) => `${k} = ${str(v)}`)
+      .join(", ")} }`,
     ``,
   ].join("\n");
 }

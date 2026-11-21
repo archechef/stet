@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 import type { Item, MoveInfo } from "../src/model.js";
 import { normalizeWs } from "../src/text.js";
-import { DOC_LANGS, git, read, setup, write, type DocLang } from "./helpers.js";
+import { DOC_LANGS, type DocLang, git, read, setup, write } from "./helpers.js";
 
 // Paragraphs (one source line each, as in most LaTeX and Typst).
 const A = "First, we bound the error of the estimator by the sum of two terms, one for the bias and one for the variance.";
@@ -168,7 +168,10 @@ function scenarios(L: DocLang) {
 
     it("two independent word changes in a long sentence stay two changes", async () => {
       const r = await submit(doc(C), doc(C.replace("prove", "show").replace("trivial", "simple")));
-      expect(r.items.map((i) => [n(i.oldText), n(i.newText)])).toEqual([["prove", "show"], ["trivial", "simple"]]);
+      expect(r.items.map((i) => [n(i.oldText), n(i.newText)])).toEqual([
+        ["prove", "show"],
+        ["trivial", "simple"],
+      ]);
     });
 
     it("splitting and merging paragraphs is one small change", async () => {
@@ -332,10 +335,23 @@ function scenarios(L: DocLang) {
       const b = doc(...ps);
       const a = doc(...ps.map((p) => p.replace(/\$n/g, "$m").replace(/2n/, "2m").replace(/\$n\b/g, "$m")));
       const r = await submit(b, a, {
-        groups: [{ kind: "linked", title: "Rename n to m", where: [L.file], parts: [{ title: "First half", where: [`${L.file}:${L.beginLines + 2}-${L.beginLines + 4}`] }, { title: "Second half", where: [`${L.file}:${L.beginLines + 6}-${L.beginLines + 8}`] }] }],
+        groups: [
+          {
+            kind: "linked",
+            title: "Rename n to m",
+            where: [L.file],
+            parts: [
+              { title: "First half", where: [`${L.file}:${L.beginLines + 2}-${L.beginLines + 4}`] },
+              { title: "Second half", where: [`${L.file}:${L.beginLines + 6}-${L.beginLines + 8}`] },
+            ],
+          },
+        ],
       });
       expect(r.groups.find((g) => g.title === "Rename n to m")!.kind).toBe("related");
-      const linked = r.groups.filter((g) => g.kind === "linked").map((g) => g.title).sort();
+      const linked = r.groups
+        .filter((g) => g.kind === "linked")
+        .map((g) => g.title)
+        .sort();
       expect(linked).toEqual(["First half", "Second half"]);
       expect(r.warnings.join("\n")).toMatch(/'Rename n to m' is a related group now/);
     });

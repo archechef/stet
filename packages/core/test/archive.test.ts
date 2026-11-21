@@ -15,8 +15,7 @@ async function withPending() {
 }
 
 /** The agent's Stet server as its workspace config starts it. */
-const serverFor = (repo: string, worktree: string) =>
-  new StetMcpServer({ cwd: worktree, workspace: worktree, project: repo, agentId: "a", version: "test" });
+const serverFor = (repo: string, worktree: string) => new StetMcpServer({ cwd: worktree, workspace: worktree, project: repo, agentId: "a", version: "test" });
 
 describe("archiving an agent", () => {
   it("withdraws its changes, deletes the folder, and tells the agent on its next tool call", async () => {

@@ -1,21 +1,88 @@
-import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
-import { archiveChoices, bulkQuestion, changeAt, filterIsEmpty, filterText, fitLabel, matchesFilter, diffBlock, dissolveQuestion, itemSpoken, fitsInline, ghostText, groupDescription, itemLabel, moveNote, proposalMarkdown, roundLabel, LineIndex, nodeMajor, suggestAgentId, TreeModel, type Node, type Snapshot } from "../src/model.js";
-import { projectOfQuery, projectQuery } from "../src/model.js";
+import { describe, expect, it } from "vitest";
+import {
+  archiveChoices,
+  bulkQuestion,
+  changeAt,
+  diffBlock,
+  dissolveQuestion,
+  filterIsEmpty,
+  filterText,
+  fitLabel,
+  fitsInline,
+  ghostText,
+  groupDescription,
+  itemLabel,
+  itemSpoken,
+  LineIndex,
+  matchesFilter,
+  moveNote,
+  type Node,
+  nodeMajor,
+  projectOfQuery,
+  projectQuery,
+  proposalMarkdown,
+  roundLabel,
+  type Snapshot,
+  suggestAgentId,
+  TreeModel,
+} from "../src/model.js";
 import { isManaged, managedCliPath } from "../src/runtime.js";
 
 const agent = (id: string, state: Agent["state"] = "active"): Agent => ({
-  id, kind: "claude-code", branch: `stet/${id}`, worktree: `/w/${id}`, baseCommit: "b", lastTip: "b",
-  replayedAt: "", feedbackCursor: 0, createdAt: "", state,
+  id,
+  kind: "claude-code",
+  branch: `stet/${id}`,
+  worktree: `/w/${id}`,
+  baseCommit: "b",
+  lastTip: "b",
+  replayedAt: "",
+  feedbackCursor: 0,
+  createdAt: "",
+  state,
 });
 const item = (id: string, cs: string, extra: Partial<Item> = {}): Item => ({
-  id, agent: "claude-1", changeset: cs, file: "main.tex", kind: "modify", baseCommit: "b", range: { start: 0, end: 1 },
-  oldText: "old", newText: "new", context: { before: "", after: "" }, fingerprint: "", note: null, groups: [],
-  status: "pending", resolution: null, supersedes: null, conflictsWith: [], history: [], thread: [], ...extra,
+  id,
+  agent: "claude-1",
+  changeset: cs,
+  file: "main.tex",
+  kind: "modify",
+  baseCommit: "b",
+  range: { start: 0, end: 1 },
+  oldText: "old",
+  newText: "new",
+  context: { before: "", after: "" },
+  fingerprint: "",
+  note: null,
+  groups: [],
+  status: "pending",
+  resolution: null,
+  supersedes: null,
+  conflictsWith: [],
+  history: [],
+  thread: [],
+  ...extra,
 });
-const cs = (id: string, items: string[], groups: string[] = []): Changeset => ({ id, agent: "claude-1", title: `title ${id}`, rationale: "", submittedAt: "", items, groups });
+const cs = (id: string, items: string[], groups: string[] = []): Changeset => ({
+  id,
+  agent: "claude-1",
+  title: `title ${id}`,
+  rationale: "",
+  submittedAt: "",
+  items,
+  groups,
+});
 const group = (id: string, c: string, kind: Group["kind"], items: string[], extra: Partial<Group> = {}): Group => ({
-  id, agent: "claude-1", changeset: c, kind, title: `group ${id}`, rationale: null, source: "agent", items, state: "open", ...extra,
+  id,
+  agent: "claude-1",
+  changeset: c,
+  kind,
+  title: `group ${id}`,
+  rationale: null,
+  source: "agent",
+  items,
+  state: "open",
+  ...extra,
 });
 
 function snap(): Snapshot {
@@ -40,7 +107,19 @@ function snap(): Snapshot {
 }
 
 const ids = (nodes: Node[]) =>
-  nodes.map((n) => (n.type === "agent" ? n.agent.id : n.type === "changeset" ? n.changeset.id : n.type === "group" ? n.group.id : n.type === "part" ? `${n.group.id}.${n.index + 1}` : n.type === "note" ? n.note.id : n.item.id));
+  nodes.map((n) =>
+    n.type === "agent"
+      ? n.agent.id
+      : n.type === "changeset"
+        ? n.changeset.id
+        : n.type === "group"
+          ? n.group.id
+          : n.type === "part"
+            ? `${n.group.id}.${n.index + 1}`
+            : n.type === "note"
+              ? n.note.id
+              : n.item.id,
+  );
 
 describe("tree model", () => {
   it("shows live items as agent → changeset → group → item", () => {
@@ -94,7 +173,12 @@ describe("tree model", () => {
 
   it("shows the parts of a linked group, and links an item only with its part", () => {
     const s = snap();
-    s.groups[0] = group("G1", "C1", "linked", ["S1", "S2", "S5"], { parts: [{ title: "Label", items: ["S1"] }, { title: "References", items: ["S2", "S5"] }] });
+    s.groups[0] = group("G1", "C1", "linked", ["S1", "S2", "S5"], {
+      parts: [
+        { title: "Label", items: ["S1"] },
+        { title: "References", items: ["S2", "S5"] },
+      ],
+    });
     const m = new TreeModel(s, "review");
     const g = m.children(m.children(m.children()[0])[0])[0]!;
     const parts = m.children(g);
@@ -114,8 +198,17 @@ describe("tree model", () => {
   it("lists an agent's open notes before its rounds in the Review panel, resolved ones in History", () => {
     const s = snap();
     const note = (id: string, state: "open" | "resolved", agentId = "claude-1") => ({
-      id, agent: agentId, file: "main.tex", text: "x", range: { start: 0, end: 1 }, context: { before: "", after: "" },
-      body: "b", createdAt: "", state, deliveredAt: null, thread: [],
+      id,
+      agent: agentId,
+      file: "main.tex",
+      text: "x",
+      range: { start: 0, end: 1 },
+      context: { before: "", after: "" },
+      body: "b",
+      createdAt: "",
+      state,
+      deliveredAt: null,
+      thread: [],
     });
     s.notes = [note("N2", "open"), note("N1", "resolved"), note("N3", "open", "old"), note("N10", "open")];
     const m = new TreeModel(s, "review");
@@ -265,9 +358,13 @@ describe("moves (spec §6.4.7)", () => {
       changed: true,
     });
     // A source in another file is named by its file.
-    expect(moveNote(m.item("8.3")!, (id) => (id === "8.2" ? { ...m.get(id)!, file: "appendix.tex" } : m.get(id)), (id) => (id === "8.1" ? 5 : null))!.text).toMatch(
-      /^⇡ moved here from line 5 and appendix\.tex \(8\.1, 8\.2\)/,
-    );
+    expect(
+      moveNote(
+        m.item("8.3")!,
+        (id) => (id === "8.2" ? { ...m.get(id)!, file: "appendix.tex" } : m.get(id)),
+        (id) => (id === "8.1" ? 5 : null),
+      )!.text,
+    ).toMatch(/^⇡ moved here from line 5 and appendix\.tex \(8\.1, 8\.2\)/);
   });
 });
 
@@ -321,8 +418,12 @@ describe("confirmations and screen readers (test report v0.14)", () => {
   });
 
   it("reads a change out in words", () => {
-    expect(itemSpoken(item("2.1", "C2", { oldText: "problem", newText: "task" }), 4)).toBe("Change 2.1, replace “problem” with “task”, in main.tex line 4, pending");
-    expect(itemSpoken(item("2.2", "C2", { oldText: "", newText: "very ", status: "needs_revision" }))).toBe("Change 2.2, insert “very”, in main.tex, revision requested");
+    expect(itemSpoken(item("2.1", "C2", { oldText: "problem", newText: "task" }), 4)).toBe(
+      "Change 2.1, replace “problem” with “task”, in main.tex line 4, pending",
+    );
+    expect(itemSpoken(item("2.2", "C2", { oldText: "", newText: "very ", status: "needs_revision" }))).toBe(
+      "Change 2.2, insert “very”, in main.tex, revision requested",
+    );
     expect(itemSpoken(item("2.3", "C2", { kind: "add-file", file: "a.tex" }))).toBe("Change 2.3, add file in a.tex, pending");
   });
 });
@@ -330,7 +431,9 @@ describe("confirmations and screen readers (test report v0.14)", () => {
 describe("filters and labels (test report v0.14)", () => {
   it("filters what the panel shows by agent, file, status and words, keeping the tree around matches", () => {
     const s = snap();
-    s.items.push(item("S6", "C1", { file: "intro.tex", oldText: "estimator", newText: "statistic", thread: [{ at: "", author: "user", text: "Why the change?" }] }));
+    s.items.push(
+      item("S6", "C1", { file: "intro.tex", oldText: "estimator", newText: "statistic", thread: [{ at: "", author: "user", text: "Why the change?" }] }),
+    );
     const m = new TreeModel(s, "review", { file: "intro.tex" });
     const [a] = m.children();
     const [c1] = m.children(a);
@@ -348,7 +451,12 @@ describe("filters and labels (test report v0.14)", () => {
   });
 
   it("matches words anywhere in a change, all of them", () => {
-    const it = item("3.2", "C3", { oldText: "the estimator", newText: "the statistic", note: "Consistent with Section 2", thread: [{ at: "", author: "agent", text: "As asked" }] });
+    const it = item("3.2", "C3", {
+      oldText: "the estimator",
+      newText: "the statistic",
+      note: "Consistent with Section 2",
+      thread: [{ at: "", author: "agent", text: "As asked" }],
+    });
     expect(matchesFilter(it, { text: "STATISTIC" })).toBe(true);
     expect(matchesFilter(it, { text: "section estimator" })).toBe(true);
     expect(matchesFilter(it, { text: "asked" })).toBe(true);

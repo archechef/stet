@@ -5,12 +5,12 @@
  * and in the editor's title bar: Accept (with this wording), Agent's wording, More….
  */
 import { basename } from "node:path";
-import * as vscode from "vscode";
 import { foldPath, type Item } from "@stet/core";
-import { acceptAction, withIcon, type ChangeAction } from "./actions.js";
+import * as vscode from "vscode";
+import { acceptAction, type ChangeAction, withIcon } from "./actions.js";
 import { isLive, projectOfQuery, projectQuery, type Ref } from "./model.js";
 import type { Project } from "./project.js";
-import { viaReview, type ReviewHost } from "./review.js";
+import { type ReviewHost, viaReview } from "./review.js";
 
 export const EDIT_SCHEME = "stet-edit";
 
@@ -122,12 +122,23 @@ export class EditFiles implements vscode.FileSystemProvider, vscode.CodeLensProv
     if (!item || !isLive(item)) return [new vscode.CodeLens(at, { title: `${id} is ${item?.status ?? "gone"}: there is no wording to change`, command: "" })];
     const route = viaReview(doc.uri);
     const ref: Ref = { path: p.mainPath, id };
-    const lens = (a: ChangeAction, title = withIcon(a)) => new vscode.CodeLens(at, { title, tooltip: a.detail, command: "stet.reviewRun", arguments: route(a).args });
+    const lens = (a: ChangeAction, title = withIcon(a)) =>
+      new vscode.CodeLens(at, { title, tooltip: a.detail, command: "stet.reviewRun", arguments: route(a).args });
     const accept = acceptAction(this.host.model(p), p.mainPath, item);
     return [
       lens(accept, `${id}: ${withIcon(accept)} with this wording`),
-      new vscode.CodeLens(at, { title: "$(save) Save wording", tooltip: "Keep this wording for the change; it stays pending (Ctrl+S)", command: "stet.editSave", arguments: [doc.uri.toString()] }),
-      new vscode.CodeLens(at, { title: "$(discard) Agent's wording", tooltip: "Back to the agent's text", command: "stet.editReset", arguments: [doc.uri.toString()] }),
+      new vscode.CodeLens(at, {
+        title: "$(save) Save wording",
+        tooltip: "Keep this wording for the change; it stays pending (Ctrl+S)",
+        command: "stet.editSave",
+        arguments: [doc.uri.toString()],
+      }),
+      new vscode.CodeLens(at, {
+        title: "$(discard) Agent's wording",
+        tooltip: "Back to the agent's text",
+        command: "stet.editReset",
+        arguments: [doc.uri.toString()],
+      }),
       lens({ label: "More…", icon: "ellipsis", command: "stet.changeActions", args: [ref], tier: "other", detail: "Every action on this change" }),
     ];
   }

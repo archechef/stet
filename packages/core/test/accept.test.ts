@@ -10,7 +10,6 @@ const sha = (s: string) => createHash("sha256").update(Buffer.from(s)).digest("h
 
 const ACCEPTED = PAPER.replace("effective in practice", "effective in real use");
 
-
 const LINES = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} computes omega${i + 1} in every round.`).join("\n") + "\n";
 
 describe("all-or-nothing accept (Codex review 2026-09, F4)", () => {
@@ -119,7 +118,10 @@ describe("files that take effect", () => {
     write(wt, ".latexmkrc", "$pdflatex = 'x';\n");
     const r = await stet.submit("a", { title: "t" });
     await expect(stet.accept(r.items.map((i) => i.id))).rejects.toThrow(/latexmk runs it as Perl code.*--confirm/);
-    await stet.accept(r.items.map((i) => i.id), { confirmEffects: true });
+    await stet.accept(
+      r.items.map((i) => i.id),
+      { confirmEffects: true },
+    );
     expect(read(repo, ".latexmkrc")).toContain("pdflatex");
   });
 });

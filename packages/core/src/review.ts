@@ -121,8 +121,13 @@ export function mapReviewEdits(doc: ReviewDocument, edited: string): { texts: Ma
     const words: Part[] = diffWordsWithSpace(doc.content, edited);
     const grown = growRegions(doc.content, regions, editSpans(words));
     if (!grown) {
-      const near = doc.content.slice(Math.max(0, outside.from - 25), outside.to + 25).replace(/\s+/g, " ").trim();
-      return { error: `You edited text outside the proposed changes (near “${near}”). Edit that in your file itself; here only proposed text, and words right next to it, can change.` };
+      const near = doc.content
+        .slice(Math.max(0, outside.from - 25), outside.to + 25)
+        .replace(/\s+/g, " ")
+        .trim();
+      return {
+        error: `You edited text outside the proposed changes (near “${near}”). Edit that in your file itself; here only proposed text, and words right next to it, can change.`,
+      };
     }
     parts = words;
     regions = grown;

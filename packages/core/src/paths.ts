@@ -3,7 +3,11 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 /** Whether something exists at `p` (following links). */
-export const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+export const pathExists = (p: string): Promise<boolean> =>
+  stat(p).then(
+    () => true,
+    () => false,
+  );
 
 /** An absolute path in canonical form for comparisons: forward slashes, no trailing slash, lower case on Windows. */
 export function foldPath(p: string): string {

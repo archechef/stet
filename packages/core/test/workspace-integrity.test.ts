@@ -1,5 +1,18 @@
 /** What an agent can't make Stet do through its workspace's git: redirected links, hooks, fsmonitor, filter drivers, signing. */
-import { chmodSync, closeSync, cpSync, existsSync, ftruncateSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  cpSync,
+  existsSync,
+  ftruncateSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/doctor.js";
@@ -128,7 +141,10 @@ describe("programs git could run for the agent (Codex review 2026-09)", () => {
     edit(wt, "main.tex", "effective in practice", "effective in real use");
     const { items } = await stet.submit("a", { title: "t" });
     expect(items.some((i) => i.file === "main.tex")).toBe(true);
-    await stet.reject(items.filter((i) => i.file === "main.tex").map((i) => i.id), {});
+    await stet.reject(
+      items.filter((i) => i.file === "main.tex").map((i) => i.id),
+      {},
+    );
     await stet.sync("a"); // checks files out again (smudge)
     const { doctor } = await import("../src/doctor.js");
     await doctor(repo); // runs status in the worktree
@@ -185,21 +201,24 @@ describe("programs git could run for the agent (Codex review 2026-09)", () => {
 });
 
 describe("the MCP server and a redirected git link", () => {
-  it.skipIf(process.platform === "win32")("the MCP server never follows a workspace's redirected git link to a repository the agent made (security report 5e4c6af, S1)", async () => {
-    const { stet, repo } = await setup({ "main.tex": PAPER });
-    const { worktree: wt } = await stet.newAgent("a");
-    // The agent copies the project's git dir into its workspace, adds a hook that leaves a marker,
-    // and points its .git link at the copy, which looks like a complete Stet project.
-    const evil = join(wt, "evil");
-    cpSync(join(repo, ".git"), evil, { recursive: true });
-    const marker = join(wt, "..", "s1-marker");
-    writeFileSync(join(evil, "hooks", "reference-transaction"), `#!/bin/sh\ntouch '${marker}'\n`);
-    chmodSync(join(evil, "hooks", "reference-transaction"), 0o755);
-    const name = readdirSync(join(evil, "worktrees"))[0]!;
-    writeFileSync(join(wt, ".git"), `gitdir: ${join(evil, "worktrees", name)}\n`);
-    const server = new StetMcpServer({ cwd: wt, workspace: wt, project: repo, agentId: "a", version: "test" });
-    const r: any = await server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "stet_status", arguments: {} } });
-    expect(JSON.stringify(r)).toMatch(/refuses to run git/);
-    expect(existsSync(marker)).toBe(false);
-  });
+  it.skipIf(process.platform === "win32")(
+    "the MCP server never follows a workspace's redirected git link to a repository the agent made (security report 5e4c6af, S1)",
+    async () => {
+      const { stet, repo } = await setup({ "main.tex": PAPER });
+      const { worktree: wt } = await stet.newAgent("a");
+      // The agent copies the project's git dir into its workspace, adds a hook that leaves a marker,
+      // and points its .git link at the copy, which looks like a complete Stet project.
+      const evil = join(wt, "evil");
+      cpSync(join(repo, ".git"), evil, { recursive: true });
+      const marker = join(wt, "..", "s1-marker");
+      writeFileSync(join(evil, "hooks", "reference-transaction"), `#!/bin/sh\ntouch '${marker}'\n`);
+      chmodSync(join(evil, "hooks", "reference-transaction"), 0o755);
+      const name = readdirSync(join(evil, "worktrees"))[0]!;
+      writeFileSync(join(wt, ".git"), `gitdir: ${join(evil, "worktrees", name)}\n`);
+      const server = new StetMcpServer({ cwd: wt, workspace: wt, project: repo, agentId: "a", version: "test" });
+      const r: any = await server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "stet_status", arguments: {} } });
+      expect(JSON.stringify(r)).toMatch(/refuses to run git/);
+      expect(existsSync(marker)).toBe(false);
+    },
+  );
 });

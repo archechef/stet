@@ -11,7 +11,10 @@ describe("review document of a file", () => {
 
   it("applies every change, in order, and knows where each one is", () => {
     expect(doc.content).toBe("We study the task of reviewing changes. It scales to long documents.");
-    expect(doc.regions.map((r) => [r.id, doc.content.slice(r.start, r.end)])).toEqual([["1.1", "task"], ["1.2", "long"]]);
+    expect(doc.regions.map((r) => [r.id, doc.content.slice(r.start, r.end)])).toEqual([
+      ["1.1", "task"],
+      ["1.2", "long"],
+    ]);
     expect(reviewDocument(TEXT, [change("a", "problem of", "x"), change("b", "of reviewing", "y")]).skipped).toEqual(["b"]);
   });
 
@@ -32,7 +35,10 @@ describe("review document of a file", () => {
 
   it("grows a change over words reworded right next to it (test report v0.16.0, B9)", () => {
     // "the task" retyped as "a hard task": by letters, "the" is outside the change "task".
-    const r = mapReviewEdits(doc, "We study a hard task of reviewing changes. It scales to long documents.") as { texts: Map<string, string>; grown: Map<string, unknown> };
+    const r = mapReviewEdits(doc, "We study a hard task of reviewing changes. It scales to long documents.") as {
+      texts: Map<string, string>;
+      grown: Map<string, unknown>;
+    };
     expect(r.texts.get("1.1")).toBe("a hard task");
     expect(r.grown.get("1.1")).toEqual({ before: "the ".length, after: 0 });
     expect(r.texts.get("1.2")).toBe("long");
@@ -46,7 +52,10 @@ describe("review document of a file", () => {
   });
 
   it("gives text typed where two changes meet to the later one", () => {
-    const d = reviewDocument("ab", [{ id: "x", start: 0, end: 1, text: "A" }, { id: "y", start: 1, end: 2, text: "B" }]);
+    const d = reviewDocument("ab", [
+      { id: "x", start: 0, end: 1, text: "A" },
+      { id: "y", start: 1, end: 2, text: "B" },
+    ]);
     const r = mapReviewEdits(d, "A-B") as { texts: Map<string, string> };
     expect(Object.fromEntries(r.texts)).toEqual({ x: "A", y: "-B" });
   });
@@ -133,7 +142,9 @@ describe("reviewing a whole file", () => {
     expect(doc.regions.map((r) => r.id)).toEqual([formula!.id]);
     expect(doc.content).toContain("the problem of reviewing");
     expect(doc.content).toContain("$a+b=d$");
-    expect(await stet.saveReview(doc, doc.content.replace("the problem", "the task"))).toEqual({ error: expect.stringMatching(/outside the proposed changes/) });
+    expect(await stet.saveReview(doc, doc.content.replace("the problem", "the task"))).toEqual({
+      error: expect.stringMatching(/outside the proposed changes/),
+    });
     expect(await stet.saveReview(doc, doc.content.replace("$a+b=d$", "$a+b=e$"))).toEqual({ changed: [formula!.id] });
     expect((await stet.getItem(task!.id))!.draft).toBeUndefined();
   });

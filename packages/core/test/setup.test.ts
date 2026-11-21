@@ -99,13 +99,19 @@ describe("git identity from the environment (test report v0.14, B10)", () => {
       Object.assign(process.env, { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" });
       const check = async () => (await doctor(repo)).find((c) => c.name === "git identity")!;
       expect((await check()).status).toBe("warn");
-      Object.assign(process.env, { GIT_AUTHOR_NAME: "Env User", GIT_AUTHOR_EMAIL: "env@example.com", GIT_COMMITTER_NAME: "Env User", GIT_COMMITTER_EMAIL: "env@example.com" });
+      Object.assign(process.env, {
+        GIT_AUTHOR_NAME: "Env User",
+        GIT_AUTHOR_EMAIL: "env@example.com",
+        GIT_COMMITTER_NAME: "Env User",
+        GIT_COMMITTER_EMAIL: "env@example.com",
+      });
       const ok = await check();
       expect(ok.status).toBe("ok");
       expect(ok.message).toBe("Env User <env@example.com> (from the environment)");
     } finally {
-      for (const k of keys) if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
+      for (const k of keys)
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
     }
   });
 });
@@ -114,7 +120,15 @@ describe("setup without a git identity (test report v0.16, B1)", () => {
   it("gitIdentity says who commits, or null when git can't", async () => {
     const { gitIdentity } = await import("../src/git.js");
     const { repo } = await setup({ "main.tex": PAPER });
-    const keys = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "EMAIL"] as const;
+    const keys = [
+      "GIT_AUTHOR_NAME",
+      "GIT_AUTHOR_EMAIL",
+      "GIT_COMMITTER_NAME",
+      "GIT_COMMITTER_EMAIL",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+      "EMAIL",
+    ] as const;
     const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
     try {
       for (const k of keys) delete process.env[k];
@@ -127,8 +141,9 @@ describe("setup without a git identity (test report v0.16, B1)", () => {
       git(repo, "config", "user.useConfigOnly", "true"); // no guessing from the host name
       expect(await gitIdentity(repo)).toBeNull();
     } finally {
-      for (const k of keys) if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
+      for (const k of keys)
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
     }
   });
 });

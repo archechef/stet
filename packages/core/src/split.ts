@@ -3,10 +3,10 @@
  * All texts are LF-normalized; offsets are UTF-16 indexes into them.
  */
 import { diffArrays, diffLines } from "diff";
-import { isBlank, type Token } from "./tokenizer.js";
-import type { LanguageProfile, SyntaxRules } from "./lang/profile.js";
 import type { SplitConfig } from "./config.js";
+import type { LanguageProfile, SyntaxRules } from "./lang/profile.js";
 import { commonWords, paragraphSimilarity, sharedWordsMatrix, wordSimilarity } from "./text.js";
+import { isBlank, type Token } from "./tokenizer.js";
 
 export interface Edit {
   /** Range in the old (base) text. */
@@ -291,8 +291,12 @@ function joinAdjacent(edits: Edit[]): Edit[] {
     const touch = last && last.end === e.start && last.newEnd === e.newStart;
     if (touch && ((pure(last!, false) && pure(e, true)) || (pure(last!, true) && pure(e, false)) || blank(e) || blank(last!))) {
       out[out.length - 1] = {
-        start: last!.start, end: e.end, newStart: last!.newStart, newEnd: e.newEnd,
-        oldText: last!.oldText + e.oldText, newText: last!.newText + e.newText,
+        start: last!.start,
+        end: e.end,
+        newStart: last!.newStart,
+        newEnd: e.newEnd,
+        oldText: last!.oldText + e.oldText,
+        newText: last!.newText + e.newText,
       };
     } else out.push(e);
   }
@@ -574,7 +578,11 @@ function anchorPairs(ow: string[][], nw: string[][]): { o: number; n: number }[]
 }
 
 function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [number, number][]): BlockPair[] {
-  const wordsOf = (toks: Token[], [a, b]: [number, number]) => toks.slice(a, b).filter((t) => !isBlank(t)).map((t) => t.text);
+  const wordsOf = (toks: Token[], [a, b]: [number, number]) =>
+    toks
+      .slice(a, b)
+      .filter((t) => !isBlank(t))
+      .map((t) => t.text);
   const ow = ob.map((b) => wordsOf(ot, b));
   const nw = nb.map((b) => wordsOf(nt, b));
   const m = ob.length;
@@ -624,8 +632,10 @@ function pairBlocks(ot: Token[], nt: Token[], ob: [number, number][], nb: [numbe
     for (let grown = true; grown; ) {
       grown = false;
       const tries: BlockPair[] = [
-        { o: p.o, n: [p.n[0] - 1, p.n[1]] }, { o: p.o, n: [p.n[0], p.n[1] + 1] },
-        { o: [p.o[0] - 1, p.o[1]], n: p.n }, { o: [p.o[0], p.o[1] + 1], n: p.n },
+        { o: p.o, n: [p.n[0] - 1, p.n[1]] },
+        { o: p.o, n: [p.n[0], p.n[1] + 1] },
+        { o: [p.o[0] - 1, p.o[1]], n: p.n },
+        { o: [p.o[0], p.o[1] + 1], n: p.n },
       ];
       for (const t of tries) {
         const newO = t.o[0] !== p.o[0] ? t.o[0] : t.o[1] !== p.o[1] ? t.o[1] : -1;
@@ -695,7 +705,11 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>, ru
   const pairs = ob.length > 1 || nb.length > 1 ? pairBlocks(ot, nt, ob, nb) : [];
   // The paragraphs left unpaired on each side, for `gap`: one with a counterpart among the other
   // side's changed order (pairs keep the order).
-  const wordsOf = (toks: Token[], [a, b]: [number, number]) => toks.slice(a, b).filter((t) => !isBlank(t)).map((t) => t.text);
+  const wordsOf = (toks: Token[], [a, b]: [number, number]) =>
+    toks
+      .slice(a, b)
+      .filter((t) => !isBlank(t))
+      .map((t) => t.text);
   const paired = (k: number, side: "o" | "n") => pairs.some((p) => k >= p[side][0] && k <= p[side][1]);
   const unpaired = {
     o: ob.flatMap((b, k) => (paired(k, "o") ? [] : [wordsOf(ot, b)])),
@@ -728,11 +742,24 @@ function alignTokens(ot: Token[], nt: Token[], same: Same, hard: Set<number>, ru
  * is in the appendix").
  */
 function gap(
-  ot: Token[], nt: Token[], oa: number, ob: number, na: number, nb: number, same: Same, u: U[], blocks: boolean, hard: Set<number>,
+  ot: Token[],
+  nt: Token[],
+  oa: number,
+  ob: number,
+  na: number,
+  nb: number,
+  same: Same,
+  u: U[],
+  blocks: boolean,
+  hard: Set<number>,
   unpaired: { o: string[][]; n: string[][] },
   rules: SyntaxRules,
 ): void {
-  const words = (toks: Token[], a: number, b: number) => toks.slice(a, b).filter((t) => !isBlank(t)).map((t) => t.text);
+  const words = (toks: Token[], a: number, b: number) =>
+    toks
+      .slice(a, b)
+      .filter((t) => !isBlank(t))
+      .map((t) => t.text);
   const [ow, nw] = [words(ot, oa, ob), words(nt, na, nb)];
   if (!blocks || !ow.length || !nw.length) {
     diffRange(ot, nt, oa, ob, na, nb, same, u);
@@ -804,7 +831,10 @@ function slide(u: U[], ot: Token[], nt: Token[], same: Same, endsUnit: (t: Token
       }
       const from = i + lo;
       const to = j + hi;
-      const commons = u.slice(from, to).filter((e) => e.o >= 0 && e.n >= 0).map((e) => e[other]);
+      const commons = u
+        .slice(from, to)
+        .filter((e) => e.o >= 0 && e.n >= 0)
+        .map((e) => e[other]);
       const first = at(lo);
       const otherToks = key === "n" ? ot : nt;
       // Common pairs in the window whose texts are equal, with the run shifted by d.
@@ -845,8 +875,7 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
   // Reflowing is ignored, except where spaces are content: the agent's edit of a listing's
   // spaces was dropped, and the next sync reverted it (test report 2026-11-20, D7).
   const [oVerb, nVerb] = [rules.verbatim(oldSeg), rules.verbatim(newSeg)];
-  const same = (a: Token, b: Token) =>
-    a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws" && !oVerb(a) && !nVerb(b));
+  const same = (a: Token, b: Token) => a.text === b.text || (cfg.ignoreReflow && a.type === "ws" && b.type === "ws" && !oVerb(a) && !nVerb(b));
   // Where a new unit of the alignment starts (see `alignTokens`): changes don't cross these.
   const hard = new Set<number>();
   const u = alignTokens(ot, nt, same, hard, rules);
@@ -980,7 +1009,12 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
       if (e.o >= 0 && e.n < 0) olds.push(ot[e.o]!);
       if (e.n >= 0 && e.o < 0) news.push(nt[e.n]!);
     }
-    const punct = (ts: Token[]) => ts.filter((t) => t.type === "punct" && /^[,;:()—–-]+$/.test(t.text)).map((t) => t.text).sort().join("");
+    const punct = (ts: Token[]) =>
+      ts
+        .filter((t) => t.type === "punct" && /^[,;:()—–-]+$/.test(t.text))
+        .map((t) => t.text)
+        .sort()
+        .join("");
     if (punct(olds) !== punct(news)) return true;
     const words = (ts: Token[]) => ts.filter((t) => !isBlank(t) && t.type !== "punct").map((t) => t.text);
     const [ow, nw] = [words(olds), words(news)];
@@ -1021,8 +1055,13 @@ export function splitSegment(oldSeg: string, newSeg: string, cfg: SplitConfig, r
     if (last) for (let i = last[1]; i < r[0]; i++) if (oldTok(i) && !isBlank(oldTok(i)!) && oldTok(i)!.type !== "punct") between++;
     const near = !!last && between <= SENTENCE_NEAR && (restructures(last) || restructures(r));
     const join =
-      last && sent[last[1] - 1] === sid && (ratio > SENTENCE_REWRITE || (pieces.get(sid) ?? 0) >= SENTENCE_PIECES || near) &&
-      !isKey(last) && !isKey(r) && !structuralIn(last[1], r[0]) && !hardIn(last[1], r[0]);
+      last &&
+      sent[last[1] - 1] === sid &&
+      (ratio > SENTENCE_REWRITE || (pieces.get(sid) ?? 0) >= SENTENCE_PIECES || near) &&
+      !isKey(last) &&
+      !isKey(r) &&
+      !structuralIn(last[1], r[0]) &&
+      !hardIn(last[1], r[0]);
     if (join) last[1] = r[1];
     else sentences.push([r[0], r[1]]);
   }

@@ -11,7 +11,7 @@ import { edit, PAPER, read, setup, write } from "./helpers.js";
 
 /** Deterministic pseudo-random numbers (so a failure can be reproduced). */
 function rng(seed: number) {
-  return () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  return () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 }
 
 const LINES = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} computes omega${i + 1} in every round.`).join("\n") + "\n";
@@ -88,8 +88,10 @@ describe("many changes in one long file (test report v0.14, B3)", () => {
   function lines(n: number) {
     const vocab = "alpha beta gamma delta method result theorem proof lemma paper study analysis data model system approach".split(" ");
     let seed = 3;
-    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    return Array.from({ length: n }, (_, i) => (i % 10 === 9 ? "" : Array.from({ length: 12 }, () => vocab[Math.floor(r() * vocab.length)]).join(" ") + ` line${i}.`));
+    const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    return Array.from({ length: n }, (_, i) =>
+      i % 10 === 9 ? "" : Array.from({ length: 12 }, () => vocab[Math.floor(r() * vocab.length)]).join(" ") + ` line${i}.`,
+    );
   }
 
   it("submits an edit in each of 150 paragraphs quickly, each paragraph its own change", async () => {
@@ -122,7 +124,10 @@ describe("many changes in one long file (test report v0.14, B3)", () => {
     expect(items.length).toBeGreaterThan(100);
     // No change swallows a neighbouring paragraph: none crosses a paragraph break both ways.
     expect(items.filter((i) => i.oldText.includes("\n\n") && i.newText.includes("\n\n") && i.oldText !== i.newText).length).toBe(0);
-    await stet.accept(items.map((i) => i.id), { overrideLinked: true });
+    await stet.accept(
+      items.map((i) => i.id),
+      { overrideLinked: true },
+    );
     expect(read(repo, "big.tex")).toBe(doc(after));
   }, 60_000);
 

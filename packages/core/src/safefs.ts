@@ -66,7 +66,8 @@ export async function inspect(root: string, rel: string, opts: { forbidden?: str
     const realParent = await realpath(dirname(path));
     const realRoot = await realpath(root);
     if (!isInside(realParent, realRoot)) throw new UnsafePathError(`${rel} resolves outside ${root}`);
-    for (const f of opts.forbidden ?? []) if (isInside(join(realParent, "x"), await realpath(f).catch(() => f))) throw new UnsafePathError(`${rel} resolves into ${f}`);
+    for (const f of opts.forbidden ?? [])
+      if (isInside(join(realParent, "x"), await realpath(f).catch(() => f))) throw new UnsafePathError(`${rel} resolves into ${f}`);
   }
   return { path, missingDirs, exists };
 }
@@ -170,4 +171,3 @@ export async function readInside(root: string, rel: string): Promise<Buffer | nu
     return null;
   }
 }
-

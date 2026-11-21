@@ -23,7 +23,10 @@ describe("committing whole files (test report v0.14, D8)", () => {
     const { worktree: wt } = await stet.newAgent("a");
     edit(wt, "main.tex", "the problem", "the task");
     const { items } = await stet.submit("a", { title: "t" });
-    await stet.accept(items.map((i) => i.id), { edited: { [items[0]!.id]: "the job" } });
+    await stet.accept(
+      items.map((i) => i.id),
+      { edited: { [items[0]!.id]: "the job" } },
+    );
     expect((await stet.commitAcceptedItems()).yourEdits).toEqual([]);
   });
 });

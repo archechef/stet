@@ -1,17 +1,34 @@
 /** Accessibility of what the extension draws (test report 2026-11-20): checked in its sources and manifest. */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
 import type { Item } from "@stet/core";
+import { describe, expect, it } from "vitest";
 import { itemSpoken, spokenRow } from "../src/model.js";
 
 const src = (f: string) => readFileSync(join(__dirname, "..", "src", f), "utf8");
 const manifest = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
 
 const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id, agent: "a", changeset: "C1", file: "main.tex", kind: "modify", baseCommit: "b", range: { start: 0, end: 1 },
-  oldText: "old", newText: "new", context: { before: "", after: "" }, fingerprint: "", note: null, groups: ["G1"],
-  status: "pending", resolution: null, supersedes: null, conflictsWith: [], history: [], thread: [], ...extra,
+  id,
+  agent: "a",
+  changeset: "C1",
+  file: "main.tex",
+  kind: "modify",
+  baseCommit: "b",
+  range: { start: 0, end: 1 },
+  oldText: "old",
+  newText: "new",
+  context: { before: "", after: "" },
+  fingerprint: "",
+  note: null,
+  groups: ["G1"],
+  status: "pending",
+  resolution: null,
+  supersedes: null,
+  conflictsWith: [],
+  history: [],
+  thread: [],
+  ...extra,
 });
 
 describe("accessibility", () => {
@@ -44,7 +61,14 @@ describe("accessibility", () => {
     // Every result goes through announce(), which a screen reader hears as a notification.
     expect(e.match(/setStatusBarMessage\(/g)).toHaveLength(1);
     expect(e).toMatch(/function announce[\s\S]*accessibilitySupport|accessibilitySupport[\s\S]*function announce/);
-    for (const m of ["Comment on ${t.item.id} sent", "Revision of ${t.item.id}${this.inWhich(t.project)} requested", "Note ${t.note.id} resolved", "Reply on note ${note.id} sent", "Reply on ${hit.item.id} sent"]) expect(e).toContain(m);
+    for (const m of [
+      "Comment on ${t.item.id} sent",
+      "Revision of ${t.item.id}${this.inWhich(t.project)} requested",
+      "Note ${t.note.id} resolved",
+      "Reply on note ${note.id} sent",
+      "Reply on ${hit.item.id} sent",
+    ])
+      expect(e).toContain(m);
   });
 
   it("offers the bordered style once in High Contrast themes when proposed text wraps (test report v0.16.0)", () => {
@@ -64,7 +88,15 @@ describe("accessibility", () => {
 
 describe("a change's spoken label says what its row shows (test report v0.16)", () => {
   it("your wording, the conversation, and the status words of the row", () => {
-    const it2 = item("2.1", { oldText: "problem", newText: "task", draft: "hard task", thread: [{ at: "", author: "agent", text: "ok" }, { at: "", author: "user", text: "?" }] });
+    const it2 = item("2.1", {
+      oldText: "problem",
+      newText: "task",
+      draft: "hard task",
+      thread: [
+        { at: "", author: "agent", text: "ok" },
+        { at: "", author: "user", text: "?" },
+      ],
+    });
     expect(itemSpoken(it2, 4)).toBe("Change 2.1, replace “problem” with “hard task”, in main.tex line 4, pending, your wording, 2 messages");
     expect(itemSpoken(item("2.2", { status: "needs_revision" }))).toMatch(/, revision requested$/);
   });

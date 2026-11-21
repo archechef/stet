@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { serveStdio, StetMcpServer } from "../src/mcp.js";
+import { StetMcpServer, serveStdio } from "../src/mcp.js";
 import { CLI_DIST, edit, FAKE_CLI, PAPER, read, setup, write } from "./helpers.js";
 
 describe("the protocol, the review loop and the guard hook", () => {
@@ -13,7 +13,12 @@ describe("the protocol, the review loop and the guard hook", () => {
     const a = await stet.newAgent("a");
     const server = new StetMcpServer({ cwd: a.worktree, version: "test" });
 
-    const init: any = await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } });
+    const init: any = await server.handle({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } },
+    });
     expect(init.result.protocolVersion).toBe("2025-06-18");
     expect(init.result.capabilities.tools).toBeDefined();
     expect(init.result.instructions).toMatch(/stet_submit/);
@@ -23,7 +28,8 @@ describe("the protocol, the review loop and the guard hook", () => {
     const unknown: any = await server.handle({ jsonrpc: "2.0", id: 3, method: "nope" });
     expect(unknown.error.code).toBe(-32601);
 
-    const call = async (name: string, args: object = {}) => ((await server.handle({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } })) as any).result;
+    const call = async (name: string, args: object = {}) =>
+      ((await server.handle({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } })) as any).result;
 
     write(a.worktree, "main.tex", read(a.worktree, "main.tex").replaceAll("sec:intro", "sec:introduction"));
     const sub = await call("stet_submit", { title: "Rename label", rationale: "clearer" });
@@ -109,9 +115,23 @@ describe("malformed MCP messages (Codex review 2026-09, F7)", () => {
     let out = "";
     output.on("data", (d) => (out += d));
     const done = serveStdio(server, input, output);
-    input.end(['null', '5', '"x"', '[]', '[null, {"jsonrpc":"2.0","id":7,"method":"ping"}]', '{"jsonrpc":"2.0","id":{"a":1},"method":"ping"}', '{"jsonrpc":"2.0","id":8,"method":"ping"}', ""].join("\n"));
+    input.end(
+      [
+        "null",
+        "5",
+        '"x"',
+        "[]",
+        '[null, {"jsonrpc":"2.0","id":7,"method":"ping"}]',
+        '{"jsonrpc":"2.0","id":{"a":1},"method":"ping"}',
+        '{"jsonrpc":"2.0","id":8,"method":"ping"}',
+        "",
+      ].join("\n"),
+    );
     await done;
-    const replies = out.trim().split("\n").map((l) => JSON.parse(l));
+    const replies = out
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
     expect(replies).toHaveLength(7);
     for (const r of replies.slice(0, 4)) expect(r.error.code).toBe(-32600);
     expect(replies[4]).toEqual([

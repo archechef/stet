@@ -103,8 +103,7 @@ export async function applyItems(items: Item[], view: FileView, opts: ApplyOptio
   const applied: ApplyResult["applied"] = [];
   const { located, failed } = await locate(items, view, opts);
 
-  const current = async (path: string): Promise<FileChange | undefined> =>
-    changes.has(path) ? changes.get(path) : ((await view.read(path)) ?? undefined);
+  const current = async (path: string): Promise<FileChange | undefined> => (changes.has(path) ? changes.get(path) : ((await view.read(path)) ?? undefined));
   const exists = async (path: string) => (changes.has(path) ? changes.get(path) !== null : (await view.blobId(path)) !== null);
   const textOf = (item: Item) => opts.overrides?.get(item.id) ?? item.newText;
 

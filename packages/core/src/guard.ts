@@ -7,7 +7,7 @@ import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isInside } from "./paths.js";
-import { WORKSPACE_FILES, type CliCommand } from "./workspace.js";
+import { type CliCommand, WORKSPACE_FILES } from "./workspace.js";
 
 export { isInside };
 
@@ -75,7 +75,9 @@ function abs(p: string, cwd: string): string {
 }
 
 const GIT_OPTS = String.raw`\bgit\b(?:\s+(?:-c\s+\S+|-C\s+\S+|--[\w-]+(?:=\S+)?))*\s+`;
-const GIT_BLOCKED = new RegExp(GIT_OPTS + String.raw`(push|merge|rebase|switch|worktree|update-ref|filter-branch|filter-repo|replace|symbolic-ref|submodule)\b`);
+const GIT_BLOCKED = new RegExp(
+  GIT_OPTS + String.raw`(push|merge|rebase|switch|worktree|update-ref|filter-branch|filter-repo|replace|symbolic-ref|submodule)\b`,
+);
 const GIT_CHECKOUT = new RegExp(GIT_OPTS + String.raw`checkout\b(?![^;&|]*\s--(\s|$))`);
 const GIT_BRANCH_WRITE = /\bgit\b(?:\s+\S+)*?\s+branch\b[^;&|]*\s(-[a-zA-Z]*[fdDmMcC][a-zA-Z]*|--force|--delete|--move|--copy)\b/;
 /** Git config is shared with the user's project: writing it could make the user's git run commands. */
@@ -87,7 +89,8 @@ const GIT_REMOTE_WRITE = new RegExp(GIT_OPTS + String.raw`remote\s+(add|set-url|
 const GIT_DIR_OVERRIDE =
   /\bgit\b[^;&|]*\s(--git-dir|--work-tree)\b|\bGIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|CONFIG\w*)=|core\.hooksPath|\balias\.|STET_INTERNAL/i;
 const READ_ONLY_START = /^\s*(cat|less|more|head|tail|ls|dir|grep|rg|find|wc|type|file|stat|Get-Content|Get-ChildItem|Select-String|diff|cmp)\b/i;
-const WRITE_HINT = /(^|[^<>])>{1,2}(?!&)|\|\s*tee\b|\b(rm|mv|cp|touch|mkdir|rmdir|sed\s+-i|perl\s+-i|truncate|dd|ln|chmod|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b|\s-(?:delete|exec|execdir|ok|fprint\w*|fls)\b/i;
+const WRITE_HINT =
+  /(^|[^<>])>{1,2}(?!&)|\|\s*tee\b|\b(rm|mv|cp|touch|mkdir|rmdir|sed\s+-i|perl\s+-i|truncate|dd|ln|chmod|Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b|\s-(?:delete|exec|execdir|ok|fprint\w*|fls)\b/i;
 
 /**
  * Files in the worktree that belong to Stet: its settings and instructions, the `.claude` and
@@ -97,10 +100,7 @@ const WRITE_HINT = /(^|[^<>])>{1,2}(?!&)|\|\s*tee\b|\b(rm|mv|cp|touch|mkdir|rmdi
 function isOwnFile(rel: string): boolean {
   const fold = (s: string) => (process.platform === "win32" ? s.toLowerCase() : s);
   const r = fold(rel);
-  return (
-    WORKSPACE_FILES.some((f) => fold(f) === r) ||
-    [".claude", ".codex", ".git", ".stet"].some((d) => r === d || r.startsWith(d + "/"))
-  );
+  return WORKSPACE_FILES.some((f) => fold(f) === r) || [".claude", ".codex", ".git", ".stet"].some((d) => r === d || r.startsWith(d + "/"));
 }
 
 const unquote = (t: string) => t.replace(/^["']|["']$/g, "");
@@ -184,13 +184,13 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
   if (tool === "Bash" || tool === "PowerShell") {
     const cmd = String(ti.command ?? "");
     const gitMsg = (what: string) =>
-      `Stet: ${what} is not allowed in a proposal workspace. Submit your changes with stet_submit instead; ` +
-      `the reviewer merges them.`;
+      `Stet: ${what} is not allowed in a proposal workspace. Submit your changes with stet_submit instead; ` + `the reviewer merges them.`;
     if (GIT_BLOCKED.test(cmd)) return gitMsg(`\`git ${GIT_BLOCKED.exec(cmd)![1]}\``);
     if (GIT_CHECKOUT.test(cmd)) return gitMsg("switching branches with `git checkout`") + " To discard a file's changes use `git restore <file>`.";
     if (GIT_BRANCH_WRITE.test(cmd)) return gitMsg("changing branches with `git branch`");
     if (GIT_DIR_OVERRIDE.test(cmd)) return gitMsg("pointing git at another repository, hooks path or alias");
-    if (GIT_CONFIG_WRITE.test(cmd)) return gitMsg("changing git config (it is shared with the reviewer's project)") + " Reading it with `git config --get <key>` is fine.";
+    if (GIT_CONFIG_WRITE.test(cmd))
+      return gitMsg("changing git config (it is shared with the reviewer's project)") + " Reading it with `git config --get <key>` is fine.";
     if (GIT_REMOTE_WRITE.test(cmd)) return gitMsg("changing git remotes");
 
     if (isStetReadOnly(cmd, shown.cli, cwd)) return null;
@@ -211,8 +211,7 @@ export function checkToolUse(input: HookInput, shown: GuardContext): string | nu
     if (gitC && !isInside(abs(gitC[1]!, cwd), ctx.worktree)) return gitMsg("running git in another folder");
     if (touchesMain && !onlyReads(cmd)) {
       return (
-        `Stet: this command refers to the reviewer's project folder (${shown.mainPath}). ` +
-        `Work only inside your proposal workspace (${shown.worktree}).`
+        `Stet: this command refers to the reviewer's project folder (${shown.mainPath}). ` + `Work only inside your proposal workspace (${shown.worktree}).`
       );
     }
 

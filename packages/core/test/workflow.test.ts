@@ -6,8 +6,7 @@ import { foldPath, isInside } from "../src/paths.js";
 import { Stet } from "../src/service.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
 
-const statuses = async (stet: Awaited<ReturnType<typeof setup>>["stet"]) =>
-  Object.fromEntries((await stet.listItems()).map((i) => [i.id, i.status]));
+const statuses = async (stet: Awaited<ReturnType<typeof setup>>["stet"]) => Object.fromEntries((await stet.listItems()).map((i) => [i.id, i.status]));
 
 describe("basic review loop", () => {
   it("submits, accepts, rejects and gives feedback", async () => {
@@ -252,7 +251,12 @@ describe("grouping", () => {
   it("never merges a label rename into an atomic rewrite", async () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
-    edit(wt, "main.tex", "\\label{sec:intro}\nIn this work we study the problem of reviewing changes.", "\\label{sec:introduction}\nWe study how to review changes.");
+    edit(
+      wt,
+      "main.tex",
+      "\\label{sec:intro}\nIn this work we study the problem of reviewing changes.",
+      "\\label{sec:introduction}\nWe study how to review changes.",
+    );
     const r = await stet.submit("a", { title: "t", groups: [{ kind: "atomic", title: "Rewrite opening", where: ["main.tex:3-4"] }] });
     const label = r.items.find((i) => i.newText === "\\label{sec:introduction}");
     expect(label).toBeDefined();
@@ -263,7 +267,10 @@ describe("grouping", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
-    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", reason: "test of linked groups", title: "Rename", where: ["main.tex"] }] });
+    const { groups } = await stet.submit("a", {
+      title: "rename",
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "Rename", where: ["main.tex"] }],
+    });
     const res = await stet.accept([groups[0]!.items[0]!], { overrideLinked: true });
     expect(res.warnings.join()).toMatch(/broken/);
     expect((await stet.listGroups())[0]!.state).toBe("broken");
@@ -274,7 +281,10 @@ describe("grouping", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.tex", read(wt, "main.tex").replaceAll("sec:intro", "sec:introduction"));
-    const { groups } = await stet.submit("a", { title: "rename", groups: [{ kind: "linked", reason: "test of linked groups", title: "Rename", where: ["main.tex"] }] });
+    const { groups } = await stet.submit("a", {
+      title: "rename",
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "Rename", where: ["main.tex"] }],
+    });
     const [first, second] = groups[0]!.items;
     await stet.reject([first!], { reason: "keep the old label", mode: "revise-rest" });
     expect((await statuses(stet))[second!]).toBe("needs_revision");
@@ -347,7 +357,10 @@ describe("files", () => {
     const r = await stet.submit("a", { title: "files" });
     const kinds = r.items.map((i) => `${i.kind}:${i.file}`).sort();
     expect(kinds).toEqual(["add-file:sections/new.tex", "delete-file:old.tex", "modify:refs.bib"]);
-    await stet.accept(r.items.map((i) => i.id), { commit: true });
+    await stet.accept(
+      r.items.map((i) => i.id),
+      { commit: true },
+    );
     expect(read(repo, "sections/new.tex")).toBe("A new section.\n");
     expect(() => read(repo, "old.tex")).toThrow();
     expect(read(repo, "refs.bib")).toContain("1983");

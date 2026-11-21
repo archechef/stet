@@ -3,12 +3,11 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { isAbsolute, join, resolve } from "node:path";
 import type { StetConfig } from "./config.js";
 import type { Repo } from "./git.js";
-import { shQuote } from "./text.js";
 import { pathExists } from "./paths.js";
+import { shQuote } from "./text.js";
 
 export const HOOK_MARKER = "# stet-guard-hook";
 export const HOOK_NAMES = ["reference-transaction", "pre-push"] as const;
-
 
 /**
  * Shell epilogue: pass stdin and arguments on to the hook that was there before Stet.

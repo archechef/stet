@@ -21,10 +21,26 @@ let n = 0;
 function item(file: string, oldText: string, newText: string, extra: Partial<Item> = {}): Item {
   n++;
   return {
-    id: `1.${n}`, agent: "a", changeset: "C1", file, kind: "modify", baseCommit: "x",
-    range: { start: 0, end: oldText.length }, oldText, newText, context: { before: "", after: "" },
-    fingerprint: String(n), note: null, groups: [], status: "pending", resolution: null, supersedes: null,
-    conflictsWith: [], history: [], thread: [], ...extra,
+    id: `1.${n}`,
+    agent: "a",
+    changeset: "C1",
+    file,
+    kind: "modify",
+    baseCommit: "x",
+    range: { start: 0, end: oldText.length },
+    oldText,
+    newText,
+    context: { before: "", after: "" },
+    fingerprint: String(n),
+    note: null,
+    groups: [],
+    status: "pending",
+    resolution: null,
+    supersedes: null,
+    conflictsWith: [],
+    history: [],
+    thread: [],
+    ...extra,
   };
 }
 
@@ -114,7 +130,9 @@ describe("language profiles", () => {
     // Keys are matched by kind, across languages: a LaTeX \ref uses labels too, a \cite doesn't.
     expect(g.items).toEqual([def.id, use.id, ref.id]);
     // Plain text has no keys at all.
-    expect(autoGroups([item("a.md", "<intro>", "<overview>"), item("b.md", "@intro", "@overview")], cfg.grouping, () => PLAIN).filter((x) => x.kind === "linked")).toEqual([]);
+    expect(
+      autoGroups([item("a.md", "<intro>", "<overview>"), item("b.md", "@intro", "@overview")], cfg.grouping, () => PLAIN).filter((x) => x.kind === "linked"),
+    ).toEqual([]);
   });
 
   it("parts follow the profile's balance and global changes", async () => {

@@ -112,7 +112,12 @@ describe("the guard hook and its settings (security audit 2026-09)", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const cfgPath = join(stet.store.root, "config.json");
     const base = JSON.parse(readFileSync(cfgPath, "utf8"));
-    for (const bad of [{ agentBranchPrefix: "stet/*) rm -rf ~ ;; (x" }, { agentBranchPrefix: "stet" }, { mainBranch: "master; echo" }, { autoCommit: "sometimes" }]) {
+    for (const bad of [
+      { agentBranchPrefix: "stet/*) rm -rf ~ ;; (x" },
+      { agentBranchPrefix: "stet" },
+      { mainBranch: "master; echo" },
+      { autoCommit: "sometimes" },
+    ]) {
       writeFileSync(cfgPath, JSON.stringify({ ...base, ...bad }));
       await expect(stet.config()).rejects.toThrow(/Invalid Stet setting/);
     }

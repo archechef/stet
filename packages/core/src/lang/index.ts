@@ -5,8 +5,8 @@
 import { BIBTEX } from "./bibtex.js";
 import { LATEX } from "./latex.js";
 import { PLAIN } from "./plain.js";
-import { TYPST } from "./typst.js";
 import type { FilesKey, LanguageProfile } from "./profile.js";
+import { TYPST } from "./typst.js";
 
 export type { LanguageProfile } from "./profile.js";
 export { BIBTEX, LATEX, PLAIN, TYPST };
@@ -21,7 +21,15 @@ export type FilePatterns = Record<FilesKey, string[]>;
 export function matchesAny(path: string, patterns: string[]): boolean {
   const base = path.split("/").pop() ?? path;
   return patterns.some((p) => {
-    const re = new RegExp("^" + p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$", "i");
+    const re = new RegExp(
+      "^" +
+        p
+          .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+          .replace(/\*/g, ".*")
+          .replace(/\?/g, ".") +
+        "$",
+      "i",
+    );
     return re.test(base);
   });
 }

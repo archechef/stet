@@ -112,7 +112,11 @@ describe("insertions at one spot, and changes next to accepted ones (agent repor
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "refs.bib", bib + entry("one") + entry("two") + entry("three"));
     const { items } = await stet.submit("a", { title: "refs" });
-    expect(items.map((i) => [i.range.start, i.oldText])).toEqual([[bib.length - 1, ""], [bib.length - 1, ""], [bib.length - 1, ""]]);
+    expect(items.map((i) => [i.range.start, i.oldText])).toEqual([
+      [bib.length - 1, ""],
+      [bib.length - 1, ""],
+      [bib.length - 1, ""],
+    ]);
 
     for (let k = 0; k < 2; k++) {
       const s = await stet.sync("a");
@@ -166,7 +170,12 @@ describe("insertions at one spot, and changes next to accepted ones (agent repor
       edit(wt, "main.tex", "A paragraph that ends here.\n\n\\begin{lemma}[Old]", "\\begin{lemma}[New]");
       const { items } = await stet.submit("a", { title: "t" });
       expect(items.length).toBeGreaterThanOrEqual(2);
-      const g = await stet.group("a", items.map((i) => i.id), "atomic", "one change");
+      const g = await stet.group(
+        "a",
+        items.map((i) => i.id),
+        "atomic",
+        "one change",
+      );
       expect(g.merged?.status).toBe("pending");
       expect(g.merged?.oldText).toMatch(/^A paragraph[\s\S]*Old$/);
     });

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { Item } from "../src/model.js";
 import { moveChanges, moveChangesOf } from "../src/moves.js";
 import { settleParts } from "../src/parts.js";
-import type { Item } from "../src/model.js";
-import { DOC_LANGS, edit, read, setup, write, type DocLang } from "./helpers.js";
+import { DOC_LANGS, type DocLang, edit, read, setup, write } from "./helpers.js";
 
 const P1 = "We study the review of changes proposed by language models in scientific papers. Such changes are often long and touch many places at once.";
 const P2 = "Our tool splits every proposal into small items that the author can accept or reject one at a time, in the editor where the paper is written.";
@@ -107,7 +107,18 @@ function moves(L: DocLang) {
       edit(wt, L.file, "We report on", "We now report on");
       const r = await s.stet.submit("a", {
         title: "to the appendix",
-        groups: [{ kind: "linked", title: "Restructure", where: [`${L.file}:1-20`, `appendix.${L.ext}:1-5`], parts: [{ title: "Out", where: [`${L.file}:${line(5)}`] }, { title: "In", where: [`appendix.${L.ext}:3`] }, { title: "Wording", where: [`${L.file}:${line(11)}`] }] }],
+        groups: [
+          {
+            kind: "linked",
+            title: "Restructure",
+            where: [`${L.file}:1-20`, `appendix.${L.ext}:1-5`],
+            parts: [
+              { title: "Out", where: [`${L.file}:${line(5)}`] },
+              { title: "In", where: [`appendix.${L.ext}:3`] },
+              { title: "Wording", where: [`${L.file}:${line(11)}`] },
+            ],
+          },
+        ],
       });
       expect(r.moves).toHaveLength(1);
       const m = r.moves[0]!;
@@ -121,21 +132,30 @@ function moves(L: DocLang) {
       // P1 and P3, apart in the introduction, end up together in the evaluation. Since 2026-11-19
       // each new paragraph is a change of its own, and paragraphs that only land together (or only
       // leave together) are separate moves: one block moved is next to each other on both sides.
-      const doc = DOC.replace(`${P1}\n\n`, "").replace(`${P3}\n\n`, "").replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n${P3}\n`);
+      const doc = DOC.replace(`${P1}\n\n`, "")
+        .replace(`${P3}\n\n`, "")
+        .replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n${P3}\n`);
       const { stet, repo, wt, r } = await submitDoc(doc);
       expect(r.items).toHaveLength(4);
       const del1 = r.items.find((i) => i.oldText.startsWith("We study"))!;
       const del3 = r.items.find((i) => i.oldText.startsWith("The approach"))!;
       const ins1 = r.items.find((i) => !i.oldText.trim() && i.newText.includes("We study"))!;
       const ins3 = r.items.find((i) => !i.oldText.trim() && i.newText.includes("The approach"))!;
-      expect(r.moves).toEqual(expect.arrayContaining([{ from: [del1.id], to: [ins1.id], changed: 0 }, { from: [del3.id], to: [ins3.id], changed: 0 }]));
+      expect(r.moves).toEqual(
+        expect.arrayContaining([
+          { from: [del1.id], to: [ins1.id], changed: 0 },
+          { from: [del3.id], to: [ins3.id], changed: 0 },
+        ]),
+      );
       expect(r.moves).toHaveLength(2);
       // Rejecting one move leaves the other, and the paper stays well formed.
       const rejected = await stet.reject([del3.id]);
       expect(rejected).toHaveLength(2);
       await stet.accept([del1.id]);
       // (The paragraph break that came with P1 stays: one blank line more at the end.)
-      expect(read(repo, L.file)).toBe(DOC.replace(`${P1}\n\n`, "").replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n`));
+      expect(read(repo, L.file)).toBe(
+        DOC.replace(`${P1}\n\n`, "").replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n`),
+      );
       void wt;
     });
 
@@ -156,7 +176,8 @@ function moves(L: DocLang) {
     });
 
     it("a changed word in one of several moved blocks is shown at that block", async () => {
-      const doc = DOC.replace(`${P1}\n\n`, "").replace(`${P3}\n\n`, "")
+      const doc = DOC.replace(`${P1}\n\n`, "")
+        .replace(`${P3}\n\n`, "")
         .replace("We report on the evaluation here.\n", `We report on the evaluation here.\n\n${P1}\n\n${P3.replace("three papers", "four papers")}\n`);
       const { r } = await submitDoc(doc);
       expect(r.moves.map((m) => m.changed).sort()).toEqual([0, 1]);
@@ -183,7 +204,10 @@ function moves(L: DocLang) {
       const { stet, wt } = await agentOn(PAPER);
       write(wt, L.file, PAPER.replace(`${THM}\n\n`, "").replace(`${L.heading("Results")}\n${Y}`, `${L.heading("Results")}\n${THM}\n${Y}`));
       const r = await stet.submit("a", { title: "move the theorem" });
-      expect(r.items.map((i) => [!!i.oldText.trim(), !!i.newText.trim()])).toEqual([[true, false], [false, true]]);
+      expect(r.items.map((i) => [!!i.oldText.trim(), !!i.newText.trim()])).toEqual([
+        [true, false],
+        [false, true],
+      ]);
       expect(r.moves).toEqual([expect.objectContaining({ changed: 0 })]);
       expect(r.groups[0]!.title).toContain(`(${L.theoremKind}, unchanged)`);
     });
@@ -247,9 +271,19 @@ describe("parts and moves", () => {
     const mk = (id: string, oldText: string, newText: string, move?: Item["move"]) =>
       ({ id, kind: "modify", status: "pending", oldText, newText, context: { before: "", after: "" }, ...(move ? { move } : {}) }) as Item;
     // As stored by 0.7.0 (single ids) and since (lists).
-    for (const move of [{ from: "1.1", to: "1.2", changed: 0 }, { from: ["1.1"], to: ["1.2"], changed: 0 }]) {
+    for (const move of [
+      { from: "1.1", to: "1.2", changed: 0 },
+      { from: ["1.1"], to: ["1.2"], changed: 0 },
+    ]) {
       const members = [mk("1.1", "A passage.", "", move), mk("1.2", "", "A passage.", move), mk("1.3", "x", "y")];
-      const r = await settleParts([{ title: "Out", items: ["1.1"] }, { title: "In", items: ["1.2"] }, { title: "Other", items: ["1.3"] }], members);
+      const r = await settleParts(
+        [
+          { title: "Out", items: ["1.1"] },
+          { title: "In", items: ["1.2"] },
+          { title: "Other", items: ["1.3"] },
+        ],
+        members,
+      );
       expect(r.parts!.map((p) => p.items)).toEqual([["1.1", "1.2"], ["1.3"]]);
       expect(r.notes.join(" ")).toMatch(/move one passage/);
     }

@@ -1,10 +1,28 @@
 /** In-editor review: inline decorations, CodeLens actions, hovers, and diff documents. */
+
+import { type Item, itemEffect, lineDiff, moveChanges, moveFrom, movesOut, moveTexts, moveTo, partIndexOf, profileByName } from "@stet/core";
 import * as vscode from "vscode";
-import { itemEffect, lineDiff, moveChanges, moveFrom, movesOut, moveTexts, moveTo, partIndexOf, profileByName, type Item } from "@stet/core";
-import { diffBlock, draftMarkdown, esc, fence, ghostText, linkTitle, isLive, itemDiff, LineIndex, moveNote, positionIn, STATUS_TEXT, toLf, type Ref, type TreeModel } from "./model.js";
-import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
+import { acceptAction, type ChangeAction, changeActions, withIcon } from "./actions.js";
+import {
+  diffBlock,
+  draftMarkdown,
+  esc,
+  fence,
+  ghostText,
+  isLive,
+  itemDiff,
+  LineIndex,
+  linkTitle,
+  moveNote,
+  positionIn,
+  type Ref,
+  STATUS_TEXT,
+  type TreeModel,
+  toLf,
+} from "./model.js";
 
 export { esc, linkTitle };
+
 import type { Project } from "./project.js";
 
 export interface Located {
@@ -159,7 +177,9 @@ function distance(range: vscode.Range, pos: vscode.Position): number {
 
 const previewsOn = () => vscode.workspace.getConfiguration("stet").get<string>("pdfPreviews", "both") !== "off";
 
-export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.InlayHintsProvider, vscode.CodeActionProvider, vscode.Disposable {
+export class EditorIntegration
+  implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.InlayHintsProvider, vscode.CodeActionProvider, vscode.Disposable
+{
   private readonly removed = vscode.window.createTextEditorDecorationType({
     textDecoration: "line-through",
     color: new vscode.ThemeColor("stet.removedText.foreground"),
@@ -233,13 +253,18 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       const m = marks(ed.document, item, range);
       return item.move?.to === item.id ? { ...m, inserted: [] } : m;
     });
-    ed.setDecorations(this.removed, all.flatMap((m) => m.removed.map((r) => ({ range: r }))));
+    ed.setDecorations(
+      this.removed,
+      all.flatMap((m) => m.removed.map((r) => ({ range: r }))),
+    );
     const max = inlineMax(ed.document.uri);
     ed.setDecorations(
       this.inserted,
       usesHints(ed.document.uri)
         ? []
-        : all.flatMap((m) => m.inserted.map((i) => ({ range: new vscode.Range(i.at, i.at), renderOptions: { after: { contentText: ghostText(i.text, max) } } }))),
+        : all.flatMap((m) =>
+            m.inserted.map((i) => ({ range: new vscode.Range(i.at, i.at), renderOptions: { after: { contentText: ghostText(i.text, max) } } })),
+          ),
     );
     const notes = this.moveNotes(ed.document, located);
     const deco = (n: (typeof notes)[number]) => ({ range: new vscode.Range(n.at, n.at), renderOptions: { after: { contentText: n.text } } });
@@ -303,8 +328,18 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
       const accept = acceptAction(model, p.mainPath, item);
       lenses.push(
         new vscode.CodeLens(at, { title: `${item.id}${tag}: ${withIcon(accept)}`, tooltip: accept.detail, command: accept.command, arguments: accept.args }),
-        new vscode.CodeLens(at, { title: withIcon({ icon: "close", label: `${item.move ? "Reject move" : "Reject"}${whose}…` }), tooltip: `Reject ${item.id}, with an optional reason for the agent`, command: "stet.reject", arguments: [ref(item.id)] }),
-        new vscode.CodeLens(at, { title: withIcon({ icon: "ellipsis", label: `More${whose}…` }), tooltip: `Every action on ${item.id} (also Ctrl+. in the change)`, command: "stet.changeActions", arguments: [ref(item.id)] }),
+        new vscode.CodeLens(at, {
+          title: withIcon({ icon: "close", label: `${item.move ? "Reject move" : "Reject"}${whose}…` }),
+          tooltip: `Reject ${item.id}, with an optional reason for the agent`,
+          command: "stet.reject",
+          arguments: [ref(item.id)],
+        }),
+        new vscode.CodeLens(at, {
+          title: withIcon({ icon: "ellipsis", label: `More${whose}…` }),
+          tooltip: `Every action on ${item.id} (also Ctrl+. in the change)`,
+          command: "stet.changeActions",
+          arguments: [ref(item.id)],
+        }),
       );
     }
     return lenses;
@@ -331,7 +366,10 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
     if (!hits.length) return undefined;
     // The hover stays open while the mouse is anywhere in this area, not just over the changed text.
     const area = hits.map((h) => hoverArea(doc, h.range)).reduce((a, b) => a.union(b));
-    return new vscode.Hover(hits.map(({ item }) => this.hoverMarkdown(p, item)), area);
+    return new vscode.Hover(
+      hits.map(({ item }) => this.hoverMarkdown(p, item)),
+      area,
+    );
   }
 
   /** A change's hover: what it is, its PDF preview, and its actions. */
@@ -378,7 +416,6 @@ export class EditorIntegration implements vscode.CodeLensProvider, vscode.HoverP
   }
 }
 
-
 /** Markdown description of an item (hover, tooltips). */
 export function itemMarkdown(item: Item, model: TreeModel): string {
   const cs = model.snap.changesets.find((c) => c.id === item.changeset);
@@ -399,20 +436,32 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   if (item.draft !== undefined) lines.push(draftMarkdown(item));
   for (const gid of item.groups) {
     const g = model.group(gid);
-    if (g && g.kind !== "atomic") lines.push(`${g.kind === "linked" ? "🔗 linked" : "▣ related"}: ${esc(g.title)} (${g.items.join(", ")})${g.state === "broken" ? " ⚠ broken" : ""}`);
+    if (g && g.kind !== "atomic")
+      lines.push(`${g.kind === "linked" ? "🔗 linked" : "▣ related"}: ${esc(g.title)} (${g.items.join(", ")})${g.state === "broken" ? " ⚠ broken" : ""}`);
     const k = g ? partIndexOf(g, item.id) : -1;
     if (g && k >= 0) lines.push(`part ${k + 1} of ${g.parts!.length}: ${esc(g.parts![k]!.title)} (${g.parts![k]!.items.join(", ")})`);
   }
   if (item.move) {
     const out = movesOut(item);
-    const files = [...new Set(model.others(item).map((o) => o.file).filter((f) => f !== item.file))];
+    const files = [
+      ...new Set(
+        model
+          .others(item)
+          .map((o) => o.file)
+          .filter((f) => f !== item.file),
+      ),
+    ];
     const from = moveFrom(item.move).join(", ");
     const to = moveTo(item.move).join(", ");
-    lines.push(`⇅ **Move**: ${from} remove${out ? " text here" : ""}, ${to} insert${out ? "" : " it here"}${files.length ? ` (also in ${files.map(esc).join(", ")})` : ""}. Accepting or rejecting one decides the whole move.`);
+    lines.push(
+      `⇅ **Move**: ${from} remove${out ? " text here" : ""}, ${to} insert${out ? "" : " it here"}${files.length ? ` (also in ${files.map(esc).join(", ")})` : ""}. Accepting or rejecting one decides the whole move.`,
+    );
     const texts = moveTexts(item.move, model.get);
     const changes = texts ? moveChanges(texts.from, texts.to) : [];
     if (changes.length) {
-      lines.push(`⚠ **Changed on the way (${item.move.changed} word${item.move.changed > 1 ? "s" : ""}):** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`);
+      lines.push(
+        `⚠ **Changed on the way (${item.move.changed} word${item.move.changed > 1 ? "s" : ""}):** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`,
+      );
     } else lines.push("Word for word: the text arrives unchanged (spacing and line breaks aside).");
     lines.push(fence(out ? item.oldText : item.newText, profileByName(item.file).fence));
   } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
@@ -427,13 +476,17 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     // Text with bytes that aren't UTF-8: its changed lines, the bytes marked (security report 5e4c6af, S7).
     if (item.kind === "binary" && item.shownText) {
       const diff = lineDiff(item.shownText.old ?? "", item.shownText.new ?? "");
-      lines.push("Not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte.", fence(diff.slice(0, 60).join("\n") + (diff.length > 60 ? `\n… ${diff.length - 60} more lines` : ""), "diff"));
+      lines.push(
+        "Not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte.",
+        fence(diff.slice(0, 60).join("\n") + (diff.length > 60 ? `\n… ${diff.length - 60} more lines` : ""), "diff"),
+      );
     }
   }
   // A decided change shows its whole conversation (History's tooltip showed only three messages,
   // and later replies were lost); a pending one the latest three, as more is in its comment thread.
   const last = isLive(item) ? item.thread.slice(-3) : item.thread;
-  if (last.length < item.thread.length) lines.push(`*${item.thread.length - last.length} earlier message${item.thread.length - last.length === 1 ? "" : "s"} in the comment thread*`);
+  if (last.length < item.thread.length)
+    lines.push(`*${item.thread.length - last.length} earlier message${item.thread.length - last.length === 1 ? "" : "s"} in the comment thread*`);
   if (last.length) lines.push(last.map((t) => `> **${t.author === "user" ? "You" : esc(item.agent)}:** ${esc(t.text)}`).join("\n>\n"));
   return lines.join("\n\n");
 }
@@ -451,4 +504,3 @@ export class DiffContent implements vscode.TextDocumentContentProvider {
     return this.resolveSide(uri);
   }
 }
-

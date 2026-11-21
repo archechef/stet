@@ -1,63 +1,95 @@
 /** Stet for VS Code (spec §12.2): review panel, in-editor review, threads and setup without a command line. */
 
-import { inPreviewCache, PreviewPanel, previewNotice, previewPlace } from "./preview.js";
-import { REVIEW_SCHEME, ReviewFiles, type ReviewHost } from "./review.js";
-import { EDIT_SCHEME, EditFiles } from "./edits.js";
 import { closeSync, openSync, readSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  type Agent,
+  type AgentKind,
+  buildIgnores,
+  DOCUMENT_LANGUAGES,
+  defaultConfig,
+  doctor,
+  documentProfile,
+  foldPath,
+  type Group,
+  gitIdentity,
+  hasPreview,
+  type Item,
+  isNoteId,
+  itemEffect,
+  languageCounts,
+  matchesAny,
+  NOTIFY_TRIGGER_TEXT,
+  NOTIFY_TRIGGERS,
+  type Note,
+  type NotifyMode,
+  type NotifyTrigger,
+  notifyMode,
+  notifyTriggers,
+  parsePartId,
+  partId,
+  pathExists,
+  profileByName,
+  Repo,
+  roundOf,
+  type ShareMode,
+  Stet,
+} from "@stet/core";
 import * as vscode from "vscode";
-import { buildIgnores, defaultConfig, doctor, DOCUMENT_LANGUAGES, documentProfile, itemEffect, languageCounts, foldPath, gitIdentity, matchesAny, profileByName, hasPreview, isNoteId, notifyMode, notifyTriggers, NOTIFY_TRIGGERS, NOTIFY_TRIGGER_TEXT, type NotifyTrigger, parsePartId, partId, pathExists, Repo, roundOf, Stet, type Agent, type AgentKind, type Group, type Item, type Note, type NotifyMode, type ShareMode } from "@stet/core";
-import { acceptAction, acceptQuestion, changeActions, withIcon, type ChangeAction } from "./actions.js";
-import { esc, inlineProblems, itemMarkdown, usesHints, DiffContent, EditorIntegration, Locator, type Host } from "./editor.js";
+import { acceptAction, acceptQuestion, type ChangeAction, changeActions, withIcon } from "./actions.js";
 import { inProject, Threads } from "./comments.js";
+import { DiffContent, EditorIntegration, esc, type Host, inlineProblems, itemMarkdown, Locator, usesHints } from "./editor.js";
+import { EDIT_SCHEME, EditFiles } from "./edits.js";
 import {
   AGENT_ID,
-  fence,
-  groupDescription,
-  groupLabel,
   actionsTitle,
   archiveChoices,
   behindAgents,
-  threadText,
-  unreadReplies,
   bulkQuestion,
-  manyQuestion,
   changeAt,
   changesAt,
   dissolveQuestion,
   documentOrder,
   editedPart,
-  finishQuestion,
-  fromPanel,
-  FINISH_SAVE,
   editFrame,
-  nextItemIndex,
-  noLinks,
-  spokenRow,
+  FINISH_SAVE,
+  fence,
   filterIsEmpty,
   filterText,
+  finishQuestion,
   fitLabel,
-  itemSpoken,
+  fromPanel,
+  groupDescription,
+  groupLabel,
   isLive,
   isRef,
   itemLabel,
+  itemSpoken,
   LineIndex,
+  manyQuestion,
+  type Node,
+  nextItemIndex,
+  noLinks,
   oneLine,
+  type PanelFilter,
   partLabel,
-  roundLabel,
-  STATUS_TEXT,
   projectOfQuery,
   projectQuery,
-  suggestAgentId,
-  toLf,
-  TreeModel,
-  type PanelFilter,
   type Ref,
+  roundLabel,
+  STATUS_TEXT,
+  spokenRow,
+  suggestAgentId,
   type TreeMode,
-  type Node,
+  TreeModel,
+  threadText,
+  toLf,
+  unreadReplies,
 } from "./model.js";
+import { inPreviewCache, PreviewPanel, previewNotice, previewPlace } from "./preview.js";
 import { Project } from "./project.js";
+import { REVIEW_SCHEME, ReviewFiles, type ReviewHost } from "./review.js";
 import { cliCommand, installCli, isManaged, type RuntimeMode } from "./runtime.js";
 
 type El = { project: Project; node?: Node };
@@ -202,7 +234,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.scheme !== "file" || !e.contentChanges.length) return;
         for (const d of vscode.workspace.textDocuments) {
-          if (d.uri.scheme === "stet-diff" && new URLSearchParams(d.uri.query).get("side") === "current" && this.currentOf(d.uri)?.toString() === e.document.uri.toString()) this.diffContent.fire(d.uri);
+          if (
+            d.uri.scheme === "stet-diff" &&
+            new URLSearchParams(d.uri.query).get("side") === "current" &&
+            this.currentOf(d.uri)?.toString() === e.document.uri.toString()
+          )
+            this.diffContent.fire(d.uri);
         }
       }),
       vscode.window.onDidChangeActiveTextEditor((ed) => {
@@ -309,7 +346,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       // (test report 5e4c6af, B3, B8 and accessibility).
       const doc = documentProfile(await p.stet.config());
       if (!doc.typesetter) {
-        if (!this.noPreviews.has(foldPath(p.mainPath))) this.output.appendLine(`PDF previews in ${p.name}: Stet has no PDF previews for ${doc.name} projects yet.`);
+        if (!this.noPreviews.has(foldPath(p.mainPath)))
+          this.output.appendLine(`PDF previews in ${p.name}: Stet has no PDF previews for ${doc.name} projects yet.`);
         this.noPreviews.add(foldPath(p.mainPath));
         void this.onProjectChanged();
         return;
@@ -338,7 +376,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const project = p;
     // Said at once, without a progress note about downloads (test report 5e4c6af, B3).
     const doc = documentProfile(await project.stet.config());
-    if (!doc.typesetter) return void vscode.window.showInformationMessage(`Stet has no PDF previews for ${doc.name} projects yet, so there is nothing to set up in ${project.name}.`);
+    if (!doc.typesetter)
+      return void vscode.window.showInformationMessage(
+        `Stet has no PDF previews for ${doc.name} projects yet, so there is nothing to set up in ${project.name}.`,
+      );
     const r = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -352,7 +393,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (r.ok) void vscode.window.showInformationMessage(`Stet: ${r.status?.message ?? "PDF previews are set up."}`);
     else {
       this.output.appendLine(r.log);
-      void vscode.window.showErrorMessage("Stet: building the PDF preview image failed. Details are in the Stet output.", "Show output").then((c) => c && this.output.show());
+      void vscode.window
+        .showErrorMessage("Stet: building the PDF preview image failed. Details are in the Stet output.", "Show output")
+        .then((c) => c && this.output.show());
     }
     this.preview.refresh();
   }
@@ -450,7 +493,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (r.ok) void vscode.window.showInformationMessage("Stet: extra fonts installed; previews are built again with them.");
     else {
       this.output.appendLine(r.log);
-      void vscode.window.showErrorMessage("Stet: adding the extra fonts failed. Details are in the Stet output.", "Show output").then((c) => c && this.output.show());
+      void vscode.window
+        .showErrorMessage("Stet: adding the extra fonts failed. Details are in the Stet output.", "Show output")
+        .then((c) => c && this.output.show());
     }
     this.preview.refresh();
   }
@@ -460,8 +505,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     // `p` on a Typst change opened an empty preview panel (test report 5e4c6af, B8).
-    if (t.item.kind !== "modify" || !hasPreview(t.item.file)) return void vscode.window.showInformationMessage(`Stet has no PDF preview for ${t.item.id}: ${t.item.kind !== "modify" ? "it is not a text change" : `there are no PDF previews for ${profileByName(t.item.file).name} files yet`}.`);
-    if (previewPlace() === "off") return void vscode.window.showInformationMessage("PDF previews are off (setting stet.pdfPreviews, or View options in the Stet panel).");
+    if (t.item.kind !== "modify" || !hasPreview(t.item.file))
+      return void vscode.window.showInformationMessage(
+        `Stet has no PDF preview for ${t.item.id}: ${t.item.kind !== "modify" ? "it is not a text change" : `there are no PDF previews for ${profileByName(t.item.file).name} files yet`}.`,
+      );
+    if (previewPlace() === "off")
+      return void vscode.window.showInformationMessage("PDF previews are off (setting stet.pdfPreviews, or View options in the Stet panel).");
     this.preview.show(t);
   }
 
@@ -485,7 +534,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         `![PDF preview of ${esc(item.id)}](${vscode.Uri.file(r.after.file).toString()}|${hoverSize(r.after.file)})`,
       ].join("\n\n");
     }
-    if (r.status === "failed") return `⚠ *${esc(r.message)}* The ${esc(r.typesetter ?? "build")} error is in *Preview in PDF*${r.missing?.extras ? ", with the offer to install the extra fonts" : ""}.`;
+    if (r.status === "failed")
+      return `⚠ *${esc(r.message)}* The ${esc(r.typesetter ?? "build")} error is in *Preview in PDF*${r.missing?.extras ? ", with the offer to install the extra fonts" : ""}.`;
     return undefined; // no spot on the page, or previews unavailable (said once, elsewhere)
   }
 
@@ -599,7 +649,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (all.length) {
       const fresh = all.reduce((n, p) => n + this.unreadOf(p, () => true), 0);
       this.status.text =
-        `$(checklist) ${pending}` + (fresh ? ` $(comment-unresolved) ${fresh}` : "") + (uncommitted ? ` $(git-commit) ${uncommitted}` : "") + (sync.length ? " $(sync)" : "") + (unshared.length ? " $(cloud-upload)" : "") + (missing.length ? " $(warning)" : "");
+        `$(checklist) ${pending}` +
+        (fresh ? ` $(comment-unresolved) ${fresh}` : "") +
+        (uncommitted ? ` $(git-commit) ${uncommitted}` : "") +
+        (sync.length ? " $(sync)" : "") +
+        (unshared.length ? " $(cloud-upload)" : "") +
+        (missing.length ? " $(warning)" : "");
       const tip = [`Stet: ${pending} change${pending === 1 ? "" : "s"} to review`];
       if (fresh) tip.push(`${fresh} new repl${fresh === 1 ? "y" : "ies"} from agents (marked in the panel; read when you go to the change or note)`);
       if (all.length > 1) {
@@ -657,10 +712,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   private childrenOf(el: El | undefined, mode: TreeMode): El[] {
     const ps = this.allProjects();
     if (!el) {
-      if (ps.length === 1) return this.model(ps[0]!, mode).children().map((node) => ({ project: ps[0]!, node }));
+      if (ps.length === 1)
+        return this.model(ps[0]!, mode)
+          .children()
+          .map((node) => ({ project: ps[0]!, node }));
       return ps.map((project) => ({ project }));
     }
-    return this.model(el.project, mode).children(el.node).map((node) => ({ project: el.project, node }));
+    return this.model(el.project, mode)
+      .children(el.node)
+      .map((node) => ({ project: el.project, node }));
   }
 
   private async treeItemOf(el: El, mode: TreeMode): Promise<vscode.TreeItem> {
@@ -744,7 +804,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const rows = this.rowsInOrder();
     const cur = this.panelSelection();
     // From a round or group row too: the change after (or before) it, not the panel's first or last (test report v0.16.0, B4).
-    const i = nextItemIndex(rows.map((e) => e.node?.type === "item"), cur ? rows.findIndex((e) => elId(e) === elId(cur)) : -1, dir);
+    const i = nextItemIndex(
+      rows.map((e) => e.node?.type === "item"),
+      cur ? rows.findIndex((e) => elId(e) === elId(cur)) : -1,
+      dir,
+    );
     if (i < 0) return;
     let next = rows[i]!;
     // Or by file and line, if you'd rather go through the document (stet.navigationOrder).
@@ -752,10 +816,18 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       const items = rows.filter((e) => e.node?.type === "item");
       // Projects in the panel's order, not by path: they were crossed the other way round (test report 5e4c6af).
       const rank = [...new Set(rows.map((e) => e.project.mainPath))];
-      const placed = await Promise.all(items.map(async (e) => {
-        const it = (e.node as { item: Item }).item;
-        return { el: e, project: String(rank.indexOf(e.project.mainPath)).padStart(6, "0"), file: it.file, line: await this.lineOf(e.project, it), id: it.id };
-      }));
+      const placed = await Promise.all(
+        items.map(async (e) => {
+          const it = (e.node as { item: Item }).item;
+          return {
+            el: e,
+            project: String(rank.indexOf(e.project.mainPath)).padStart(6, "0"),
+            file: it.file,
+            line: await this.lineOf(e.project, it),
+            id: it.id,
+          };
+        }),
+      );
       const order = documentOrder(placed);
       const k = order.findIndex((x) => elId(x.el) === elId(cur));
       if (k >= 0) next = order[Math.min(order.length - 1, Math.max(0, k + dir))]!.el;
@@ -772,12 +844,18 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
    */
   private async decide(p: Project, anchor: string, fromPanel: boolean, action: () => Promise<void>): Promise<void> {
     const idOf = (e: El) => (e.node?.type === "item" ? e.node.item.id : "");
-    const before = this.itemsInOrder().filter((e) => e.project === p).map(idOf);
+    const before = this.itemsInOrder()
+      .filter((e) => e.project === p)
+      .map(idOf);
     const status = this.model(p).item(anchor)?.status;
     await action();
     if (!vscode.workspace.getConfiguration("stet").get<boolean>("autoAdvance", true)) return;
     if (this.model(p).item(anchor)?.status === status) return;
-    const live = new Map(this.itemsInOrder().filter((e) => e.project === p && e.node?.type === "item" && isLive(e.node.item)).map((e) => [idOf(e), e]));
+    const live = new Map(
+      this.itemsInOrder()
+        .filter((e) => e.project === p && e.node?.type === "item" && isLive(e.node.item))
+        .map((e) => [idOf(e), e]),
+    );
     const i = before.indexOf(anchor);
     const next = [...before.slice(i + 1), ...before.slice(0, Math.max(i, 0))].map((id) => live.get(id)).find((e) => e !== undefined);
     if (!next) return;
@@ -819,12 +897,18 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         t.iconPath = new vscode.ThemeIcon(n.agent.kind === "codex" ? "terminal" : "hubot");
         t.tooltip = new vscode.MarkdownString(
           `**${esc(n.agent.id)}** (${n.agent.kind})\n\nWorkspace: ${esc(n.agent.worktree)}` +
-            (fresh ? `\n\nOpen this folder in ${n.agent.kind === "codex" ? "Codex" : n.agent.kind === "claude-code" ? "the Claude desktop app (Code tab) or Claude Code" : "your agent"} and give it a task: its proposals appear here. *Open agent workspace…* (the folder button on the row) copies the path.` : "") +
+            (fresh
+              ? `\n\nOpen this folder in ${n.agent.kind === "codex" ? "Codex" : n.agent.kind === "claude-code" ? "the Claude desktop app (Code tab) or Claude Code" : "your agent"} and give it a task: its proposals appear here. *Open agent workspace…* (the folder button on the row) copies the path.`
+              : "") +
             (behind ? "\n\nThe agent works on an older version of your text; it catches up the next time it syncs with your text." : "") +
             (n.agent.state === "active"
               ? `\n\nNotifications: ${NOTIFY_PICKS.find((x) => x.mode === notify)!.label}` +
                 (notifyTriggers(n.agent).length < NOTIFY_TRIGGERS.length
-                  ? `, for ${notifyTriggers(n.agent).map((t) => NOTIFY_TRIGGER_TEXT[t].toLowerCase()).join(", ") || "nothing"}`
+                  ? `, for ${
+                      notifyTriggers(n.agent)
+                        .map((t) => NOTIFY_TRIGGER_TEXT[t].toLowerCase())
+                        .join(", ") || "nothing"
+                    }`
                   : "") +
                 " (bell button). The megaphone wakes it now."
               : ""),
@@ -838,10 +922,15 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const fresh = this.unread(el.project, nt);
         const replies = nt.thread.length ? ` · ${nt.thread.length} repl${nt.thread.length === 1 ? "y" : "ies"}${fresh ? ` (${fresh} new)` : ""}` : "";
         t.description = `${nt.file}${nt.deliveredAt ? "" : " · not delivered yet"}${replies}`;
-        t.iconPath = fresh ? new vscode.ThemeIcon("comment-unresolved", new vscode.ThemeColor("notificationsInfoIcon.foreground")) : new vscode.ThemeIcon("note");
+        t.iconPath = fresh
+          ? new vscode.ThemeIcon("comment-unresolved", new vscode.ThemeColor("notificationsInfoIcon.foreground"))
+          : new vscode.ThemeIcon("note");
         t.tooltip = new vscode.MarkdownString(
           `**${nt.id}** note for ${esc(nt.agent)} on ${esc(nt.file)}${nt.deliveredAt ? "" : " (the agent receives it at its next sync)"}\n\n${esc(nt.body)}\n\n${fence(nt.text, profileByName(nt.file).fence)}` +
-            nt.thread.slice(-3).map((r) => `\n\n> **${r.author === "user" ? "You" : esc(nt.agent)}:** ${esc(r.text)}`).join(""),
+            nt.thread
+              .slice(-3)
+              .map((r) => `\n\n> **${r.author === "user" ? "You" : esc(nt.agent)}:** ${esc(r.text)}`)
+              .join(""),
         );
         t.contextValue = nt.state === "resolved" ? "note.resolved" : "note.open";
         if (nt.state === "resolved") t.description = `${t.description} · resolved`;
@@ -855,7 +944,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const live = model.liveCount((i) => i.changeset === cs.id);
         t.description = history ? model.outcome((i) => i.changeset === cs.id) : model.openText((i) => i.changeset === cs.id);
         t.iconPath = new vscode.ThemeIcon("layers");
-        t.tooltip = new vscode.MarkdownString(`**Round ${roundOf(cs.id)}** (${cs.id}) ${esc(cs.title)}\n\n${cs.stetNote ? `⚠ ${esc(cs.stetNote)}\n\n` : ""}${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`);
+        t.tooltip = new vscode.MarkdownString(
+          `**Round ${roundOf(cs.id)}** (${cs.id}) ${esc(cs.title)}\n\n${cs.stetNote ? `⚠ ${esc(cs.stetNote)}\n\n` : ""}${esc(cs.rationale)}\n\n*${new Date(cs.submittedAt).toLocaleString()}*`,
+        );
         t.contextValue = live ? "changeset.live" : "changeset.done";
         return t;
       }
@@ -960,9 +1051,7 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     let b = this.lineBatches.get(p.mainPath);
     if (!b) {
       const live = p.snapshot.items.filter((i) => isLive(i) && i.kind === "modify");
-      b = p.stet
-        .locateMany(live, undefined, p.snapshot.items)
-        .catch(() => new Map<string, { line: number; span: unknown }>());
+      b = p.stet.locateMany(live, undefined, p.snapshot.items).catch(() => new Map<string, { line: number; span: unknown }>());
       this.lineBatches.set(p.mainPath, b);
     }
     return b;
@@ -1034,7 +1123,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (several.length) {
       const pick = await vscode.window.showQuickPick(
         // The full id: the label's number is the change's within its round, so 2.1 showed as "1" (test report 5e4c6af).
-        several.map((l) => ({ label: `${l.item.id}: ${itemLabel(l.item, this.model(p).get).replace(/^\S+\s+/, "")}`, description: l.item.agent, detail: `${l.item.id}: “${oneLine(l.item.oldText, 50)}” → “${oneLine(l.item.newText, 50)}”`, item: l.item })),
+        several.map((l) => ({
+          label: `${l.item.id}: ${itemLabel(l.item, this.model(p).get).replace(/^\S+\s+/, "")}`,
+          description: l.item.agent,
+          detail: `${l.item.id}: “${oneLine(l.item.oldText, 50)}” → “${oneLine(l.item.newText, 50)}”`,
+          item: l.item,
+        })),
         { title: "The cursor is in several proposed changes: which one?" },
       );
       return pick ? { project: p, node: { type: "item", item: pick.item, parent: "" } } : CANCELLED;
@@ -1082,21 +1176,43 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const files = [...new Set(live.map((i) => i.file))].sort();
     const count = (pred: (i: Item) => boolean) => `${live.filter(pred).length} pending`;
     const picks: Pick[] = [
-      { label: "$(search) Search the changes…", detail: cur.text ? `now: “${cur.text}”` : "Words in a change's text, its note or its conversation", search: true },
+      {
+        label: "$(search) Search the changes…",
+        detail: cur.text ? `now: “${cur.text}”` : "Words in a change's text, its note or its conversation",
+        search: true,
+      },
       ...(this.filter ? [{ label: "$(clear-all) Show everything", clear: true } as Pick] : []),
       { label: "Agents", kind: vscode.QuickPickItemKind.Separator },
-      ...agents.map((a): Pick => ({ label: `${mark(cur.agent === a)}${a}`, description: count((i) => i.agent === a), set: { ...cur, agent: cur.agent === a ? undefined : a } })),
+      ...agents.map(
+        (a): Pick => ({
+          label: `${mark(cur.agent === a)}${a}`,
+          description: count((i) => i.agent === a),
+          set: { ...cur, agent: cur.agent === a ? undefined : a },
+        }),
+      ),
       { label: "Files", kind: vscode.QuickPickItemKind.Separator },
-      ...files.map((f): Pick => ({ label: `${mark(cur.file === f)}${f}`, description: count((i) => i.file === f), set: { ...cur, file: cur.file === f ? undefined : f } })),
+      ...files.map(
+        (f): Pick => ({ label: `${mark(cur.file === f)}${f}`, description: count((i) => i.file === f), set: { ...cur, file: cur.file === f ? undefined : f } }),
+      ),
       { label: "Status", kind: vscode.QuickPickItemKind.Separator },
       { label: `${mark(cur.status === "pending")}Waiting for you`, set: { ...cur, status: cur.status === "pending" ? undefined : "pending" } },
-      { label: `${mark(cur.status === "needs_revision")}Waiting for the agent's revision`, set: { ...cur, status: cur.status === "needs_revision" ? undefined : "needs_revision" } },
+      {
+        label: `${mark(cur.status === "needs_revision")}Waiting for the agent's revision`,
+        set: { ...cur, status: cur.status === "needs_revision" ? undefined : "needs_revision" },
+      },
     ];
-    const pick = await vscode.window.showQuickPick(picks, { title: "Show only…", placeHolder: "Pick an agent, a file or a status (again to drop it), or search" });
+    const pick = await vscode.window.showQuickPick(picks, {
+      title: "Show only…",
+      placeHolder: "Pick an agent, a file or a status (again to drop it), or search",
+    });
     if (!pick) return;
     if (pick.clear) return this.setFilter(null);
     if (pick.search) {
-      const text = await vscode.window.showInputBox({ title: "Search the changes", value: cur.text ?? "", prompt: "All of these words, in a change's text, note or conversation (empty: no search)" });
+      const text = await vscode.window.showInputBox({
+        title: "Search the changes",
+        value: cur.text ?? "",
+        prompt: "All of these words, in a change's text, note or conversation (empty: no search)",
+      });
       if (text === undefined) return;
       return this.setFilter({ ...cur, text });
     }
@@ -1142,7 +1258,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const d = this.decisions.pop();
     void vscode.commands.executeCommand("setContext", "stet.canUndo", this.decisions.length > 0);
     this.undoButton.hide();
-    if (!d) return void vscode.window.showInformationMessage("Nothing more to undo: every decision made in this window is undone, committed, or older than this session.");
+    if (!d)
+      return void vscode.window.showInformationMessage(
+        "Nothing more to undo: every decision made in this window is undone, committed, or older than this session.",
+      );
     const state: Record<Decision, string> = { accept: "accepted", rejection: "rejected", "revision request": "needs_revision" };
     const undone: string[] = [];
     await this.run(d.project, async () => {
@@ -1163,7 +1282,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       // All at once, with progress when it takes a moment: one by one, 400 changes took 16 s
       // without a word (test report 5e4c6af, B5).
       const r = await vscode.window.withProgress(
-        { location: todo.length > 20 ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window, title: `Stet: undoing the ${d.what} of ${todo.length} change${todo.length === 1 ? "" : "s"}…` },
+        {
+          location: todo.length > 20 ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,
+          title: `Stet: undoing the ${d.what} of ${todo.length} change${todo.length === 1 ? "" : "s"}…`,
+        },
         () => d.project.stet.undoMany(todo),
       );
       undone.push(...r.reopened.map((i) => i.id));
@@ -1277,7 +1399,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   private async acceptWhat(p: Project, item: Item): Promise<{ ids: string[]; overrideLinked: boolean } | undefined> {
     const q = acceptQuestion(this.model(p), item);
     if (!q) return { ids: this.model(p).withMove(item), overrideLinked: false };
-    const pick = await vscode.window.showQuickPick(q.choices.map((c) => ({ label: c.label, detail: c.detail, c })), { title: q.title });
+    const pick = await vscode.window.showQuickPick(
+      q.choices.map((c) => ({ label: c.label, detail: c.detail, c })),
+      { title: q.title },
+    );
     return pick?.c;
   }
 
@@ -1319,7 +1444,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     let take = ids;
     let overrideLinked = false;
     if (rest.length || others.length) {
-      const q = manyQuestion("Accept", ids.length, rest.map((r) => r.id), others.map((o) => o.id));
+      const q = manyQuestion(
+        "Accept",
+        ids.length,
+        rest.map((r) => r.id),
+        others.map((o) => o.id),
+      );
       const pick = await vscode.window.showQuickPick(q.choices, { title: q.title });
       if (!pick) return;
       if (pick.withRest) take = [...ids, ...rest.map((r) => r.id), ...(pick.withGroups ? others.map((o) => o.id) : [])];
@@ -1335,7 +1465,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const rest = this.model(p).linkedRest(ids);
     let mode: "all" | "only" | undefined;
     if (rest.length) {
-      const q = manyQuestion("Reject", ids.length, rest.map((r) => r.id));
+      const q = manyQuestion(
+        "Reject",
+        ids.length,
+        rest.map((r) => r.id),
+      );
       const pick = await vscode.window.showQuickPick(q.choices, { title: q.title });
       if (!pick) return;
       mode = pick.withRest ? "all" : "only";
@@ -1346,7 +1480,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       this.run(p, async () => {
         const r = await p.stet.reject(ids, { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
         const warnings = await p.stet.partlyDecided(r);
-        this.noteDecision(p, r.map((i) => i.id), "rejection");
+        this.noteDecision(
+          p,
+          r.map((i) => i.id),
+          "rejection",
+        );
         if (warnings.length) void vscode.window.showWarningMessage([`Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}.`, ...warnings].join(" "));
         else announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}`, 4000);
       }),
@@ -1373,9 +1511,18 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const items: Pick[] = [];
     actions.forEach((a, i) => {
       if (i > 0 && actions[i - 1]!.tier !== a.tier) items.push({ label: "", kind: vscode.QuickPickItemKind.Separator });
-      items.push({ label: withIcon(a), description: a.key ? `${a.key === a.key.toUpperCase() ? "Shift+" : ""}${a.key.toUpperCase()} in the panel` : undefined, detail: a.detail, action: a });
+      items.push({
+        label: withIcon(a),
+        description: a.key ? `${a.key === a.key.toUpperCase() ? "Shift+" : ""}${a.key.toUpperCase()} in the panel` : undefined,
+        detail: a.detail,
+        action: a,
+      });
     });
-    const pick = await vscode.window.showQuickPick(items, { title: actionsTitle(item, this.model(p).get), placeHolder: "What to do with this change", matchOnDetail: true });
+    const pick = await vscode.window.showQuickPick(items, {
+      title: actionsTitle(item, this.model(p).get),
+      placeHolder: "What to do with this change",
+      matchOnDetail: true,
+    });
     if (pick?.action) await vscode.commands.executeCommand(pick.action.command, ...pick.action.args);
   }
 
@@ -1385,7 +1532,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     return part ? `part ${part.index + 1} “${part.group.parts![part.index]!.title}”` : "the linked group";
   }
 
-  private async doAccept(p: Project, ids: string[], opts: { overrideLinked?: boolean; edited?: Record<string, string>; confirmEffects?: boolean } = {}): Promise<void> {
+  private async doAccept(
+    p: Project,
+    ids: string[],
+    opts: { overrideLinked?: boolean; edited?: Record<string, string>; confirmEffects?: boolean } = {},
+  ): Promise<void> {
     // Files that take effect once accepted (a latexmkrc, .gitattributes, AGENTS.md…): asked
     // explicitly, with what they set off (security report 5e4c6af, S12).
     const effects = ids.map((id) => this.model(p).item(id)).filter((it): it is Item => !!it && !!itemEffect(it));
@@ -1416,7 +1567,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       }
       await this.saveFiles(p, files);
       const r = await p.stet.accept(ids, opts);
-      this.noteDecision(p, r.accepted.map((i) => i.id), "accept");
+      this.noteDecision(
+        p,
+        r.accepted.map((i) => i.id),
+        "accept",
+      );
       const msg = [`Accepted ${r.accepted.map((i) => i.id).join(", ")}${this.inWhich(p)}${r.committed ? ` (committed ${r.committed.slice(0, 7)})` : ""}.`];
       if (r.stale.length) msg.push(`Now stale (overlapped): ${r.stale.map((i) => i.id).join(", ")}.`);
       msg.push(...r.warnings);
@@ -1457,18 +1612,28 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     }
     if (n.type === "part") {
       const g = n.group;
-      const ids = model.partMembers(g, n.index).filter(isLive).map((i) => i.id);
+      const ids = model
+        .partMembers(g, n.index)
+        .filter(isLive)
+        .map((i) => i.id);
       const what = `${partId(g.id, n.index)} “${g.parts?.[n.index]?.title ?? ""}”`;
       return ids.length ? { project: p, ids, what, changeset: false, linked: true } : void vscode.window.showInformationMessage(`Nothing pending in ${what}.`);
     }
     if (n.type === "group") {
-      const ids = model.members(n.group).filter(isLive).map((i) => i.id);
-      return ids.length ? { project: p, ids, what: `${n.group.id} “${n.group.title}”`, changeset: false, linked: n.group.kind === "linked" } : void vscode.window.showInformationMessage(`Nothing pending in ${n.group.id}.`);
+      const ids = model
+        .members(n.group)
+        .filter(isLive)
+        .map((i) => i.id);
+      return ids.length
+        ? { project: p, ids, what: `${n.group.id} “${n.group.title}”`, changeset: false, linked: n.group.kind === "linked" }
+        : void vscode.window.showInformationMessage(`Nothing pending in ${n.group.id}.`);
     }
     if (n.type === "changeset") {
       const cs = n.changeset;
       const ids = p.snapshot.items.filter((i) => i.changeset === cs.id && isLive(i)).map((i) => i.id);
-      return ids.length ? { project: p, ids, what: `round ${roundOf(cs.id)} “${cs.title}”`, changeset: true, linked: false } : void vscode.window.showInformationMessage(`Nothing pending in round ${roundOf(cs.id)}.`);
+      return ids.length
+        ? { project: p, ids, what: `round ${roundOf(cs.id)} “${cs.title}”`, changeset: true, linked: false }
+        : void vscode.window.showInformationMessage(`Nothing pending in round ${roundOf(cs.id)}.`);
     }
     return undefined;
   }
@@ -1477,14 +1642,24 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const s = await this.scope(arg);
     if (!s) return;
     let ids = s.ids;
-    if (s.changeset) ids = [...ids, ...this.model(s.project).linkedRest(ids).map((i) => i.id)];
+    if (s.changeset)
+      ids = [
+        ...ids,
+        ...this.model(s.project)
+          .linkedRest(ids)
+          .map((i) => i.id),
+      ];
     const ask = bulkQuestion("Accept", { ...s, count: ids.length });
     if (ask && (await vscode.window.showWarningMessage(ask, { modal: true }, "Accept all")) !== "Accept all") return;
     await this.decide(s.project, s.ids[0]!, fromPanel(arg), () => this.doAccept(s.project, ids));
   }
 
   private async reason(prompt: string): Promise<string | undefined> {
-    return vscode.window.showInputBox({ title: prompt, prompt: "Optional, but it helps the agent: why? (Enter to skip)", placeHolder: "e.g. keep the original formula" });
+    return vscode.window.showInputBox({
+      title: prompt,
+      prompt: "Optional, but it helps the agent: why? (Enter to skip)",
+      placeHolder: "e.g. keep the original formula",
+    });
   }
 
   async reject(arg: unknown, all?: unknown): Promise<void> {
@@ -1508,13 +1683,19 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     }
     const reason = await this.reason(`Reject ${item.id}`);
     if (reason === undefined) return;
-    await this.decide(p, item.id, fromPanel(arg), () => this.run(p, async () => {
-      const r = await p.stet.reject(own, { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
-      const warnings = await p.stet.partlyDecided(r);
-      this.noteDecision(p, r.map((i) => i.id), "rejection");
-      if (warnings.length) void vscode.window.showWarningMessage([`Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}.`, ...warnings].join(" "));
-      else announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}`, 4000);
-    }));
+    await this.decide(p, item.id, fromPanel(arg), () =>
+      this.run(p, async () => {
+        const r = await p.stet.reject(own, { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
+        const warnings = await p.stet.partlyDecided(r);
+        this.noteDecision(
+          p,
+          r.map((i) => i.id),
+          "rejection",
+        );
+        if (warnings.length) void vscode.window.showWarningMessage([`Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}.`, ...warnings].join(" "));
+        else announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}`, 4000);
+      }),
+    );
   }
 
   async rejectAll(arg: unknown): Promise<void> {
@@ -1525,11 +1706,17 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const reason = await this.reason(`Reject all ${s.ids.length} changes of ${s.what}`);
     if (reason === undefined) return;
     const p = s.project;
-    await this.decide(p, s.ids[0]!, fromPanel(arg), () => this.run(p, async () => {
-      const r = await p.stet.reject(s.ids, { ...(reason ? { reason } : {}), mode: "all" });
-      this.noteDecision(p, r.map((i) => i.id), "rejection");
-      announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}`, 4000);
-    }));
+    await this.decide(p, s.ids[0]!, fromPanel(arg), () =>
+      this.run(p, async () => {
+        const r = await p.stet.reject(s.ids, { ...(reason ? { reason } : {}), mode: "all" });
+        this.noteDecision(
+          p,
+          r.map((i) => i.id),
+          "rejection",
+        );
+        announce(`$(close) Rejected ${r.map((i) => i.id).join(", ")}${this.inWhich(p)}`, 4000);
+      }),
+    );
   }
 
   async edit(arg: unknown, all?: unknown): Promise<void> {
@@ -1652,7 +1839,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     this.onlyOne("Comment", t.item, arg, all);
-    const text = await vscode.window.showInputBox({ title: `Comment on ${t.item.id}`, prompt: "The agent sees this with its feedback and can reply.", placeHolder: "Message to the agent…" });
+    const text = await vscode.window.showInputBox({
+      title: `Comment on ${t.item.id}`,
+      prompt: "The agent sees this with its feedback and can reply.",
+      placeHolder: "Message to the agent…",
+    });
     if (!text) return;
     const ok = await this.run(t.project, async () => {
       await t.project.stet.comment(t.item.id, text, "user");
@@ -1665,7 +1856,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const t = await this.targetItem(arg);
     if (!t) return;
     this.onlyOne("Revise", t.item, arg, all);
-    const text = await vscode.window.showInputBox({ title: `Request a revision of ${t.item.id}`, prompt: "What should the agent change?", placeHolder: "e.g. shorter, and keep the term “ansatz”" });
+    const text = await vscode.window.showInputBox({
+      title: `Request a revision of ${t.item.id}`,
+      prompt: "What should the agent change?",
+      placeHolder: "e.g. shorter, and keep the term “ansatz”",
+    });
     if (!text) return;
     await this.decide(t.project, t.item.id, fromPanel(arg), () =>
       this.run(t.project, async () => {
@@ -1685,7 +1880,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const agents = p.snapshot.agents.filter((a) => a.state === "active");
     if (!agents.length) return void vscode.window.showInformationMessage("Notes go to an agent: create an agent workspace first (Stet: New agent workspace).");
     if (agents.length === 1) return agents[0]!.id;
-    const pick = await vscode.window.showQuickPick(agents.map((a) => ({ label: a.id, description: a.kind })), { title: "Note for which agent?" });
+    const pick = await vscode.window.showQuickPick(
+      agents.map((a) => ({ label: a.id, description: a.kind })),
+      { title: "Note for which agent?" },
+    );
     return pick?.label;
   }
 
@@ -1703,7 +1901,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       placeHolder: "e.g. shorten this paragraph, and keep the citation",
     });
     if (!body) return;
-    await this.addNote(p, file, ed.document, ed.selection.isEmpty ? new vscode.Range(ed.selection.active.line, 0, ed.selection.active.line, Number.MAX_SAFE_INTEGER) : ed.selection, agent, body);
+    await this.addNote(
+      p,
+      file,
+      ed.document,
+      ed.selection.isEmpty ? new vscode.Range(ed.selection.active.line, 0, ed.selection.active.line, Number.MAX_SAFE_INTEGER) : ed.selection,
+      agent,
+      body,
+    );
   }
 
   /** Leave a note on `range` of `doc` (as shown, unsaved edits included). */
@@ -1789,7 +1994,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const text = toLf(doc.getText());
     const span = t.project.stet.locateNoteInText(t.note, text);
     const idx = new LineIndex(text);
-    const range = span ? new vscode.Range(idx.position(span.start).line, idx.position(span.start).character, idx.position(span.end).line, idx.position(span.end).character) : new vscode.Range(0, 0, 0, 0);
+    const range = span
+      ? new vscode.Range(idx.position(span.start).line, idx.position(span.start).character, idx.position(span.end).line, idx.position(span.end).character)
+      : new vscode.Range(0, 0, 0, 0);
     const ed = await vscode.window.showTextDocument(doc, { preserveFocus: true, preview: true, viewColumn: this.columnFor(doc.uri) });
     ed.selection = new vscode.Selection(range.start, range.end);
     ed.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
@@ -1860,11 +2067,14 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
    */
   columnFor(uri: vscode.Uri): vscode.ViewColumn {
     const groups = vscode.window.tabGroups;
-    const shows = (t: vscode.Tab) => (t.input instanceof vscode.TabInputText ? t.input.uri : t.input instanceof vscode.TabInputTextDiff ? t.input.modified : undefined)?.toString() === uri.toString();
+    const shows = (t: vscode.Tab) =>
+      (t.input instanceof vscode.TabInputText ? t.input.uri : t.input instanceof vscode.TabInputTextDiff ? t.input.modified : undefined)?.toString() ===
+      uri.toString();
     const has = (g: vscode.TabGroup) => g.tabs.some(shows);
     const open = has(groups.activeTabGroup) ? groups.activeTabGroup : groups.all.find(has);
     if (open) return open.viewColumn;
-    const text = (g: vscode.TabGroup) => !g.activeTab || g.activeTab.input instanceof vscode.TabInputText || g.activeTab.input instanceof vscode.TabInputTextDiff;
+    const text = (g: vscode.TabGroup) =>
+      !g.activeTab || g.activeTab.input instanceof vscode.TabInputText || g.activeTab.input instanceof vscode.TabInputTextDiff;
     if (text(groups.activeTabGroup)) return groups.activeTabGroup.viewColumn;
     return groups.all.find(text)?.viewColumn ?? vscode.ViewColumn.Beside;
   }
@@ -1883,16 +2093,24 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     // get the plain diff.
     const text = item.kind === "modify" && isLive(item) ? await this.currentText(p, item.file) : undefined;
     if (text !== undefined && (await p.stet.locateInText(item, text))) {
-      const rest = this.model(p).linkedRest([item.id]).filter((r) => r.file === item.file && r.kind === "modify");
+      const rest = this.model(p)
+        .linkedRest([item.id])
+        .filter((r) => r.file === item.file && r.kind === "modify");
       const ids = [item.id, ...rest.map((r) => r.id)];
       const others = this.model(p).linkedRest([item.id]).length - rest.length;
       const title = `${ids.join(" + ")} ${item.file}${inProject(p)}: yours ↔ proposed${others ? ` (${others} linked in other files)` : ""} (editable)`;
       const right = ReviewFiles.uriFor(p, item.file, ids);
-      return void (await vscode.commands.executeCommand("vscode.diff", this.diffLeft(p, item.file), right, title, { preview: true, viewColumn: this.columnFor(right) }));
+      return void (await vscode.commands.executeCommand("vscode.diff", this.diffLeft(p, item.file), right, title, {
+        preview: true,
+        viewColumn: this.columnFor(right),
+      }));
     }
     const key = projectQuery(p.mainPath);
     const mk = (side: string) => vscode.Uri.from({ scheme: "stet-diff", path: `/${item.file}`, query: `${key}&id=${item.id}&side=${side}` });
-    await vscode.commands.executeCommand("vscode.diff", mk("before"), mk("after"), `${item.id} ${item.file}${inProject(p)} (current ↔ proposed)`, { preview: true, viewColumn: this.columnFor(mk("after")) });
+    await vscode.commands.executeCommand("vscode.diff", mk("before"), mk("after"), `${item.id} ${item.file}${inProject(p)} (current ↔ proposed)`, {
+      preview: true,
+      viewColumn: this.columnFor(mk("after")),
+    });
   }
 
   /**
@@ -1946,17 +2164,26 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   private async pickProject(): Promise<Project | undefined> {
     const ps = this.allProjects();
     if (ps.length <= 1) return ps[0];
-    const pick = await vscode.window.showQuickPick(ps.map((p) => ({ label: p.name, description: p.mainPath, p })), { title: "Which project?" });
+    const pick = await vscode.window.showQuickPick(
+      ps.map((p) => ({ label: p.name, description: p.mainPath, p })),
+      { title: "Which project?" },
+    );
     return pick?.p;
   }
 
   async setup(): Promise<void> {
     const folders = vscode.workspace.workspaceFolders ?? [];
-    if (!folders.length) return void vscode.window.showInformationMessage(`Open the folder of your ${DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ")} project first.`);
+    if (!folders.length)
+      return void vscode.window.showInformationMessage(`Open the folder of your ${DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ")} project first.`);
     const folder =
       folders.length === 1
         ? folders[0]!
-        : (await vscode.window.showQuickPick(folders.map((f) => ({ label: f.name, description: f.uri.fsPath, f })), { title: "Set up Stet for which folder?" }))?.f;
+        : (
+            await vscode.window.showQuickPick(
+              folders.map((f) => ({ label: f.name, description: f.uri.fsPath, f })),
+              { title: "Set up Stet for which folder?" },
+            )
+          )?.f;
     if (!folder) return;
     const dir = folder.uri.fsPath;
     // An agent's workspace is set up already, as part of its project: setting it up again made it
@@ -1979,7 +2206,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         identity = await this.askIdentity();
         if (!identity) return;
       }
-      const files = (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*"), "**/{.git,node_modules}/**", 5000)).map((u) => vscode.workspace.asRelativePath(u, false));
+      const files = (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*"), "**/{.git,node_modules}/**", 5000)).map((u) =>
+        vscode.workspace.asRelativePath(u, false),
+      );
       // A folder without any document file is likely the wrong one (test report v0.16.0).
       const names = DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ");
       if (!files.some((f) => DOCUMENT_LANGUAGES.some((p) => matchesAny(f, p.defaultFiles ?? [])))) {
@@ -2002,8 +2231,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
           {
             modal: true,
             detail:
-              (isRepo ? "Stet reviews changes against your last commit. Commit the current files now?" : "Stet uses git to keep the agents' proposals apart from your files. Create a repository here and commit the current files as a starting point?") +
-              (ignores.length ? `\n\n“${ignoring}” first writes a .gitignore for the build files (${ignores.slice(0, 4).join(", ")}${ignores.length > 4 ? ", …" : ""}), so it isn't committed.` : ""),
+              (isRepo
+                ? "Stet reviews changes against your last commit. Commit the current files now?"
+                : "Stet uses git to keep the agents' proposals apart from your files. Create a repository here and commit the current files as a starting point?") +
+              (ignores.length
+                ? `\n\n“${ignoring}” first writes a .gitignore for the build files (${ignores.slice(0, 4).join(", ")}${ignores.length > 4 ? ", …" : ""}), so it isn't committed.`
+                : ""),
           },
           ...(ignores.length ? [ignoring, commit] : [commit]),
         );
@@ -2033,7 +2266,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
         const script = await installCli(this.ctx.asAbsolutePath("dist/stet.mjs"), storeRoot);
         opts.cli = await cliCommand(vscode.workspace.getConfiguration("stet").get<RuntimeMode>("runtime", "auto"), script);
       }
-      const already = await Stet.open(dir, loc).then(() => true, () => false);
+      const already = await Stet.open(dir, loc).then(
+        () => true,
+        () => false,
+      );
       // Files of both languages: asked, not guessed (a Typst thesis with one old .tex file was
       // set up as LaTeX without a word: test report 5e4c6af).
       if (!already) {
@@ -2043,7 +2279,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
           const name = (id: string) => DOCUMENT_LANGUAGES.find((l) => l.id === id)?.name ?? id;
           const pick = await vscode.window.showQuickPick(
             counts.map(([id, n], k) => ({ label: name(id), description: `${n} file${n === 1 ? "" : "s"}${k === 0 ? " (most)" : ""}`, id })),
-            { title: `${folder.name} has ${counts.map(([id, n]) => `${n} ${name(id)}`).join(" and ")} files: which language is the project written in?`, placeHolder: "Agents' instructions and examples follow it" },
+            {
+              title: `${folder.name} has ${counts.map(([id, n]) => `${n} ${name(id)}`).join(" and ")} files: which language is the project written in?`,
+              placeHolder: "Agents' instructions and examples follow it",
+            },
           );
           if (!pick) return;
           opts.language = pick.id;
@@ -2077,9 +2316,21 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   /** Name and email for git's commits in this repository, asked when git has none; null if cancelled. */
   private async askIdentity(): Promise<{ name: string; email: string } | null> {
     const why = "Git records who made each commit, and has no name for you yet. It is saved for this project only.";
-    const name = await vscode.window.showInputBox({ title: "Your name for commits (1/2)", prompt: why, placeHolder: "e.g. Ada Lovelace", ignoreFocusOut: true, validateInput: (v) => (v.trim() ? undefined : "Enter a name.") });
+    const name = await vscode.window.showInputBox({
+      title: "Your name for commits (1/2)",
+      prompt: why,
+      placeHolder: "e.g. Ada Lovelace",
+      ignoreFocusOut: true,
+      validateInput: (v) => (v.trim() ? undefined : "Enter a name."),
+    });
     if (!name) return null;
-    const email = await vscode.window.showInputBox({ title: "Your email for commits (2/2)", prompt: why, placeHolder: "e.g. ada@example.org", ignoreFocusOut: true, validateInput: (v) => (/^\S+@\S+$/.test(v.trim()) ? undefined : "Enter an email address.") });
+    const email = await vscode.window.showInputBox({
+      title: "Your email for commits (2/2)",
+      prompt: why,
+      placeHolder: "e.g. ada@example.org",
+      ignoreFocusOut: true,
+      validateInput: (v) => (/^\S+@\S+$/.test(v.trim()) ? undefined : "Enter an email address."),
+    });
     if (!email) return null;
     return { name: name.trim(), email: email.trim() };
   }
@@ -2087,7 +2338,10 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
   async newAgent(): Promise<void> {
     const p = await this.pickProject();
     if (!p && this.agentOf) {
-      const open = await vscode.window.showInformationMessage("This window is an agent's workspace: create agents in the window of your project.", "Open the project");
+      const open = await vscode.window.showInformationMessage(
+        "This window is an agent's workspace: create agents in the window of your project.",
+        "Open the project",
+      );
       return void (open && (await this.openAgentProject()));
     }
     if (!p) return void vscode.window.showInformationMessage("Set up Stet for this project first.", "Set up project").then((c) => c && this.setup());
@@ -2102,12 +2356,13 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const id = await vscode.window.showInputBox({
       title: "Name of the agent workspace",
       value: suggestAgentId(k.agentKind, existing),
-      validateInput: (v) =>
-        !AGENT_ID.test(v) ? "Use letters, digits, '.', '_' or '-'." : existing.includes(v) ? `'${v}' already exists.` : undefined,
+      validateInput: (v) => (!AGENT_ID.test(v) ? "Use letters, digits, '.', '_' or '-'." : existing.includes(v) ? `'${v}' already exists.` : undefined),
     });
     if (!id) return;
     const agent = await this.run(p, async () =>
-      vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Creating workspace ${id}…` }, () => p.stet.newAgent(id, { kind: k.agentKind })),
+      vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Creating workspace ${id}…` }, () =>
+        p.stet.newAgent(id, { kind: k.agentKind }),
+      ),
     );
     if (agent) await this.agentActions(agent, true);
   }
@@ -2141,7 +2396,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (!all.length) return void vscode.window.showInformationMessage("No agent workspaces yet.", "New agent workspace").then((c) => c && this.newAgent());
     const pick = await vscode.window.showQuickPick(
       // With several projects, the same agent name can be in both: say whose (test report v0.16.0).
-      all.map((x) => ({ label: x.agent.id, description: this.allProjects().length > 1 ? `${x.project.name} · ${x.agent.kind}` : x.agent.kind, detail: x.agent.worktree, x })),
+      all.map((x) => ({
+        label: x.agent.id,
+        description: this.allProjects().length > 1 ? `${x.project.name} · ${x.agent.kind}` : x.agent.kind,
+        detail: x.agent.worktree,
+        x,
+      })),
       { title: "Agent workspace" },
     );
     return pick?.x;
@@ -2239,7 +2499,8 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (r) {
       const what = item.status === "accepted" ? "accept" : item.status === "needs_revision" ? "revision request" : "rejection";
       announce(
-        `$(discard) Undid the ${what} of ${r.reopened.map((i) => i.id).join(", ")}` + (r.restored.length ? `; ${r.restored.map((i) => i.id).join(", ")} pending again too` : ""),
+        `$(discard) Undid the ${what} of ${r.reopened.map((i) => i.id).join(", ")}` +
+          (r.restored.length ? `; ${r.restored.map((i) => i.id).join(", ")} pending again too` : ""),
         5000,
       );
     }
@@ -2269,7 +2530,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const folders = vscode.workspace.workspaceFolders ?? [];
     const folder = vscode.workspace.getWorkspaceFolder(uri);
     const conf = vscode.workspace.getConfiguration("stet", uri);
-    const target = folders.length > 1 && folder ? vscode.ConfigurationTarget.WorkspaceFolder : folders.length ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+    const target =
+      folders.length > 1 && folder
+        ? vscode.ConfigurationTarget.WorkspaceFolder
+        : folders.length
+          ? vscode.ConfigurationTarget.Workspace
+          : vscode.ConfigurationTarget.Global;
     await conf.update("shareEdits", value, target);
     if (folders.length > 1) announce(`$(check) Share my edits: ${String(value)}, for ${p.name} only`, 4000);
   }
@@ -2286,7 +2552,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
       {
         modal: true,
         detail:
-          (pending ? `Its ${pending} pending change${pending === 1 ? " is" : "s are"} withdrawn: closed without being applied (History keeps ${pending === 1 ? "it" : "them"}). ` : "") +
+          (pending
+            ? `Its ${pending} pending change${pending === 1 ? " is" : "s are"} withdrawn: closed without being applied (History keeps ${pending === 1 ? "it" : "them"}). `
+            : "") +
           (unsubmitted.length ? `It changed files it did not submit: ${unsubmitted.slice(0, 5).join(", ")}${unsubmitted.length > 5 ? ", …" : ""}. ` : "") +
           `Deleting the folder also deletes the branch ${a.agent.branch} and anything the agent did not submit, for good. Close the agent's session first.`,
       },
@@ -2297,7 +2565,9 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     if (r) {
       void vscode.window.showInformationMessage(
         `Archived ${a.agent.id}.` +
-          (r.withdrawn.length ? ` Withdrew ${r.withdrawn.length} pending change${r.withdrawn.length === 1 ? "" : "s"} (${r.withdrawn.join(", ")}).` : " It had no pending changes.") +
+          (r.withdrawn.length
+            ? ` Withdrew ${r.withdrawn.length} pending change${r.withdrawn.length === 1 ? "" : "s"} (${r.withdrawn.join(", ")}).`
+            : " It had no pending changes.") +
           (r.worktreeRemoved ? " Its folder and branch are deleted." : ` Its folder is kept: ${a.agent.worktree}.`) +
           " If its session is still open, the agent is told on its next action; you can close that session.",
       );
@@ -2311,7 +2581,12 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const p =
       ps.length === 1
         ? ps[0]!
-        : (await vscode.window.showQuickPick(ps.map((x) => ({ label: x.name, description: `${x.snapshot.uncommitted.length} accepted, not committed`, detail: x.mainPath, x })), { title: "Finish the review of which project?" }))?.x;
+        : (
+            await vscode.window.showQuickPick(
+              ps.map((x) => ({ label: x.name, description: `${x.snapshot.uncommitted.length} accepted, not committed`, detail: x.mainPath, x })),
+              { title: "Finish the review of which project?" },
+            )
+          )?.x;
     if (!p) return;
     const items = p.snapshot.uncommitted;
     const files = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
@@ -2374,7 +2649,11 @@ class StetExtension implements Host, vscode.TreeDataProvider<El>, vscode.Disposa
     const cc = this.colorCustomizations();
     if (on) {
       // Keep the user's own values for these keys, to restore them when switched off.
-      const previous = Object.fromEntries(Object.keys(HIGHLIGHT).filter((k) => k in cc && cc[k] !== HIGHLIGHT[k]).map((k) => [k, cc[k]]));
+      const previous = Object.fromEntries(
+        Object.keys(HIGHLIGHT)
+          .filter((k) => k in cc && cc[k] !== HIGHLIGHT[k])
+          .map((k) => [k, cc[k]]),
+      );
       await this.ctx.globalState.update(HIGHLIGHT_PREVIOUS, previous);
       Object.assign(cc, HIGHLIGHT);
     } else {
@@ -2479,7 +2758,8 @@ function elId(el: El): string {
 
 /** The notification modes as offered in the panel. */
 const LOST_TEXT = "can't be found in your file";
-const LOST_NEXT = "You edited this text or the text around it since it was proposed, so Stet can't tell where it goes. Reject it, or ask the agent for a revision against your current text.";
+const LOST_NEXT =
+  "You edited this text or the text around it since it was proposed, so Stet can't tell where it goes. Reject it, or ask the agent for a revision against your current text.";
 
 /** Whether VS Code is set up for a screen reader (`editor.accessibilitySupport`). */
 const screenReader = (): boolean => vscode.workspace.getConfiguration("editor").get<string>("accessibilitySupport") === "on";
@@ -2496,14 +2776,20 @@ function announce(text: string, ms = 5000): void {
 const NOTIFY_PICKS: { mode: NotifyMode; label: string; detail: string }[] = [
   { mode: "batched", label: "When I pause", detail: "Once you have stopped for half a minute, with all your decisions together. Not after every click." },
   { mode: "now", label: "Right away", detail: "At each decision, comment or note." },
-  { mode: "off", label: "Off", detail: "Not woken: the agent hears about your decisions when it next checks. Switching back on delivers what arrived meanwhile." },
+  {
+    mode: "off",
+    label: "Off",
+    detail: "Not woken: the agent hears about your decisions when it next checks. Switching back on delivers what arrived meanwhile.",
+  },
 ];
 
 function itemIcon(it: Item): vscode.ThemeIcon {
   const c = (id: string) => new vscode.ThemeColor(id);
   switch (it.status) {
     case "pending":
-      return new vscode.ThemeIcon(it.kind === "modify" ? "diff-modified" : it.kind === "add-file" ? "diff-added" : it.kind === "delete-file" ? "diff-removed" : "diff-renamed");
+      return new vscode.ThemeIcon(
+        it.kind === "modify" ? "diff-modified" : it.kind === "add-file" ? "diff-added" : it.kind === "delete-file" ? "diff-removed" : "diff-renamed",
+      );
     case "needs_revision":
       return new vscode.ThemeIcon("sync", c("problemsWarningIcon.foreground"));
     case "accepted":
@@ -2549,14 +2835,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.agentNotify", (a) => ext.agentNotify(a));
   reg("stet.agentNotifyOff", (a) => ext.agentNotify(a));
   reg("stet.agentPing", (a) => ext.agentPing(a));
-  reg("stet.undo", inOrder((a) => ext.undo(a)));
+  reg(
+    "stet.undo",
+    inOrder((a) => ext.undo(a)),
+  );
   reg("stet.preview", (a) => ext.showPreview(a));
   reg("stet.openAgentProject", () => ext.openAgentProject());
-  reg("stet.undoLast", inOrder(() => ext.undoLast()));
+  reg(
+    "stet.undoLast",
+    inOrder(() => ext.undoLast()),
+  );
   reg("stet.filter", (f?: PanelFilter | null) => (f !== undefined ? ext.setFilter(f) : ext.pickFilter()));
   reg("stet.clearFilter", () => ext.setFilter(null));
   reg("stet.reviewFile", (a) => ext.reviewFile(a));
-  reg("stet.reviewAccept", inOrder((u, a) => ext.reviewAccept(u, a)));
+  reg(
+    "stet.reviewAccept",
+    inOrder((u, a) => ext.reviewAccept(u, a)),
+  );
   // Not in order itself: the command it runs is (it would wait for itself).
   reg("stet.reviewRun", (u, c, a) => ext.reviewRun(u, c, a));
   reg("stet.editSave", (u) => ext.editSave(u));
@@ -2583,20 +2878,47 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.toggleHighlight", () => ext.setHighlight(!ext.highlighted()));
   reg("stet.highlightOn", () => ext.setHighlight(true));
   reg("stet.highlightOff", () => ext.setHighlight(false));
-  reg("stet.accept", inOrder((a, all) => ext.accept(a, all)));
-  reg("stet.acceptOnly", inOrder((a) => ext.acceptOnly(a)));
+  reg(
+    "stet.accept",
+    inOrder((a, all) => ext.accept(a, all)),
+  );
+  reg(
+    "stet.acceptOnly",
+    inOrder((a) => ext.acceptOnly(a)),
+  );
   reg("stet.changeActions", (a) => ext.changeActions(a));
-  reg("stet.reject", inOrder((a, all) => ext.reject(a, all)));
-  reg("stet.edit", inOrder((a, all) => ext.edit(a, all)));
+  reg(
+    "stet.reject",
+    inOrder((a, all) => ext.reject(a, all)),
+  );
+  reg(
+    "stet.edit",
+    inOrder((a, all) => ext.edit(a, all)),
+  );
   reg("stet.comment", (a, all) => ext.comment(a, all));
-  reg("stet.revise", inOrder((a, all) => ext.revise(a, all)));
-  reg("stet.acceptGroup", inOrder((a) => ext.acceptAll(a)));
-  reg("stet.rejectGroup", inOrder((a) => ext.rejectAll(a)));
+  reg(
+    "stet.revise",
+    inOrder((a, all) => ext.revise(a, all)),
+  );
+  reg(
+    "stet.acceptGroup",
+    inOrder((a) => ext.acceptAll(a)),
+  );
+  reg(
+    "stet.rejectGroup",
+    inOrder((a) => ext.rejectAll(a)),
+  );
   reg("stet.ungroup", (a) => ext.ungroup(a));
   reg("stet.showItem", (a, keepFocus) => ext.showItem(a, keepFocus === true));
   reg("stet.showDiff", (a, all) => ext.showDiff(a, all));
-  reg("stet.next", inOrder(() => ext.step(1)));
-  reg("stet.previous", inOrder(() => ext.step(-1)));
+  reg(
+    "stet.next",
+    inOrder(() => ext.step(1)),
+  );
+  reg(
+    "stet.previous",
+    inOrder(() => ext.step(-1)),
+  );
   reg("stet.replyThread", (r: vscode.CommentReply) => ext.replyThread(r, threads));
   reg("stet.noteForAgent", () => ext.noteForAgent());
   reg("stet.resolveNote", (a) => ext.resolveNote(a));

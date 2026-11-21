@@ -5,16 +5,14 @@
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { GroupHint, NoteHint } from "./grouping.js";
-
+import { InboxWriter } from "./inbox.js";
 import { archivedMessage, mcpInstructions } from "./instructions.js";
 import { documentProfile, type LanguageProfile } from "./lang/index.js";
-
-import { isNoteId, moveFrom, moveTo, partId, type GroupKind, type Item, type ItemStatus, type StetEvent } from "./model.js";
+import { type GroupKind, type Item, type ItemStatus, isNoteId, moveFrom, moveTo, partId, type StetEvent } from "./model.js";
 import { describeNote } from "./notes.js";
+import { pathExists } from "./paths.js";
 import { Stet, StetError, type SubmitResult } from "./service.js";
 import { oneLine } from "./text.js";
-import { pathExists } from "./paths.js";
-import { InboxWriter } from "./inbox.js";
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -48,7 +46,15 @@ export function argumentError(def: ToolDef, args: unknown): string | null {
   const schema = def.inputSchema as { properties?: Record<string, { type?: string }>; required?: string[] };
   const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
   const fits = (t: string | undefined, v: unknown) =>
-    t === "array" ? Array.isArray(v) : t === "string" ? typeof v === "string" : t === "boolean" ? typeof v === "boolean" : t === "number" ? typeof v === "number" : true;
+    t === "array"
+      ? Array.isArray(v)
+      : t === "string"
+        ? typeof v === "string"
+        : t === "boolean"
+          ? typeof v === "boolean"
+          : t === "number"
+            ? typeof v === "number"
+            : true;
   for (const k of schema.required ?? []) {
     const t = schema.properties?.[k]?.type;
     const v = a[k];
@@ -258,7 +264,9 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
   const label = style.label ?? ((t: string) => t);
   const reply = style.reply ?? (() => "stet_reply");
   const d = (e.data ?? {}) as any;
-  const it = d.item ? `${d.item.id} (${d.item.file}:${d.item.line}, "${oneLine(d.item.oldText, 50)}" → "${oneLine(d.item.newText, 50)}")` : (e.items ?? []).join(", ");
+  const it = d.item
+    ? `${d.item.id} (${d.item.file}:${d.item.line}, "${oneLine(d.item.oldText, 50)}" → "${oneLine(d.item.newText, 50)}")`
+    : (e.items ?? []).join(", ");
   switch (e.type) {
     case "accepted":
       return `${label("ACCEPTED", "good")} ${it}${d.finalText !== undefined ? `; the reviewer edited it to: "${oneLine(d.finalText, 300)}"` : ""}`;
@@ -292,7 +300,8 @@ export function describeFeedback(e: StetEvent, style: FeedbackStyle = {}): strin
       return `${label("NOTE RESOLVED", "good")} ${d.note} (${d.file}): the reviewer closed it.`;
     case "group_partial": {
       const ps = (d.parts ?? []) as { id: string; title: string; outcome: string; items: string[] }[];
-      const list = (xs: typeof ps) => xs.map((p) => `${p.id} "${p.title}" (${p.items.join(", ")}${p.outcome === "accepted" ? "" : `: ${p.outcome}`})`).join("; ");
+      const list = (xs: typeof ps) =>
+        xs.map((p) => `${p.id} "${p.title}" (${p.items.join(", ")}${p.outcome === "accepted" ? "" : `: ${p.outcome}`})`).join("; ");
       return (
         `${label("LINKED GROUP PARTLY ACCEPTED", "warn")} ${e.group} "${d.title}": accepted ${list(ps.filter((p) => p.outcome === "accepted"))}; ` +
         `not accepted ${list(ps.filter((p) => p.outcome !== "accepted"))}. The document compiles but may be inconsistent: propose what makes it consistent again.`
@@ -375,7 +384,8 @@ export class StetMcpServer {
       return { jsonrpc: "2.0", id, error: { code: -32600, message: "Invalid Request" } };
     }
     const msg = raw as JsonRpcRequest;
-    if (msg.id !== undefined && msg.id !== null && !validId(msg.id)) return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request: bad id" } };
+    if (msg.id !== undefined && msg.id !== null && !validId(msg.id))
+      return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request: bad id" } };
     const isNotification = msg.id === undefined || msg.id === null;
     const reply = (result: unknown) => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, result });
     const fail = (code: number, message: string) => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, error: { code, message } });
@@ -468,10 +478,16 @@ export class StetMcpServer {
           return text(
             [
               `Agent ${agent} on branch ${s.agent.branch}, workspace ${s.agent.worktree}.`,
-              `Items: ${Object.entries(s.counts).map(([k, v]) => `${v} ${k}`).join(", ") || "none"}.`,
+              `Items: ${
+                Object.entries(s.counts)
+                  .map(([k, v]) => `${v} ${k}`)
+                  .join(", ") || "none"
+              }.`,
               s.unreadFeedback ? `${s.unreadFeedback} unread feedback event(s): call stet_get_feedback.` : "No unread feedback.",
               ...(s.notesWaiting ? [`${s.notesWaiting} note(s) from the reviewer waiting for you: call stet_sync to receive them.`] : []),
-              s.syncNeeded ? "The document changed since your last sync: call stet_sync before starting new work." : "Your workspace is up to date with the document.",
+              s.syncNeeded
+                ? "The document changed since your last sync: call stet_sync before starting new work."
+                : "Your workspace is up to date with the document.",
               ...(s.missingAccepted.length
                 ? [`Accepted but not in your copy yet: ${s.missingAccepted.join(", ")} (the reviewer is told). Don't propose them again.`]
                 : []),
@@ -486,7 +502,11 @@ export class StetMcpServer {
             ...(args.notes !== undefined ? { notes: noteHints(args.notes) } : {}),
           });
           const lines = describeSubmit(r).split("\n");
-          return text(lines.join("\n"), { changeset: r.changeset?.id ?? null, items: r.items.map((i) => ({ id: i.id, file: i.file, status: i.status, groups: i.groups })), groups: r.groups.map((g) => ({ id: g.id, kind: g.kind, items: g.items, ...(g.parts ? { parts: g.parts } : {}) })) });
+          return text(lines.join("\n"), {
+            changeset: r.changeset?.id ?? null,
+            items: r.items.map((i) => ({ id: i.id, file: i.file, status: i.status, groups: i.groups })),
+            groups: r.groups.map((g) => ({ id: g.id, kind: g.kind, items: g.items, ...(g.parts ? { parts: g.parts } : {}) })),
+          });
         }
         case "stet_sync": {
           const r = await stet.sync(agent);
@@ -540,7 +560,9 @@ export class StetMcpServer {
           return text(
             [
               itemLine(it),
-              it.move ? `Move: ${moveFrom(it.move).join(", ")} remove(s) the text, ${moveTo(it.move).join(", ")} insert(s) it${it.move.changed ? ` with ${it.move.changed} changed word(s)` : " word for word"}.` : "",
+              it.move
+                ? `Move: ${moveFrom(it.move).join(", ")} remove(s) the text, ${moveTo(it.move).join(", ")} insert(s) it${it.move.changed ? ` with ${it.move.changed} changed word(s)` : " word for word"}.`
+                : "",
               it.note ? `Note: ${it.note}` : "",
               `Old text: ${JSON.stringify(it.oldText)}`,
               `New text: ${JSON.stringify(it.newText)}`,
@@ -569,7 +591,15 @@ export class StetMcpServer {
         }
         case "stet_group": {
           const parts = args.parts === undefined ? undefined : partHints(args.parts);
-          const r = await stet.group(agent, strings(args.itemIds ?? [], "itemIds"), groupKind(args.kind), String(args.title ?? ""), args.rationale ? String(args.rationale) : undefined, parts, typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : undefined);
+          const r = await stet.group(
+            agent,
+            strings(args.itemIds ?? [], "itemIds"),
+            groupKind(args.kind),
+            String(args.title ?? ""),
+            args.rationale ? String(args.rationale) : undefined,
+            parts,
+            typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : undefined,
+          );
           if (r.merged) return text(`Merged into ${itemLine(r.merged)}`);
           const g = r.group!;
           return text(
@@ -683,7 +713,11 @@ export async function serveStdio(server: StetMcpServer, input: Readable, output:
       .then(async () => {
         if (Array.isArray(msg) && msg.length === 0) return void send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } });
         const batch: unknown[] = Array.isArray(msg) ? msg : [msg];
-        const out = (await Promise.all(batch.map((m) => server.handle(m).catch((e: any) => ({ jsonrpc: "2.0", id: null, error: { code: -32603, message: e?.message ?? String(e) } }))))).filter(Boolean) as object[];
+        const out = (
+          await Promise.all(
+            batch.map((m) => server.handle(m).catch((e: any) => ({ jsonrpc: "2.0", id: null, error: { code: -32603, message: e?.message ?? String(e) } }))),
+          )
+        ).filter(Boolean) as object[];
         if (Array.isArray(msg)) {
           if (out.length) send(out);
         } else if (out[0]) send(out[0]);

@@ -1,9 +1,9 @@
 import { execFile, execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { afterEach } from "vitest";
 import { PROFILES } from "../src/lang/index.js";
 import { Stet } from "../src/service.js";
@@ -46,10 +46,7 @@ export function edit(root: string, path: string, from: string, to: string) {
 }
 
 /** A fresh repository with one commit on `master` and Stet initialized. */
-export async function setup(
-  files: Record<string, string>,
-  opts: { cli?: { command: string; args: string[] } } = {},
-): Promise<{ stet: Stet; repo: string }> {
+export async function setup(files: Record<string, string>, opts: { cli?: { command: string; args: string[] } } = {}): Promise<{ stet: Stet; repo: string }> {
   const root = mkdtempSync(join(tmpdir(), "stet-test-"));
   dirs.push(root);
   const repo = join(root, "paper");
@@ -147,7 +144,8 @@ export const TYPST_DOC: DocLang = {
   use: (name) => `$${name}$`,
   wrap: ["#block[", "]"],
   geq: ">=",
-  theorem: '#figure(kind: "theorem", supplement: [Theorem], caption: [Master theorem])[\n  The randomized algorithm runs in time $T$.#footnote[The bound is tight.] It uses space $S$.\n] <thm:master>',
+  theorem:
+    '#figure(kind: "theorem", supplement: [Theorem], caption: [Master theorem])[\n  The randomized algorithm runs in time $T$.#footnote[The bound is tight.] It uses space $S$.\n] <thm:master>',
   refersToTheorem: "The algorithm of @thm:master is simple. It has three steps.",
   theoremKind: "figure",
 };

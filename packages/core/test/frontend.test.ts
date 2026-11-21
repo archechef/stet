@@ -20,11 +20,25 @@ describe("frontend support", () => {
     };
     // Reading signals nothing (the panel's own reloads would loop).
     expect(await signalled(() => Promise.all([stet.listItems(), stet.listGroups(), stet.listChangesets()]))).toBe(false);
-    const { group } = await stet.group("a", items.map((i) => i.id), "related", "Wording");
+    const { group } = await stet.group(
+      "a",
+      items.map((i) => i.id),
+      "related",
+      "Wording",
+    );
     // Removing a group: items, changeset and group change, no event.
     expect(await signalled(() => stet.ungroup(group!.id, "a"))).toBe(true);
     // Merging changes into one: the old ones superseded, a new one made, no event.
-    expect(await signalled(() => stet.group("a", items.map((i) => i.id), "atomic", "One change"))).toBe(true);
+    expect(
+      await signalled(() =>
+        stet.group(
+          "a",
+          items.map((i) => i.id),
+          "atomic",
+          "One change",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("locates items in unsaved editor text", async () => {

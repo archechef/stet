@@ -8,7 +8,7 @@
  * both kinds, and a group forms only with the definition of the kind it is (spec §6.0).
  */
 import type { Item } from "../model.js";
-import { tokenizeWords, type Token, type TokenType } from "../tokenizer.js";
+import { type Token, type TokenType, tokenizeWords } from "../tokenizer.js";
 import { LABEL } from "./latex.js";
 import type { DefinitionRules, IncludeRules, LanguageProfile, PartRules, ReferenceRules, SyntaxRules } from "./profile.js";
 
@@ -166,7 +166,8 @@ export function tokenize(text: string): Token[] {
       if (c === "$") {
         push("math", i + 1);
         stack.pop();
-      } else if (c === "\\") push(text[i + 1] === undefined || /\s/.test(text[i + 1]!) ? "cmd" : "punct", text[i + 1] && !/\s/.test(text[i + 1]!) ? i + 2 : i + 1);
+      } else if (c === "\\")
+        push(text[i + 1] === undefined || /\s/.test(text[i + 1]!) ? "cmd" : "punct", text[i + 1] && !/\s/.test(text[i + 1]!) ? i + 2 : i + 1);
       else if (c === "#") hash();
       else if (c === '"') string();
       else if (WORD.test(c)) push("word", word(i, WORD, WORD_INNER));
@@ -195,7 +196,8 @@ export function tokenize(text: string): Token[] {
     else if (lineStart() && /^[-+/][ \t]/.test(at)) push("cmd", i + 1);
     else if (c === "\\") {
       const next = text[i + 1];
-      if (next === undefined || /\s/.test(next)) push("cmd", i + 1); // a forced line break
+      if (next === undefined || /\s/.test(next))
+        push("cmd", i + 1); // a forced line break
       else if (next === "u" && text[i + 2] === "{") push("punct", Math.max(i + 3, text.indexOf("}", i) + 1));
       else push("punct", i + 2);
     } else if (c === "#") hash();
@@ -214,7 +216,8 @@ export function tokenize(text: string): Token[] {
 // Structure
 
 /** Calls that make a block of their own (`#figure(…)`), and statements. */
-const BLOCKS = "let|set|show|import|include|if|for|while|figure|table|grid|block|align|pagebreak|colbreak|v|outline|bibliography|heading|list|enum|terms|columns|place|page|title";
+const BLOCKS =
+  "let|set|show|import|include|if|for|while|figure|table|grid|block|align|pagebreak|colbreak|v|outline|bibliography|heading|list|enum|terms|columns|place|page|title";
 const BLOCK_CMD = new RegExp(`^#(?:${BLOCKS})$`);
 
 /** Headings (`=`), list and term markers, and block calls start a structure. */
@@ -456,7 +459,11 @@ const includes: IncludeRules = {
     return out;
   },
   names: (ref, file) => {
-    const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^(\.\/)+/, "");
+    const norm = (p: string) =>
+      p
+        .replace(/\\/g, "/")
+        .replace(/^\/+/, "")
+        .replace(/^(\.\/)+/, "");
     const [r, f] = [norm(ref), norm(file)];
     return f === r || f.endsWith("/" + r);
   },

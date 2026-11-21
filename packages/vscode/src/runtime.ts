@@ -29,7 +29,13 @@ export async function findNode(): Promise<string | null> {
     if (!dir || !isAbsolute(dir)) continue;
     for (const n of names) {
       const path = join(dir, n);
-      if (!(await stat(path).then((s) => s.isFile(), () => false))) continue;
+      if (
+        !(await stat(path).then(
+          (s) => s.isFile(),
+          () => false,
+        ))
+      )
+        continue;
       const v = await run(path, ["--version"]);
       const major = v ? nodeMajor(v) : null;
       if (major !== null && major >= 20) return path;
@@ -65,7 +71,7 @@ export async function cliCommand(mode: RuntimeMode, script: string): Promise<Cli
   if (mode !== "vscode") {
     const node = await findNode();
     if (node) return { command: node.replace(/\\/g, "/"), args: [script.replace(/\\/g, "/")] };
-    if (mode === "node") throw new Error("Node.js 20 or newer was not found on PATH (setting stet.runtime is \"node\").");
+    if (mode === "node") throw new Error('Node.js 20 or newer was not found on PATH (setting stet.runtime is "node").');
   }
   // VS Code's own Electron binary behaves like Node with ELECTRON_RUN_AS_NODE.
   return { command: process.execPath.replace(/\\/g, "/"), args: [script.replace(/\\/g, "/")], env: { ELECTRON_RUN_AS_NODE: "1" } };

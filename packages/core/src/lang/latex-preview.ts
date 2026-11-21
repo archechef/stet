@@ -6,8 +6,18 @@
 import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
-import { buildImage, containerRuntime, detectPreviewEnv, normWord, popplerMissing, runProgram, which, type PreviewConfig, type PreviewEnv } from "../preview.js";
 import type { DoctorCheck } from "../doctor.js";
+import {
+  buildImage,
+  containerRuntime,
+  detectPreviewEnv,
+  normWord,
+  type PreviewConfig,
+  type PreviewEnv,
+  popplerMissing,
+  runProgram,
+  which,
+} from "../preview.js";
 import type { RunIsolated, SourceBox, Typesetter } from "./profile.js";
 
 // ---------------------------------------------------------------------------
@@ -64,7 +74,8 @@ async function detect(cfg: PreviewConfig, opts: { podman?: string | null } = {})
     const tex = (await which("pdftex")) ?? (await which("tex")) ?? latexmk;
     texBin = dirname(await realpath(tex));
     const texRoot = dirname(dirname(texBin));
-    if (process.platform === "linux" && existsSync(join(texRoot, "texmf-dist"))) texMount = existsSync(join(dirname(texRoot), "texmf-local")) ? dirname(texRoot) : texRoot;
+    if (process.platform === "linux" && existsSync(join(texRoot, "texmf-dist")))
+      texMount = existsSync(join(dirname(texRoot), "texmf-local")) ? dirname(texRoot) : texRoot;
   }
   const texmfHome = userTexmf();
 
@@ -85,10 +96,18 @@ async function detect(cfg: PreviewConfig, opts: { podman?: string | null } = {})
     // Podman's mount syntax separates with ':' and ','; such paths would be read wrongly.
     const odd = [source === "host" ? texMount : undefined, texmfHome].find((p) => p && /[:,]/.test(p));
     if (odd) {
-      return { status: "unavailable", isolation: "container", message: `PDF previews can't mount ${odd} into a container: its path contains ':' or ','.`, fix: "Move it to a path without those characters." };
+      return {
+        status: "unavailable",
+        isolation: "container",
+        message: `PDF previews can't mount ${odd} into a container: its path contains ':' or ','.`,
+        fix: "Move it to a path without those characters.",
+      };
     }
     const image = source === "host" ? cfg.image : cfg.texExtras ? cfg.texExtrasImage : cfg.texImage;
-    const mounts: [string, string][] = [...(source === "host" ? [[texMount!, texMount!] as [string, string]] : []), ...(texmfHome ? [[texmfHome, TEXMF_HOME] as [string, string]] : [])];
+    const mounts: [string, string][] = [
+      ...(source === "host" ? [[texMount!, texMount!] as [string, string]] : []),
+      ...(texmfHome ? [[texmfHome, TEXMF_HOME] as [string, string]] : []),
+    ];
     const base = {
       isolation: "container" as const,
       podman,
@@ -121,7 +140,12 @@ async function detect(cfg: PreviewConfig, opts: { podman?: string | null } = {})
 
   // A normal process: the user's explicit choice, with their own TeX and Poppler.
   if (!latexmk) {
-    return { status: "unavailable", isolation: "process", message: "PDF previews need a TeX distribution with latexmk, which isn't on the PATH.", fix: "Install TeX Live (tug.org/texlive) or MiKTeX, then try again (in VS Code: reload the window)." };
+    return {
+      status: "unavailable",
+      isolation: "process",
+      message: "PDF previews need a TeX distribution with latexmk, which isn't on the PATH.",
+      fix: "Install TeX Live (tug.org/texlive) or MiKTeX, then try again (in VS Code: reload the window).",
+    };
   }
   const poppler = await popplerMissing();
   if (poppler) return poppler;
@@ -130,7 +154,7 @@ async function detect(cfg: PreviewConfig, opts: { podman?: string | null } = {})
     isolation: "process",
     bin: texBin!,
     message:
-      "PDF previews run as a normal process (preview.isolation is \"process\"): TeX can read every file you can, so a proposal could copy one into its preview. Use this only for material you trust.",
+      'PDF previews run as a normal process (preview.isolation is "process"): TeX can read every file you can, so a proposal could copy one into its preview. Use this only for material you trust.',
   };
 }
 
@@ -141,7 +165,8 @@ async function detect(cfg: PreviewConfig, opts: { podman?: string | null } = {})
 async function setupImage(cfg: PreviewConfig, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string }> {
   const env = await detectPreviewEnv(opts.extras ? { ...cfg, texExtras: true } : cfg, LATEX_TYPESETTER);
   if (env.isolation !== "container" || !env.podman || !env.image) return { ok: false, log: `${env.message}${env.fix ? ` ${env.fix}` : ""}` };
-  if (opts.extras && env.toolSource !== "image") return { ok: false, log: "Previews use your own TeX here: install missing packages there (e.g. `tlmgr install <package>`)." };
+  if (opts.extras && env.toolSource !== "image")
+    return { ok: false, log: "Previews use your own TeX here: install missing packages there (e.g. `tlmgr install <package>`)." };
   const build = (tag: string, containerfile: string) => buildImage(env.podman!, tag, containerfile);
   if (env.toolSource !== "image") return build(env.image, PREVIEW_CONTAINERFILE);
   // The extra fonts are a layer on the image with its own TeX: build that first if it's missing.
@@ -196,7 +221,15 @@ async function compile(run: RunIsolated, work: string, root: string, cfg: Previe
   const r = await run(work, [
     // -f, and no -halt-on-error: a paper with a small error somewhere still gets its PDF (as
     // when the author compiles it), and so its previews. Errors are reported next to them.
-    "latexmk", "-norc", flag, "-f", "-interaction=nonstopmode", "-file-line-error", "-synctex=1", "-outdir=stet-build", root,
+    "latexmk",
+    "-norc",
+    flag,
+    "-f",
+    "-interaction=nonstopmode",
+    "-file-line-error",
+    "-synctex=1",
+    "-outdir=stet-build",
+    root,
   ]);
   const stem = posix.basename(root).replace(/\.tex$/i, "");
   const pdf = join(work, "stet-build", `${stem}.pdf`);
@@ -227,7 +260,11 @@ export function parseSynctex(out: string): SourceBox[] {
 
 /** Whether SyncTeX's `Input:` name is the repository file `file` (it may be `./file`, or absolute in the build folder). */
 export function sameSource(input: string, file: string): boolean {
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/\/(\.\/)+/g, "/");
+  const norm = (p: string) =>
+    p
+      .replace(/\\/g, "/")
+      .replace(/^(\.\/)+/, "")
+      .replace(/\/(\.\/)+/g, "/");
   const a = norm(input);
   const f = norm(file);
   return a === f || a.endsWith("/" + f) || a === f.replace(/\.tex$/i, "") || a.endsWith("/" + f.replace(/\.tex$/i, ""));
@@ -302,7 +339,10 @@ export function plainWords(latex: string): string[] {
     .replace(/\\(?:label|ref|eqref|cref|Cref|cite\w*|begin|end|includegraphics|input|include)\*?(?:\[[^\]]*\])?\{[^}]*\}/g, " ")
     .replace(/\\[A-Za-z@]+\*?/g, " ")
     .replace(/[{}~]/g, " ");
-  return t.split(/\s+/).map(normWord).filter((w) => w.length >= 2);
+  return t
+    .split(/\s+/)
+    .map(normWord)
+    .filter((w) => w.length >= 2);
 }
 
 export const LATEX_TYPESETTER: Typesetter = {
@@ -316,7 +356,15 @@ export const LATEX_TYPESETTER: Typesetter = {
   doctor: async (whichVersion) => {
     const latexmk = await whichVersion("latexmk", ["-v"]);
     const check: DoctorCheck = latexmk
-      ? { name: "latexmk", status: "ok", message: latexmk.split("\n").find((l) => /latexmk/i.test(l))?.trim() ?? "found" }
+      ? {
+          name: "latexmk",
+          status: "ok",
+          message:
+            latexmk
+              .split("\n")
+              .find((l) => /latexmk/i.test(l))
+              ?.trim() ?? "found",
+        }
       : { name: "latexmk", status: "info", message: "not found (only needed for PDF previews)" };
     return [check];
   },

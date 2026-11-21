@@ -37,7 +37,11 @@ async function timedSubmit(before: string[], after: string[], groups?: any[]) {
 describe("submit on larger revisions", () => {
   it("one agent linked group of 150 changes (checked for dependencies change by change)", async () => {
     const ps = paragraphs(150, 20).map((p) => p.replace(/^Paragraph (\d+)/, "Paragraph $1 says that the method works well and"));
-    const { r, ms } = await timedSubmit(ps, ps.map((p) => p.replace("works well", "performs well")), [{ kind: "linked", title: "Wording", where: ["main.tex"] }]);
+    const { r, ms } = await timedSubmit(
+      ps,
+      ps.map((p) => p.replace("works well", "performs well")),
+      [{ kind: "linked", title: "Wording", where: ["main.tex"] }],
+    );
     console.log(`linked group of 150 changes: ${ms} ms`);
     expect(r.items).toHaveLength(150);
     // The same change everywhere: one linked group (identical changes count as the same thing).
@@ -86,7 +90,9 @@ describe("many changes in one long file (test report 2026-11-20, B3)", () => {
   it("750 one-word changes in 3000 lines made of 16 words, and listing them", async () => {
     const vocab = "alpha beta gamma delta method result theorem proof lemma paper study analysis data model system approach".split(" ");
     const r = rng(7);
-    const lines = Array.from({ length: 3000 }, (_, i) => (i % 10 === 9 ? "" : Array.from({ length: 12 }, () => vocab[Math.floor(r() * vocab.length)]).join(" ") + ` line${i}.`));
+    const lines = Array.from({ length: 3000 }, (_, i) =>
+      i % 10 === 9 ? "" : Array.from({ length: 12 }, () => vocab[Math.floor(r() * vocab.length)]).join(" ") + ` line${i}.`,
+    );
     const after = lines.map((l, i) => (i % 4 === 0 && l ? l.replace(" ", " very ") : l));
     const { stet } = await setup({ "big.tex": lines.join("\n") + "\n" });
     const { worktree: wt } = await stet.newAgent("a");

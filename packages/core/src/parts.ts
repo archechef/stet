@@ -8,12 +8,13 @@
  * Proposed parts that can't be shown to meet them are joined. Identical changes always stay in
  * one part: reviewing forty copies of the same substitution separately helps nobody.
  */
+
+import { diffArrays } from "diff";
 import type { GroupingConfig } from "./config.js";
 import { joinTitles } from "./grouping.js";
-import { isLive, moveOthers, type GroupPart, type Item } from "./model.js";
-import { diffArrays } from "diff";
+import { type LanguageProfile, profileByName } from "./lang/index.js";
+import { type GroupPart, type Item, isLive, moveOthers } from "./model.js";
 import { normalizeWs } from "./text.js";
-import { profileByName, type LanguageProfile } from "./lang/index.js";
 
 export interface PartDraft {
   title: string;
@@ -155,7 +156,14 @@ export async function settleParts(
       const prev = partOf.get(i);
       // Usually two parts naming the same line: say how to name one change on it.
       // Groups merged because they share changes overlap by design: joined without a word (test report v0.16.0).
-      if (prev !== undefined) join(prev, k, `both contain ${i} (to separate changes on one line, add a snippet of the new text to the location: file:line "snippet")`, true, opts.quietOverlaps);
+      if (prev !== undefined)
+        join(
+          prev,
+          k,
+          `both contain ${i} (to separate changes on one line, add a snippet of the new text to the location: file:line "snippet")`,
+          true,
+          opts.quietOverlaps,
+        );
       else partOf.set(i, k);
     }
   });
@@ -238,7 +246,13 @@ export async function settleParts(
         if (u === d || !refs?.strict || find(at(u)) === find(at(d))) continue;
         const use = refs.uses(k.kind.id, win(u, u.oldText), win(u, u.newText), opts.grouping as GroupingConfig);
         const key = k.added.find((x) => use.added.includes(x)) ?? k.removed.find((x) => use.removed.includes(x));
-        if (key !== undefined) join(at(d), at(u), `${u.id} refers to ${k.kind.noun} ${key}, which ${d.id} ${k.added.includes(key) ? "defines" : "removes"}; a reference to a missing ${k.kind.noun} stops the build`, true);
+        if (key !== undefined)
+          join(
+            at(d),
+            at(u),
+            `${u.id} refers to ${k.kind.noun} ${key}, which ${d.id} ${k.added.includes(key) ? "defines" : "removes"}; a reference to a missing ${k.kind.noun} stops the build`,
+            true,
+          );
       }
     }
   }
@@ -266,7 +280,11 @@ export async function settleParts(
     for (let round = 0; round < drafts.length; round++) {
       const live = roots().filter(open);
       if (live.length < 2) break;
-      const lists = live.map((r) => itemsOf(r).map((i) => byId.get(i)!).filter((m) => isLive(m.status)));
+      const lists = live.map((r) =>
+        itemsOf(r)
+          .map((i) => byId.get(i)!)
+          .filter((m) => isLive(m.status)),
+      );
       let joined = false;
       for (const [a, b] of await interferes(lists)) {
         if (join(live[a]!, live[b]!, "accepting one would keep the other from being accepted (they touch the same text)")) joined = true;
@@ -282,7 +300,8 @@ export async function settleParts(
     const items = itemsOf(r).sort((a, b) => order.get(a)! - order.get(b)!);
     let title = drafts[r]!.title;
     const first = byId.get(items[0]!)!;
-    if (items.length > 1 && title === changeTitle(first) && items.every((i) => substitution(byId.get(i)!) === substitution(first))) title += ` (${items.length}×)`;
+    if (items.length > 1 && title === changeTitle(first) && items.every((i) => substitution(byId.get(i)!) === substitution(first)))
+      title += ` (${items.length}×)`;
     return { title, items };
   });
   return { parts, notes };

@@ -1,16 +1,38 @@
 /** Edit & accept: the input box shows the change in the words around it. */
-import { describe, expect, it } from "vitest";
+
 import type { Item } from "@stet/core";
+import { describe, expect, it } from "vitest";
 import { editedPart, editFrame } from "../src/model.js";
 
 const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id, agent: "a", changeset: "C1", file: "main.tex", kind: "modify", baseCommit: "b", range: { start: 0, end: 1 },
-  oldText: "old", newText: "new", context: { before: "", after: "" }, fingerprint: "", note: null, groups: ["G1"],
-  status: "pending", resolution: null, supersedes: null, conflictsWith: [], history: [], thread: [], ...extra,
+  id,
+  agent: "a",
+  changeset: "C1",
+  file: "main.tex",
+  kind: "modify",
+  baseCommit: "b",
+  range: { start: 0, end: 1 },
+  oldText: "old",
+  newText: "new",
+  context: { before: "", after: "" },
+  fingerprint: "",
+  note: null,
+  groups: ["G1"],
+  status: "pending",
+  resolution: null,
+  supersedes: null,
+  conflictsWith: [],
+  history: [],
+  thread: [],
+  ...extra,
 });
 
 describe("Edit & accept in the input box shows where the change is (test report v0.16, D2)", () => {
-  const it2 = item("1.1", { oldText: "idea that is easy to explain", newText: "easily explained idea", context: { before: "\\section{Intro}\nOur method relies on a simple ", after: ". It scales well.\nNext line." } });
+  const it2 = item("1.1", {
+    oldText: "idea that is easy to explain",
+    newText: "easily explained idea",
+    context: { before: "\\section{Intro}\nOur method relies on a simple ", after: ". It scales well.\nNext line." },
+  });
 
   it("holds the change in the words around it on its line", () => {
     const f = editFrame(it2);

@@ -8,8 +8,8 @@
  */
 import { open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { FEEDBACK_TYPES, notifyMode, notifyTriggers, triggerOf, type StetEvent } from "./model.js";
 import { describeFeedback } from "./mcp.js";
+import { FEEDBACK_TYPES, notifyMode, notifyTriggers, type StetEvent, triggerOf } from "./model.js";
 import { pathExists } from "./paths.js";
 import { appendInside, readInside } from "./safefs.js";
 import type { Stet } from "./service.js";
@@ -93,7 +93,9 @@ export class InboxWriter {
     const worktree = agent.worktree;
     if (!(await pathExists(worktree))) return this.halt();
     if (agent.state === "archived") {
-      const lines = await this.append(worktree, [{ key: "archived", text: "the reviewer archived this workspace: stop working here (any Stet tool explains)" }]);
+      const lines = await this.append(worktree, [
+        { key: "archived", text: "the reviewer archived this workspace: stop working here (any Stet tool explains)" },
+      ]);
       this.halt();
       return lines;
     }
@@ -154,7 +156,8 @@ export class InboxWriter {
       const parent = await repo.tryRun(["rev-parse", "-q", "--verify", `${status.agent.baseCommit}^1`]);
       const mainMoved = head !== status.agent.baseCommit && head !== parent;
       const kind = !mainMoved && cfg.shareEdits === "saved" ? "save" : "document";
-      if (wanted.has(kind)) news.push({ key: `sync:${status.agent.baseCommit}`, text: "the document changed since your last sync (call stet_sync before new work)" });
+      if (wanted.has(kind))
+        news.push({ key: `sync:${status.agent.baseCommit}`, text: "the document changed since your last sync (call stet_sync before new work)" });
     }
     return this.append(worktree, news);
   }
@@ -172,7 +175,12 @@ export class InboxWriter {
     if (!this.keys) {
       // Keys already in the file (an earlier session, or another server for the same workspace).
       const old = (await readInside(worktree, INBOX_FILE))?.toString("utf8") ?? "";
-      this.keys = new Set(old.split("\n").map((l) => parseInboxLine(l)?.key).filter((k): k is string => !!k));
+      this.keys = new Set(
+        old
+          .split("\n")
+          .map((l) => parseInboxLine(l)?.key)
+          .filter((k): k is string => !!k),
+      );
     }
     const at = new Date().toISOString();
     const lines = news.filter((n) => !this.keys!.has(n.key)).map((n) => ({ at, ...n }));

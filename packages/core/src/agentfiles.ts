@@ -33,7 +33,9 @@ export class AgentFiles {
     const gitDir = await verifyAgentWorktree(agent.worktree, commonDir);
     const head = (await readFile(join(gitDir, "HEAD"), "utf8").catch(() => "")).trim();
     if (head !== `ref: refs/heads/${agent.branch}`) {
-      throw new StetError(`The agent workspace is not on its branch '${agent.branch}' (${head.replace(/^ref: refs\/heads\//, "") || "detached"}). Switch it back first.`);
+      throw new StetError(
+        `The agent workspace is not on its branch '${agent.branch}' (${head.replace(/^ref: refs\/heads\//, "") || "detached"}). Switch it back first.`,
+      );
     }
     const config = [...untrustedWorktreeConfig(join(commonDir, "stet", "config.json")), ...(await filterOverrides(main))];
     return new AgentFiles(main, commonDir, agent, gitDir, config);
@@ -70,7 +72,9 @@ export class AgentFiles {
     if (added.code !== 0) {
       const bad = [...added.stderr.matchAll(/invalid path '([^']+)'/g)].map((m) => m[1]!);
       if (bad.length)
-        throw new StetError(`The path${bad.length > 1 ? "s" : ""} ${bad.map((b) => `'${b}'`).join(", ")} ${bad.length > 1 ? "are" : "is"} not allowed in a workspace (git refuses ${bad.length > 1 ? "them" : "it"}; a folder named .git in any spelling). Remove or rename ${bad.length > 1 ? "them" : "it"}, then try again.`);
+        throw new StetError(
+          `The path${bad.length > 1 ? "s" : ""} ${bad.map((b) => `'${b}'`).join(", ")} ${bad.length > 1 ? "are" : "is"} not allowed in a workspace (git refuses ${bad.length > 1 ? "them" : "it"}; a folder named .git in any spelling). Remove or rename ${bad.length > 1 ? "them" : "it"}, then try again.`,
+        );
       throw new StetError(`Stet could not read the workspace's files: ${added.stderr.trim().split("\n").pop()}`);
     }
     const tree = await git.run(["write-tree"], { env });

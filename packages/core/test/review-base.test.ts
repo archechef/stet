@@ -21,7 +21,10 @@ const DOUBLED = /\\\\(pk|sk|Hash)|Hashash/;
 
 async function acceptAll(stet: Awaited<ReturnType<typeof setup>>["stet"], agent: string) {
   const items = await stet.listItems({ agent, status: ["pending"] });
-  await stet.accept(items.map((i) => i.id), { overrideLinked: true });
+  await stet.accept(
+    items.map((i) => i.id),
+    { overrideLinked: true },
+  );
   return items;
 }
 

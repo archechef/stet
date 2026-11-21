@@ -8,10 +8,11 @@
  * Each change has the same actions here as in the file (the row above it, its hover, Ctrl+.);
  * they save the review's unsaved edits first, so a decision uses the wording the user sees.
  */
-import * as vscode from "vscode";
+
 import { foldPath, type Item, type ReviewDocument } from "@stet/core";
-import { acceptAction, changeActions, withIcon, type ChangeAction } from "./actions.js";
-import { positionIn, projectOfQuery, projectQuery, toLf, type Ref, type TreeModel } from "./model.js";
+import * as vscode from "vscode";
+import { acceptAction, type ChangeAction, changeActions, withIcon } from "./actions.js";
+import { positionIn, projectOfQuery, projectQuery, type Ref, type TreeModel, toLf } from "./model.js";
 import type { Project } from "./project.js";
 
 export const REVIEW_SCHEME = "stet-review";
@@ -28,7 +29,9 @@ export interface ReviewHost {
 }
 
 /** An action run from a review document: its unsaved edits are saved first (`stet.reviewRun`). */
-export const viaReview = (doc: vscode.Uri) => (a: ChangeAction): ChangeAction => ({ ...a, command: "stet.reviewRun", args: [doc.toString(), a.command, a.args] });
+export const viaReview =
+  (doc: vscode.Uri) =>
+  (a: ChangeAction): ChangeAction => ({ ...a, command: "stet.reviewRun", args: [doc.toString(), a.command, a.args] });
 
 export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensProvider, vscode.HoverProvider, vscode.CodeActionProvider, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
@@ -165,7 +168,8 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
     }
     const model = this.host.model(c.project);
     const route = viaReview(doc.uri);
-    const lens = (at: vscode.Range, a: ChangeAction, title = withIcon(a)) => new vscode.CodeLens(at, { title, tooltip: a.detail, command: "stet.reviewRun", arguments: route(a).args });
+    const lens = (at: vscode.Range, a: ChangeAction, title = withIcon(a)) =>
+      new vscode.CodeLens(at, { title, tooltip: a.detail, command: "stet.reviewRun", arguments: route(a).args });
     for (const r of c.doc.regions) {
       const item = c.doc.items.find((i) => i.id === r.id);
       if (!item) continue;
@@ -179,9 +183,23 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
       const tag = item.status === "needs_revision" ? " (revision requested)" : "";
       lenses.push(
         lens(at, accept, `${item.id}${tag}: ${withIcon(accept)}${yours ? " (your wording)" : ""}`),
-        lens(at, { label: item.move ? "Reject move…" : "Reject…", icon: "close", command: "stet.reject", args: [ref], tier: "decide", detail: `Reject ${item.id}, with an optional reason for the agent` }),
+        lens(at, {
+          label: item.move ? "Reject move…" : "Reject…",
+          icon: "close",
+          command: "stet.reject",
+          args: [ref],
+          tier: "decide",
+          detail: `Reject ${item.id}, with an optional reason for the agent`,
+        }),
         ...(yours ? [lens(at, { label: "Use agent's wording", icon: "discard", command: "stet.clearDraft", args: [ref], tier: "decide" })] : []),
-        lens(at, { label: "More…", icon: "ellipsis", command: "stet.changeActions", args: [ref], tier: "other", detail: "Every action on this change (also Ctrl+. in the change)" }),
+        lens(at, {
+          label: "More…",
+          icon: "ellipsis",
+          command: "stet.changeActions",
+          args: [ref],
+          tier: "other",
+          detail: "Every action on this change (also Ctrl+. in the change)",
+        }),
       );
     }
     return lenses;
@@ -198,7 +216,8 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
       const a = positionIn({ line: 0, character: 0 }, c.content, r.start);
       const b = positionIn({ line: 0, character: 0 }, c.content, r.end);
       const range = new vscode.Range(a.line, a.character, b.line, b.character);
-      if (range.contains(pos) || (range.isEmpty && range.start.line === pos.line)) out.push({ c, item, range: range.isEmpty ? doc.lineAt(pos.line).range : range });
+      if (range.contains(pos) || (range.isEmpty && range.start.line === pos.line))
+        out.push({ c, item, range: range.isEmpty ? doc.lineAt(pos.line).range : range });
     }
     return out;
   }
@@ -206,7 +225,12 @@ export class ReviewFiles implements vscode.FileSystemProvider, vscode.CodeLensPr
   provideHover(doc: vscode.TextDocument, pos: vscode.Position): vscode.Hover | undefined {
     const hits = this.changesAt(doc, pos);
     const md = hits.flatMap(({ c, item }) => this.host.hover(c.project, item, viaReview(doc.uri)) ?? []);
-    return md.length ? new vscode.Hover(md, hits.map((h) => h.range).reduce((x, y) => x.union(y))) : undefined;
+    return md.length
+      ? new vscode.Hover(
+          md,
+          hits.map((h) => h.range).reduce((x, y) => x.union(y)),
+        )
+      : undefined;
   }
 
   provideCodeActions(doc: vscode.TextDocument, range: vscode.Range | vscode.Selection): vscode.CodeAction[] {

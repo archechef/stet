@@ -66,21 +66,32 @@ export function tokenize(text: string): Token[] {
 // Structure
 
 const BOUNDARY_CMDS = new Set([
-  "\\begin", "\\end", "\\item", "\\par", "\\part", "\\chapter", "\\section", "\\subsection",
-  "\\subsubsection", "\\paragraph", "\\subparagraph",
+  "\\begin",
+  "\\end",
+  "\\item",
+  "\\par",
+  "\\part",
+  "\\chapter",
+  "\\section",
+  "\\subsection",
+  "\\subsubsection",
+  "\\paragraph",
+  "\\subparagraph",
 ]);
 
 const isBoundary = (t: Token): boolean => t.type === "cmd" && BOUNDARY_CMDS.has(t.text.replace(/\*$/, ""));
 
 /** A line that starts a LaTeX structure (section, environment, item): a paragraph may follow it directly. */
-const STRUCTURE_LINE = /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end|item|label|caption|maketitle|noindent|medskip|bigskip|smallskip|par)\b/;
+const STRUCTURE_LINE =
+  /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end|item|label|caption|maketitle|noindent|medskip|bigskip|smallskip|par)\b/;
 
 /** Sectioning commands and environment bounds: a structure line that is a piece of its own. */
 const SECTION_LINE = /^[ \t]*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end)\b/;
 
 /** A single sectioning or environment line, such as `\section{Results}` or `\end{proof}`. */
 const isStructureOnly = (t: string) =>
-  /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end)\*?\s*(?:\[[^\]]*\])?\{[^\n]*\}[^\n]*\s*$/.test(t) && !t.trim().includes("\n");
+  /^\s*\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph|begin|end)\*?\s*(?:\[[^\]]*\])?\{[^\n]*\}[^\n]*\s*$/.test(t) &&
+  !t.trim().includes("\n");
 
 /** `\begin{x} … \end{x}`, whole: "x". */
 function environmentOf(text: string): string | null {
@@ -151,7 +162,8 @@ function mathSpans(toks: Token[]): [number, number][] {
 }
 
 /** Commands whose argument is an identifier that is only meaningful as a whole. */
-const KEY_ARG_CMDS = /^\\(label|[cCvV]?ref|eqref|pageref|autoref|nameref|cite\w*|\w*cite|nocite|input|include|includegraphics|usepackage|documentclass|bibliography|bibliographystyle|begin|end)\*?$/;
+const KEY_ARG_CMDS =
+  /^\\(label|[cCvV]?ref|eqref|pageref|autoref|nameref|cite\w*|\w*cite|nocite|input|include|includegraphics|usepackage|documentclass|bibliography|bibliographystyle|begin|end)\*?$/;
 
 /** Token spans [cmd, closing brace] of key arguments such as \label{sec:intro} or \cite[p.~3]{knuth}. */
 function keySpans(toks: Token[], braces: Map<number, number>): [number, number][] {
@@ -185,7 +197,8 @@ export function isKeyEdit(oldText: string, newText: string): boolean {
 // Verbatim
 
 /** Environments whose spaces are content: reflowing them changes the output. */
-const VERBATIM = "verbatim\\*?|Verbatim\\*?|BVerbatim|LVerbatim|lstlisting|minted|alltt|comment|filecontents\\*?|verbatimtab|spverbatim|tcblisting|pycode|sageblock";
+const VERBATIM =
+  "verbatim\\*?|Verbatim\\*?|BVerbatim|LVerbatim|lstlisting|minted|alltt|comment|filecontents\\*?|verbatimtab|spverbatim|tcblisting|pycode|sageblock";
 const VERBATIM_BEGIN = new RegExp(`\\\\begin\\s*\\{(?:${VERBATIM})\\}`, "g");
 const VERBATIM_END = new RegExp(`\\\\end\\s*\\{(?:${VERBATIM})\\}`, "g");
 
@@ -275,7 +288,8 @@ const references: ReferenceRules = {
 const CMD_DEFS =
   /\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|DeclareMathOperator|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand|newrobustcmd|renewrobustcmd|DeclarePairedDelimiterX?|newlength|newsavebox)\*?\s*\{?\s*\\([A-Za-z@]+)/g;
 const TEX_DEFS = /\\(?:def|gdef|edef|xdef|let|newif)\s*\\([A-Za-z@]+)/g;
-const ENV_DEFS = /\\(?:newenvironment|renewenvironment|NewDocumentEnvironment|RenewDocumentEnvironment|newtheorem|declaretheorem|newtcolorbox)\*?\s*\{([A-Za-z@*]+)\}/g;
+const ENV_DEFS =
+  /\\(?:newenvironment|renewenvironment|NewDocumentEnvironment|RenewDocumentEnvironment|newtheorem|declaretheorem|newtcolorbox)\*?\s*\{([A-Za-z@*]+)\}/g;
 /** TikZ styles: `\tikzset{name/.style=…}`, `name/.style={…}` in picture options, `\tikzstyle{name}=[…]`. */
 const STYLE_DEFS = /(?:[{,[]\s*|^\s*)([A-Za-z][\w -]*?)\s*\/\.(?:style|append style)\b|\\tikzstyle\s*\{([^}]+)\}/gm;
 
@@ -302,7 +316,8 @@ const definitions: DefinitionRules = {
 // ---------------------------------------------------------------------------
 // Files read in
 
-const INCLUDES = /\\(?:input|include|subfile|includegraphics|includepdf|includestandalone|lstinputlisting|verbatiminput|addbibresource|bibliography)\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]*)\}/g;
+const INCLUDES =
+  /\\(?:input|include|subfile|includegraphics|includepdf|includestandalone|lstinputlisting|verbatiminput|addbibresource|bibliography)\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]*)\}/g;
 
 const includes: IncludeRules = {
   /** The files a text reads in (\input{chapters/a}, \includegraphics[..]{fig/b}, \bibliography{x,y}), counted. */
@@ -350,7 +365,27 @@ export const LATEX: LanguageProfile = {
   extensions: /\.(tex|sty|cls|ltx|dtx)$/i,
   fence: "latex",
   document: true,
-  buildFiles: ["*.aux", "*.log", "*.out", "*.toc", "*.lof", "*.lot", "*.fls", "*.fdb_latexmk", "*.synctex.gz", "*.synctex(busy)", "*.bbl", "*.blg", "*.bcf", "*.run.xml", "*.nav", "*.snm", "*.vrb", "*.xdv", "*.dvi"],
+  buildFiles: [
+    "*.aux",
+    "*.log",
+    "*.out",
+    "*.toc",
+    "*.lof",
+    "*.lot",
+    "*.fls",
+    "*.fdb_latexmk",
+    "*.synctex.gz",
+    "*.synctex(busy)",
+    "*.bbl",
+    "*.blg",
+    "*.bcf",
+    "*.run.xml",
+    "*.nav",
+    "*.snm",
+    "*.vrb",
+    "*.xdv",
+    "*.dvi",
+  ],
   outputOf: (source) => (/\.tex$/i.test(source) ? source.replace(/\.tex$/i, ".pdf") : null),
   agentTerms: {
     location: 'main.tex:12 "suggestion"',

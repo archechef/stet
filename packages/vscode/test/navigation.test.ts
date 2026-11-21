@@ -49,7 +49,10 @@ describe("stet.navigationOrder: document (test report v0.16)", () => {
 });
 
 describe("overlapping changes at the cursor (test report v0.16)", () => {
-  const r = (l0: number, c0: number, l1: number, c1: number, id: string) => ({ id, range: { start: { line: l0, character: c0 }, end: { line: l1, character: c1 } } });
+  const r = (l0: number, c0: number, l1: number, c1: number, id: string) => ({
+    id,
+    range: { start: { line: l0, character: c0 }, end: { line: l1, character: c1 } },
+  });
   it("are all named, so the command can ask which", () => {
     const a = r(2, 0, 2, 20, "1.1");
     const b = r(2, 5, 2, 30, "2.1");
@@ -60,7 +63,7 @@ describe("overlapping changes at the cursor (test report v0.16)", () => {
 });
 
 describe("which one?", () => {
-  it("Escape in \"which one?\" decides nothing (test report 5e4c6af, D3)", () => {
+  it('Escape in "which one?" decides nothing (test report 5e4c6af, D3)', () => {
     const e = src("extension.ts");
     expect(e).toContain("if (here === CANCELLED) return undefined;");
     expect(e).not.toContain("return (await this.atCursor()) ?? sel;");

@@ -35,16 +35,20 @@ describe("splitText (LaTeX)", () => {
   it("keeps edits in different sentences separate", () => {
     const old = "The cat sat on the mat. The dog ran in the park.\n";
     const neu = "The cat lay on the mat. The dog ran in the garden.\n";
-    expect(pairs(splitText(LATEX, old, neu, cfg))).toEqual([["sat", "lay"], ["park", "garden"]]);
+    expect(pairs(splitText(LATEX, old, neu, cfg))).toEqual([
+      ["sat", "lay"],
+      ["park", "garden"],
+    ]);
   });
 
   it("merges nearby edits in the same sentence", () => {
     const old = "This is a very good and quite useful result.\n";
     const neu = "This is an extremely good and quite helpful result.\n";
-    expect(pairs(splitText(LATEX, old, neu, { ...cfg, mergeGap: 2 }))).toEqual([["a very", "an extremely"], ["useful", "helpful"]]);
-    expect(pairs(splitText(LATEX, old, neu, { ...cfg, mergeGap: 3 }))).toEqual([
-      ["a very good and quite useful", "an extremely good and quite helpful"],
+    expect(pairs(splitText(LATEX, old, neu, { ...cfg, mergeGap: 2 }))).toEqual([
+      ["a very", "an extremely"],
+      ["useful", "helpful"],
     ]);
+    expect(pairs(splitText(LATEX, old, neu, { ...cfg, mergeGap: 3 }))).toEqual([["a very good and quite useful", "an extremely good and quite helpful"]]);
   });
 
   it("does not treat abbreviations as sentence ends", () => {
@@ -199,7 +203,10 @@ describe("edits that rebuild one sentence (test report v0.14, D6)", () => {
 
   it("but word swaps a few words apart stay apart", async () => {
     const { items } = await submitted("Plants are immobile organisms and therefore cannot avoid stress.");
-    expect(items.map((i) => [i.oldText, i.newText])).toEqual([["sessile", "immobile"], ["escape", "avoid"]]);
+    expect(items.map((i) => [i.oldText, i.newText])).toEqual([
+      ["sessile", "immobile"],
+      ["escape", "avoid"],
+    ]);
   });
 
   it("and so do edits in different sentences, or far apart", async () => {
@@ -292,8 +299,14 @@ that does not change at all in any of the cases.
     const o = " Beta two is long.\n\n";
     const n = "\n\nBeta two is long. ";
     const d = inlineDiff(o, n);
-    expect(d.removed).toEqual([[0, 1], [o.length - 2, o.length]]);
-    expect(d.inserted).toEqual([{ at: 1, text: "\n\n" }, { at: o.length, text: " " }]);
+    expect(d.removed).toEqual([
+      [0, 1],
+      [o.length - 2, o.length],
+    ]);
+    expect(d.inserted).toEqual([
+      { at: 1, text: "\n\n" },
+      { at: o.length, text: " " },
+    ]);
   });
 });
 
@@ -301,7 +314,11 @@ describe("headings and code blocks", () => {
   it("a sentence added before a new heading is an insertion, not the old sentence replaced (test report 5e4c6af, D4)", () => {
     const cases: [typeof TYPST, string, string][] = [
       [TYPST, "The bound is tight.\n$ x <= y $\n", "The bound is tight. We now state it.\n= Statement\nHere it is:\n$ x <= y $\n"],
-      [TYPST, "Some text here. The bound is tight.\n$ x <= y $\nMore.\n", "Some text here. The bound is tight. We now state it.\n= Statement\nHere it is:\n$ x <= y $\nMore.\n"],
+      [
+        TYPST,
+        "Some text here. The bound is tight.\n$ x <= y $\nMore.\n",
+        "Some text here. The bound is tight. We now state it.\n= Statement\nHere it is:\n$ x <= y $\nMore.\n",
+      ],
       [TYPST, "The bound is tight.\n```py\nx=1\n```\n", "The bound is tight. We now state it.\n= Code\nHere it is:\n```py\nx=1\n```\n"],
       [LATEX, "The bound is tight.\n\\bibliography{refs}\n", "The bound is tight. We now state it.\n\\section{Statement}\nHere it is:\n\\bibliography{refs}\n"],
     ];
@@ -309,7 +326,10 @@ describe("headings and code blocks", () => {
       const edits = splitText(p, o, nw, cfg);
       expect(applyInOrder(o, edits)).toBe(nw);
       // Nothing of the old text is taken out: each change only inserts.
-      expect(edits.map((e) => e.oldText.trim()), JSON.stringify(edits)).toEqual(edits.map(() => ""));
+      expect(
+        edits.map((e) => e.oldText.trim()),
+        JSON.stringify(edits),
+      ).toEqual(edits.map(() => ""));
       // And each alone leaves the old text whole, with no words run together.
       for (const e of edits) expect(applyInOrder(o, [e]), JSON.stringify(e)).not.toMatch(/\.[A-Z=\\]/);
     }

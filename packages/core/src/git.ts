@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { foldPath } from "./paths.js";
-import { detectEol, toLf, type Eol } from "./text.js";
+import { detectEol, type Eol, toLf } from "./text.js";
 
 export class GitError extends Error {
   constructor(
@@ -51,7 +51,14 @@ const SAFE_CONFIG = ["-c", "core.fsmonitor=false"];
  * whose config the agent could write, are not entered.
  */
 export function untrustedWorktreeConfig(storeFile: string): string[] {
-  return [`core.hooksPath=${storeFile.replace(/\\/g, "/")}/no-hooks`, "diff.ignoreSubmodules=all", "submodule.recurse=false", "status.submoduleSummary=false", "commit.gpgSign=false", "tag.gpgSign=false"];
+  return [
+    `core.hooksPath=${storeFile.replace(/\\/g, "/")}/no-hooks`,
+    "diff.ignoreSubmodules=all",
+    "submodule.recurse=false",
+    "status.submoduleSummary=false",
+    "commit.gpgSign=false",
+    "tag.gpgSign=false",
+  ];
 }
 
 /**
@@ -193,12 +200,7 @@ export class Repo {
    * Create a commit whose tree is `baseRev`'s tree with `changes` applied
    * (content = new file content, null = delete). Never touches the real index.
    */
-  async buildCommit(opts: {
-    parents: string[];
-    baseRev: string;
-    changes: Map<string, string | Buffer | null>;
-    message: string;
-  }): Promise<string> {
+  async buildCommit(opts: { parents: string[]; baseRev: string; changes: Map<string, string | Buffer | null>; message: string }): Promise<string> {
     const dir = await mkdtemp(join(tmpdir(), "stet-idx-"));
     const env = { GIT_INDEX_FILE: join(dir, "index") };
     try {

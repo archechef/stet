@@ -11,10 +11,26 @@ let n = 0;
 function item(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
   n++;
   return {
-    id: `1.${n}`, agent: "a", changeset: "C1", file: "main.typ", kind: "modify", baseCommit: "x",
-    range: { start: 0, end: oldText.length }, oldText, newText, context: { before: "", after: "" },
-    fingerprint: String(n), note: null, groups: [], status: "pending", resolution: null, supersedes: null,
-    conflictsWith: [], history: [], thread: [], ...extra,
+    id: `1.${n}`,
+    agent: "a",
+    changeset: "C1",
+    file: "main.typ",
+    kind: "modify",
+    baseCommit: "x",
+    range: { start: 0, end: oldText.length },
+    oldText,
+    newText,
+    context: { before: "", after: "" },
+    fingerprint: String(n),
+    note: null,
+    groups: [],
+    status: "pending",
+    resolution: null,
+    supersedes: null,
+    conflictsWith: [],
+    history: [],
+    thread: [],
+    ...extra,
   };
 }
 
@@ -66,7 +82,9 @@ describe("accepting one part of a label rename (test report v0.16, D3)", () => {
     const r = await stet.accept([label.id]);
     expect(r.warnings).toHaveLength(1);
     expect(r.warnings[0]).toContain(g.id);
-    expect(r.warnings[0]).toMatch(new RegExp(`partly accepted: ${label.id.replace(".", "\\.")} accepted, .*${refs[0]!.id.replace(".", "\\.")}.* still to decide`));
+    expect(r.warnings[0]).toMatch(
+      new RegExp(`partly accepted: ${label.id.replace(".", "\\.")} accepted, .*${refs[0]!.id.replace(".", "\\.")}.* still to decide`),
+    );
     // Accepting the rest makes the group whole again: no warning.
     expect((await stet.accept(refs.map((i) => i.id))).warnings).toEqual([]);
   });
@@ -87,9 +105,22 @@ describe("accepting one part of a label rename (test report v0.16, D3)", () => {
 describe("merged linked groups don't confuse the agent (test report v0.16)", () => {
   it("parts sharing a change are joined, quietly when the groups were merged", async () => {
     const { settleParts } = await import("../src/parts.js");
-    const mk = (id: string): any => ({ id, file: "a.tex", kind: "modify", oldText: id, newText: id + "!", status: "pending", groups: [], range: { start: 0, end: 0 }, context: { before: "", after: "" } });
+    const mk = (id: string): any => ({
+      id,
+      file: "a.tex",
+      kind: "modify",
+      oldText: id,
+      newText: id + "!",
+      status: "pending",
+      groups: [],
+      range: { start: 0, end: 0 },
+      context: { before: "", after: "" },
+    });
     const [a, b, c] = [mk("1.1"), mk("1.2"), mk("1.3")];
-    const drafts = [{ title: "Old", items: ["1.1", "1.2"] }, { title: "New", items: ["1.2", "1.3"] }];
+    const drafts = [
+      { title: "Old", items: ["1.1", "1.2"] },
+      { title: "New", items: ["1.2", "1.3"] },
+    ];
     const loud = await settleParts(drafts, [a, b, c]);
     expect(loud.notes.join(" ")).toMatch(/both contain 1\.2/);
     const quiet = await settleParts(drafts, [a, b, c], undefined, { quietOverlaps: true });
@@ -102,10 +133,24 @@ describe("parts and titles", () => {
   it("parts that overlap list each change once (security report 5e4c6af, S17)", async () => {
     const a = item("is", "was");
     const b = item("an", "the");
-    const { parts } = await settleParts([{ title: "x", items: [a.id, b.id] }, { title: "y", items: [b.id] }, { title: "z", items: [item("q", "r").id] }], [a, b]);
+    const { parts } = await settleParts(
+      [
+        { title: "x", items: [a.id, b.id] },
+        { title: "y", items: [b.id] },
+        { title: "z", items: [item("q", "r").id] },
+      ],
+      [a, b],
+    );
     expect(parts).toBeUndefined();
     const c = item("q", "r");
-    const r = await settleParts([{ title: "x", items: [a.id, b.id] }, { title: "y", items: [b.id] }, { title: "z", items: [c.id] }], [a, b, c]);
+    const r = await settleParts(
+      [
+        { title: "x", items: [a.id, b.id] },
+        { title: "y", items: [b.id] },
+        { title: "z", items: [c.id] },
+      ],
+      [a, b, c],
+    );
     expect(r.parts?.map((p) => p.items)).toEqual([[a.id, b.id], [c.id]]);
   });
 

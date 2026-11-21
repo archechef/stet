@@ -1,17 +1,33 @@
 import { describe, expect, it } from "vitest";
+import { parseWhere } from "../src/grouping.js";
 import type { Item } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
-import { parseWhere } from "../src/grouping.js";
 import { edit, PAPER, read, setup, write } from "./helpers.js";
 
 let n = 0;
 function item(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
   n++;
   return {
-    id: `1.${n}`, agent: "a", changeset: "C1", file: "main.tex", kind: "modify", baseCommit: "x",
-    range: { start: 0, end: oldText.length }, oldText, newText, context: { before: "", after: "" },
-    fingerprint: String(n), note: null, groups: [], status: "pending", resolution: null, supersedes: null,
-    conflictsWith: [], history: [], thread: [], ...extra,
+    id: `1.${n}`,
+    agent: "a",
+    changeset: "C1",
+    file: "main.tex",
+    kind: "modify",
+    baseCommit: "x",
+    range: { start: 0, end: oldText.length },
+    oldText,
+    newText,
+    context: { before: "", after: "" },
+    fingerprint: String(n),
+    note: null,
+    groups: [],
+    status: "pending",
+    resolution: null,
+    supersedes: null,
+    conflictsWith: [],
+    history: [],
+    thread: [],
+    ...extra,
   };
 }
 const one = (...items: Item[]) => items.map((i) => ({ title: i.id, items: [i.id] }));
@@ -158,7 +174,10 @@ describe("parts in review", () => {
     ];
     // One section per part, each repeating the notation change: identical changes stay linked.
     write(wt, "main.tex", notation(read(wt, "main.tex")));
-    const r1 = await stet.submit("a", { title: "notation", groups: [{ kind: "linked", reason: "test of linked groups", title: "Adversary in sans-serif", where: ["main.tex"], parts: sections }] });
+    const r1 = await stet.submit("a", {
+      title: "notation",
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "Adversary in sans-serif", where: ["main.tex"], parts: sections }],
+    });
     const g1 = r1.groups.find((x) => x.kind === "linked")!;
     expect(g1.items).toHaveLength(3);
     expect(g1.parts).toBeUndefined();
@@ -172,7 +191,10 @@ describe("parts in review", () => {
     t = t.replace("is efficient", "runs in polynomial time");
     t = t.replace("this is a contradiction", "we reach a contradiction");
     write(wt, "main.tex", t);
-    const r2 = await stet.submit("a", { title: "wording", groups: [{ kind: "linked", reason: "test of linked groups", title: "Wording", where: ["main.tex"], parts: sections }] });
+    const r2 = await stet.submit("a", {
+      title: "wording",
+      groups: [{ kind: "linked", reason: "test of linked groups", title: "Wording", where: ["main.tex"], parts: sections }],
+    });
     const g2 = r2.groups.find((x) => x.kind === "linked")!;
     expect(g2.parts?.map((p) => p.title)).toEqual(["Introduction", "Model", "Proofs"]);
     expect(r2.warnings).toEqual([]);
@@ -187,10 +209,18 @@ describe("parts in review", () => {
     const r = await stet.submit("a", { title: "wording" });
     const [x, y, z] = r.items.map((i) => i.id);
     await expect(stet.group("a", [x!, y!], "related", "t", undefined, [{ title: "one", items: [x!] }])).rejects.toThrow(/Only linked/);
-    const { group: g } = await stet.group("a", [x!, y!, z!], "linked", "Wording", undefined, [
-      { title: "Intro", items: [x!] },
-      { title: "Rest", items: [y!, z!] },
-    ], "test of linked groups");
+    const { group: g } = await stet.group(
+      "a",
+      [x!, y!, z!],
+      "linked",
+      "Wording",
+      undefined,
+      [
+        { title: "Intro", items: [x!] },
+        { title: "Rest", items: [y!, z!] },
+      ],
+      "test of linked groups",
+    );
     expect(g!.parts).toEqual([
       { title: "Intro", items: [x] },
       { title: "Rest", items: [y, z] },
@@ -206,7 +236,8 @@ describe("parts in review", () => {
 });
 
 describe("parts within one line (bug report 2026-11-19)", () => {
-  const LINE = "We define the \\emph{review base} as the text agents see, and the \\emph{proposal} as what one agent changes in its own copy before it submits.";
+  const LINE =
+    "We define the \\emph{review base} as the text agents see, and the \\emph{proposal} as what one agent changes in its own copy before it submits.";
   const DOC = `\\documentclass{article}\n\\begin{document}\n${LINE}\n\\end{document}\n`;
 
   it("reads locations with a snippet", () => {
@@ -223,7 +254,18 @@ describe("parts within one line (bug report 2026-11-19)", () => {
     edit(wt, "main.tex", "proposal", "suggestion");
     const r = await stet.submit("a", {
       title: "terms",
-      groups: [{ kind: "linked", reason: "test of linked groups", title: "terms", where: ["main.tex:3"], parts: [{ title: "base", where: ['main.tex:3 "shared"'] }, { title: "proposal", where: ['main.tex:3 "suggestion"'] }] }],
+      groups: [
+        {
+          kind: "linked",
+          reason: "test of linked groups",
+          title: "terms",
+          where: ["main.tex:3"],
+          parts: [
+            { title: "base", where: ['main.tex:3 "shared"'] },
+            { title: "proposal", where: ['main.tex:3 "suggestion"'] },
+          ],
+        },
+      ],
     });
     expect(r.warnings).toEqual([]);
     const g = r.groups.find((x) => x.kind === "linked")!;
@@ -240,7 +282,18 @@ describe("parts within one line (bug report 2026-11-19)", () => {
     edit(wt, "main.tex", "proposal", "suggestion");
     const r = await stet.submit("a", {
       title: "t",
-      groups: [{ kind: "linked", reason: "test of linked groups", title: "t", where: ["main.tex:3"], parts: [{ title: "cut", where: ['main.tex:3 "own copy"'] }, { title: "word", where: ['main.tex:3 "nowhere"'] }] }],
+      groups: [
+        {
+          kind: "linked",
+          reason: "test of linked groups",
+          title: "t",
+          where: ["main.tex:3"],
+          parts: [
+            { title: "cut", where: ['main.tex:3 "own copy"'] },
+            { title: "word", where: ['main.tex:3 "nowhere"'] },
+          ],
+        },
+      ],
     });
     expect(r.warnings).toContain(`'main.tex:3 "nowhere"' matched no change.`);
     const g = r.groups.find((x) => x.kind === "linked")!;

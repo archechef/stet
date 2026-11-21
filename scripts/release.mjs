@@ -78,7 +78,8 @@ switch (cmd) {
   }
   case "check": {
     const wrong = versions().filter(([, found]) => found !== v);
-    if (wrong.length) fail(`version mismatch for v${v}:\n${wrong.map(([where, found]) => `  ${where}: ${found}`).join("\n")}\nRun: node scripts/release.mjs set ${v}`);
+    if (wrong.length)
+      fail(`version mismatch for v${v}:\n${wrong.map(([where, found]) => `  ${where}: ${found}`).join("\n")}\nRun: node scripts/release.mjs set ${v}`);
     if (!changelogSection(v)) fail(`CHANGELOG.md has no "## ${v}" section.`);
     console.log(`All versions are ${v}.`);
     break;

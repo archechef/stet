@@ -32,19 +32,44 @@ describe("guard: file tools", () => {
   });
 
   it("checks every file of a MultiEdit", () => {
-    const r = checkToolUse({ cwd: wt, tool_name: "MultiEdit", tool_input: { edits: [{ file_path: "a.tex" }, { file_path: join(ctx.mainPath, "b.tex") }] } }, ctx);
+    const r = checkToolUse(
+      { cwd: wt, tool_name: "MultiEdit", tool_input: { edits: [{ file_path: "a.tex" }, { file_path: join(ctx.mainPath, "b.tex") }] } },
+      ctx,
+    );
     expect(r).toMatch(/outside/);
   });
 });
 
 describe("guard: shell commands", () => {
   it("allows ordinary work", () => {
-    for (const c of ["git status", "git diff", "git log --oneline", "latexmk -pdf main.tex", "git restore main.tex", "git checkout -- main.tex", "grep -n foo *.tex", "git branch --show-current"])
+    for (const c of [
+      "git status",
+      "git diff",
+      "git log --oneline",
+      "latexmk -pdf main.tex",
+      "git restore main.tex",
+      "git checkout -- main.tex",
+      "grep -n foo *.tex",
+      "git branch --show-current",
+    ])
       expect(bash(c), c).toBeNull();
   });
 
   it("blocks git commands that bypass review", () => {
-    for (const c of ["git push", "git push origin stet/a", "git merge stet/a", "git rebase master", "git switch master", "git checkout master", "git -c x=y merge foo", "git branch -f master HEAD", "git branch -D stet/b", "git worktree add ../x", "git update-ref refs/heads/master HEAD", "cd /tmp && git push"])
+    for (const c of [
+      "git push",
+      "git push origin stet/a",
+      "git merge stet/a",
+      "git rebase master",
+      "git switch master",
+      "git checkout master",
+      "git -c x=y merge foo",
+      "git branch -f master HEAD",
+      "git branch -D stet/b",
+      "git worktree add ../x",
+      "git update-ref refs/heads/master HEAD",
+      "cd /tmp && git push",
+    ])
       expect(bash(c), c).toMatch(/not allowed/);
   });
 
@@ -88,7 +113,14 @@ describe("guard: shell commands", () => {
       "git submodule add https://example.com/x.git",
     ])
       expect(bash(c), c).toMatch(/not allowed/);
-    for (const c of ["git config --get user.name", "git config --list", "git config -l", "git config get user.email", "git remote -v", "git remote show origin"])
+    for (const c of [
+      "git config --get user.name",
+      "git config --list",
+      "git config -l",
+      "git config get user.email",
+      "git remote -v",
+      "git remote show origin",
+    ])
       expect(bash(c), c).toBeNull();
   });
 

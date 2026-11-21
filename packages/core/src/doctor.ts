@@ -5,11 +5,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { compareVersions, gitVersion, Repo } from "./git.js";
 import { hookStatus } from "./hooks.js";
-import { verifyAgentWorktree } from "./worktree.js";
-import { isLive } from "./model.js";
-import { BASE_REF, Stet } from "./service.js";
-import { pathExists } from "./paths.js";
 import { PROFILES } from "./lang/index.js";
+import { isLive } from "./model.js";
+import { pathExists } from "./paths.js";
+import { BASE_REF, Stet } from "./service.js";
+import { verifyAgentWorktree } from "./worktree.js";
 
 export interface DoctorCheck {
   name: string;
@@ -48,7 +48,12 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   add(
     compareVersions(gv, MIN_GIT) >= 0
       ? { name: "git", status: "ok", message: gv }
-      : { name: "git", status: "error", message: `${gv} is too old (need ≥ ${MIN_GIT})`, fix: "Update git (Windows: `git update-git-for-windows`; macOS: `brew upgrade git`; Linux: your package manager)." },
+      : {
+          name: "git",
+          status: "error",
+          message: `${gv} is too old (need ≥ ${MIN_GIT})`,
+          fix: "Update git (Windows: `git update-git-for-windows`; macOS: `brew upgrade git`; Linux: your package manager).",
+        },
   );
 
   const probe = new Repo(cwd);
@@ -61,8 +66,13 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
     fromEnv
       ? { name: "git identity", status: "ok", message: `${fromEnv} (from the environment)` }
       : name && email
-      ? { name: "git identity", status: "ok", message: `${name} <${email}>` }
-      : { name: "git identity", status: "warn", message: "user.name / user.email not set; Stet can't commit accepted changes for you", fix: 'git config --global user.name "Your Name" && git config --global user.email you@example.com' },
+        ? { name: "git identity", status: "ok", message: `${name} <${email}>` }
+        : {
+            name: "git identity",
+            status: "warn",
+            message: "user.name / user.email not set; Stet can't commit accepted changes for you",
+            fix: 'git config --global user.name "Your Name" && git config --global user.email you@example.com',
+          },
   );
 
   const autocrlf = await probe.tryRun(["config", "core.autocrlf"]);
@@ -96,18 +106,38 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   add({ name: "stet setup", status: "ok", message: `store at ${stet.store.root}` });
 
   const head = await stet.repo.revParse(`refs/heads/${cfg.mainBranch}`);
-  if (!head) add({ name: "main branch", status: "error", message: `branch '${cfg.mainBranch}' not found`, fix: `Edit mainBranch in ${join(stet.store.root, "config.json")}` });
+  if (!head)
+    add({
+      name: "main branch",
+      status: "error",
+      message: `branch '${cfg.mainBranch}' not found`,
+      fix: `Edit mainBranch in ${join(stet.store.root, "config.json")}`,
+    });
   else {
     const current = await stet.repo.tryRun(["symbolic-ref", "--short", "HEAD"]);
     add(
       current === cfg.mainBranch
         ? { name: "main branch", status: "ok", message: `'${cfg.mainBranch}' is checked out in ${located.mainPath}` }
-        : { name: "main branch", status: "warn", message: `project folder is on '${current ?? "detached HEAD"}', not '${cfg.mainBranch}'; accepting is disabled`, fix: `git switch ${cfg.mainBranch}` },
+        : {
+            name: "main branch",
+            status: "warn",
+            message: `project folder is on '${current ?? "detached HEAD"}', not '${cfg.mainBranch}'; accepting is disabled`,
+            fix: `git switch ${cfg.mainBranch}`,
+          },
     );
   }
 
   const base = await stet.repo.revParse(BASE_REF);
-  add(base ? { name: "review base", status: "ok", message: base.slice(0, 10) } : { name: "review base", status: "warn", message: `${BASE_REF} missing`, fix: "It is recreated automatically by the next Stet command (e.g. `stet review`)." });
+  add(
+    base
+      ? { name: "review base", status: "ok", message: base.slice(0, 10) }
+      : {
+          name: "review base",
+          status: "warn",
+          message: `${BASE_REF} missing`,
+          fix: "It is recreated automatically by the next Stet command (e.g. `stet review`).",
+        },
+  );
 
   if (await pathExists(stet.store.lockPath)) {
     const age = Date.now() - (await stat(stet.store.lockPath)).mtimeMs;
@@ -133,7 +163,12 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
 
   if (!cfg.cli) add({ name: "stet command", status: "warn", message: "not recorded; agent workspaces get no MCP/guard config", fix: "stet init" });
   else if (!(await pathExists(cfg.cli.args[0] ?? cfg.cli.command)))
-    add({ name: "stet command", status: "error", message: `${cfg.cli.args[0] ?? cfg.cli.command} no longer exists (Stet moved?)`, fix: "stet init, then stet agent refresh <name> for each agent" });
+    add({
+      name: "stet command",
+      status: "error",
+      message: `${cfg.cli.args[0] ?? cfg.cli.command} no longer exists (Stet moved?)`,
+      fix: "stet init, then stet agent refresh <name> for each agent",
+    });
   else add({ name: "stet command", status: "ok", message: [cfg.cli.command, ...cfg.cli.args].join(" ") });
 
   const home = homedir();
@@ -147,7 +182,12 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   add(
     claudeHasStet
       ? { name: "Claude Code MCP", status: "ok", message: "stet registered at user scope" }
-      : { name: "Claude Code MCP", status: "info", message: "stet not registered at user scope; each workspace's .mcp.json is used instead (pre-approved, no prompt)", fix: "optional: stet setup claude" },
+      : {
+          name: "Claude Code MCP",
+          status: "info",
+          message: "stet not registered at user scope; each workspace's .mcp.json is used instead (pre-approved, no prompt)",
+          fix: "optional: stet setup claude",
+        },
   );
   const codexToml = await readFile(join(home, ".codex", "config.toml"), "utf8").catch(() => "");
   add(
@@ -156,7 +196,11 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
       : { name: "Codex MCP", status: "info", message: "stet not registered globally (workspaces carry a project .codex/config.toml)", fix: "stet setup codex" },
   );
   if (process.platform === "win32")
-    add({ name: "sandbox", status: "info", message: "Claude Code's Bash sandbox is not available on native Windows; Stet relies on the workspace, guard hook and git hooks" });
+    add({
+      name: "sandbox",
+      status: "info",
+      message: "Claude Code's Bash sandbox is not available on native Windows; Stet relies on the workspace, guard hook and git hooks",
+    });
 
   // Agents ---------------------------------------------------------------------
   const worktrees = await stet.repo.worktrees();
@@ -213,7 +257,8 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
       fix: "stet commit  (or share your edits again: stet share)",
     });
   const orphans = worktrees.filter((w) => w.branch?.startsWith(cfg.agentBranchPrefix) && !agents.some((a) => a.branch === w.branch));
-  for (const o of orphans) add({ name: "worktree", status: "info", message: `${o.path} (${o.branch}) is not registered yet; it is adopted when used as an agent workspace` });
+  for (const o of orphans)
+    add({ name: "worktree", status: "info", message: `${o.path} (${o.branch}) is not registered yet; it is adopted when used as an agent workspace` });
 
   // Store consistency -----------------------------------------------------------
   const groups = await stet.store.groups();
@@ -221,7 +266,12 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   const dangling = groups.filter((g) => g.items.some((i) => !ids.has(i)));
   await Promise.all([stet.store.agents(), stet.store.changesets()]); // so damaged files of every kind are noticed
   if (stet.store.unreadable.size)
-    add({ name: "store", status: "error", message: `damaged record files (skipped): ${[...stet.store.unreadable].join(", ")}`, fix: "restore them from a backup or delete them" });
+    add({
+      name: "store",
+      status: "error",
+      message: `damaged record files (skipped): ${[...stet.store.unreadable].join(", ")}`,
+      fix: "restore them from a backup or delete them",
+    });
   if (dangling.length) add({ name: "store", status: "warn", message: `groups referencing missing items: ${dangling.map((g) => g.id).join(", ")}` });
   else add({ name: "store", status: "ok", message: `${items.length} items, ${groups.length} groups` });
 

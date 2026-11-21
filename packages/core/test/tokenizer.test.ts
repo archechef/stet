@@ -14,7 +14,17 @@ describe("tokenize", () => {
 
   it("recognizes math delimiters, comments and paragraph breaks", () => {
     expect(types("$x$ \\[y\\] % note\n\nNext")).toEqual([
-      "math:$", "word:x", "math:$", "ws: ", "math:\\[", "word:y", "math:\\]", "ws: ", "comment:% note", "parbreak:\n\n", "word:Next",
+      "math:$",
+      "word:x",
+      "math:$",
+      "ws: ",
+      "math:\\[",
+      "word:y",
+      "math:\\]",
+      "ws: ",
+      "comment:% note",
+      "parbreak:\n\n",
+      "word:Next",
     ]);
   });
 

@@ -1,12 +1,30 @@
 /** Hovers, the More… menu and diffs. */
-import { describe, expect, it } from "vitest";
+
 import type { Item } from "@stet/core";
+import { describe, expect, it } from "vitest";
 import { actionsTitle, diffBlock, draftMarkdown } from "../src/model.js";
 
 const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id, agent: "a", changeset: "C1", file: "main.tex", kind: "modify", baseCommit: "b", range: { start: 0, end: 1 },
-  oldText: "old", newText: "new", context: { before: "", after: "" }, fingerprint: "", note: null, groups: ["G1"],
-  status: "pending", resolution: null, supersedes: null, conflictsWith: [], history: [], thread: [], ...extra,
+  id,
+  agent: "a",
+  changeset: "C1",
+  file: "main.tex",
+  kind: "modify",
+  baseCommit: "b",
+  range: { start: 0, end: 1 },
+  oldText: "old",
+  newText: "new",
+  context: { before: "", after: "" },
+  fingerprint: "",
+  note: null,
+  groups: ["G1"],
+  status: "pending",
+  resolution: null,
+  supersedes: null,
+  conflictsWith: [],
+  history: [],
+  thread: [],
+  ...extra,
 });
 
 describe("hovers with your wording (test report v0.16, B12)", () => {

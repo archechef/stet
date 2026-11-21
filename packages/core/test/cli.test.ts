@@ -2,14 +2,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CLI_DIST, edit, git, PAPER, read, setup, write, LABELLED } from "./helpers.js";
+import { CLI_DIST, edit, git, LABELLED, PAPER, read, setup, write } from "./helpers.js";
 
 /** Run `stet` in `cwd`: exit code, output and errors (no colours: not a terminal). */
 function stet(cwd: string, ...args: string[]) {
   const r = spawnSync(process.execPath, [CLI_DIST, ...args], { cwd, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
-
 
 describe.skipIf(!existsSync(CLI_DIST))("the command line", () => {
   it("says what is wrong with the command line, without a stack trace, and has --version (test report v0.14, B1)", async () => {
@@ -28,9 +27,13 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line", () => {
     const { repo, stet: s } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await s.newAgent("a");
     // "It scales …" leaves paragraph two to start paragraph three; and paragraph one is split.
-    write(wt, "main.tex", read(wt, "main.tex")
-      .replace("practice. It scales to large documents.\n\nAs shown", "practice.\n\nIt scales to large documents. As shown")
-      .replace("changes. The changes", "changes.\n\nThe changes"));
+    write(
+      wt,
+      "main.tex",
+      read(wt, "main.tex")
+        .replace("practice. It scales to large documents.\n\nAs shown", "practice.\n\nIt scales to large documents. As shown")
+        .replace("changes. The changes", "changes.\n\nThe changes"),
+    );
     await s.submit("a", { title: "t" });
     const out = stet(repo, "review").out;
     expect(out).toMatch(/paragraph split: "␣" → "¶"/);
@@ -178,7 +181,9 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line", () => {
     const items = (await s.submit("a", { title: "t" })).items;
     expect(stet(repo, "review").out).toMatch(/Next: stet show <id>/);
     await s.accept([items[0]!.id]);
-    expect(stet(repo, "review").out).toMatch(new RegExp(`1 accepted change not committed yet \\(${items[0]!.id.replace(".", "\\.")}\\): \`stet commit\` finishes the review`));
+    expect(stet(repo, "review").out).toMatch(
+      new RegExp(`1 accepted change not committed yet \\(${items[0]!.id.replace(".", "\\.")}\\): \`stet commit\` finishes the review`),
+    );
   });
 
   it("review: marks changes no longer found in your file, with what to do", async () => {
@@ -187,7 +192,9 @@ describe.skipIf(!existsSync(CLI_DIST))("the command line", () => {
     edit(wt, "main.tex", "the problem of reviewing changes", "the task of reviewing changes");
     const [it] = (await s.submit("a", { title: "t" })).items;
     edit(repo, "main.tex", "In this work we study the problem of reviewing changes.", "Here we look at something else.");
-    expect(stet(repo, "review").out).toMatch(new RegExp(`Not found in your file any more \\(you edited there\\): ${it!.id.replace(".", "\\.")}\\. Accept with your own text`));
+    expect(stet(repo, "review").out).toMatch(
+      new RegExp(`Not found in your file any more \\(you edited there\\): ${it!.id.replace(".", "\\.")}\\. Accept with your own text`),
+    );
   });
 
   it("accepts and rejects a whole round by its id", async () => {

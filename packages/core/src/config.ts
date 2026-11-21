@@ -1,7 +1,7 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
+import { DOCUMENT_LANGUAGES, documentProfile, type FilePatterns, PROFILES } from "./lang/index.js";
 import { DEFAULT_PREVIEW, type PreviewConfig } from "./preview.js";
-import { DOCUMENT_LANGUAGES, documentProfile, PROFILES, type FilePatterns } from "./lang/index.js";
 
 export { matchesAny } from "./lang/index.js";
 
@@ -77,7 +77,25 @@ export function defaultConfig(mainBranch: string): StetConfig {
       mergeGap: 2,
       rewriteRatio: 0.5,
       ignoreReflow: true,
-      abbreviations: ["e.g.", "i.e.", "et al.", "Fig.", "Figs.", "Eq.", "Eqs.", "Sec.", "cf.", "vs.", "resp.", "Thm.", "Def.", "Prop.", "Lem.", "Ref.", "Refs."],
+      abbreviations: [
+        "e.g.",
+        "i.e.",
+        "et al.",
+        "Fig.",
+        "Figs.",
+        "Eq.",
+        "Eqs.",
+        "Sec.",
+        "cf.",
+        "vs.",
+        "resp.",
+        "Thm.",
+        "Def.",
+        "Prop.",
+        "Lem.",
+        "Ref.",
+        "Refs.",
+      ],
     },
     grouping: {
       autoRepeatMin: 3,
@@ -134,7 +152,8 @@ export function validateConfig(cfg: StetConfig): StetConfig {
     throw new StetError(`Invalid Stet setting in .git/stet/config.json: ${what}.`);
   };
   if (!REF_NAME.test(cfg.mainBranch)) bad(`mainBranch '${cfg.mainBranch}'`);
-  if (!REF_NAME.test(cfg.agentBranchPrefix) || !cfg.agentBranchPrefix.endsWith("/")) bad(`agentBranchPrefix '${cfg.agentBranchPrefix}' (use a plain name ending in '/', e.g. 'stet/')`);
+  if (!REF_NAME.test(cfg.agentBranchPrefix) || !cfg.agentBranchPrefix.endsWith("/"))
+    bad(`agentBranchPrefix '${cfg.agentBranchPrefix}' (use a plain name ending in '/', e.g. 'stet/')`);
   if (typeof cfg.worktreeRoot !== "string" || !cfg.worktreeRoot) bad("worktreeRoot");
   if (!["on-finish", "when-clean", "never"].includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}'`);
   if (!SHARE_MODES.includes(cfg.shareEdits)) bad(`shareEdits '${cfg.shareEdits}' (use ${SHARE_MODES.join(", ")})`);
@@ -144,7 +163,10 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (typeof pv?.enabled !== "boolean") bad("preview.enabled (true or false)");
   // The root file becomes a command-line argument of the typesetter: a plain relative path of its own source files only.
   const ts = documentProfile(cfg).typesetter;
-  if (pv.rootFile !== null && (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+$/.test(pv.rootFile) || !ts?.source.test(pv.rootFile) || pv.rootFile.startsWith("/")))
+  if (
+    pv.rootFile !== null &&
+    (typeof pv.rootFile !== "string" || !/^(?!-)(?!.*\.\.)[\w./ -]+$/.test(pv.rootFile) || !ts?.source.test(pv.rootFile) || pv.rootFile.startsWith("/"))
+  )
     bad(`preview.rootFile '${pv.rootFile}' (one of the document's ${ts?.sourceName ?? "source files"} relative to the project, or null)`);
   if (!["auto", "pdflatex", "xelatex", "lualatex"].includes(pv.engine)) bad(`preview.engine '${pv.engine}' (auto, pdflatex, xelatex or lualatex)`);
   if (!["auto", "container", "process"].includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (auto, container or process)`);
@@ -156,4 +178,3 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (typeof pv.timeout !== "number" || !(pv.timeout >= 5 && pv.timeout <= 3600)) bad("preview.timeout (seconds, 5 to 3600)");
   return cfg;
 }
-

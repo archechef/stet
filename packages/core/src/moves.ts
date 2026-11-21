@@ -4,9 +4,9 @@
  * changed words still count, and are shown; anything more stays a deletion and an insertion.
  */
 import { diffArrays } from "diff";
-import { isLive, moveFrom, moveTo, movesOut, type Item, type MoveInfo } from "./model.js";
-import type { Edit } from "./split.js";
 import type { SyntaxRules } from "./lang/profile.js";
+import { type Item, isLive, type MoveInfo, moveFrom, movesOut, moveTo } from "./model.js";
+import type { Edit } from "./split.js";
 import { normalizeWs, sharedWords, wordSimilarity } from "./text.js";
 
 export interface MoveSettings {
@@ -84,7 +84,11 @@ export interface MoveChange {
 }
 
 /** The paragraphs of a passage (split at blank lines), as word lists. */
-const blocksOf = (s: string): string[][] => s.split(/\n[ \t]*\n/).map(moveWords).filter((w) => w.length);
+const blocksOf = (s: string): string[][] =>
+  s
+    .split(/\n[ \t]*\n/)
+    .map(moveWords)
+    .filter((w) => w.length);
 
 /**
  * Do `a` and `b` hold the same paragraphs, possibly in another order? Pairs each block of `b`
@@ -132,7 +136,10 @@ export function moveChanges(fromText: string, toText: string): MoveChange[] {
     out.push({ start: at, end: now.length ? now[now.length - 1]!.end : at, was: pending.was.join(" "), now: now.map((w) => w.text).join(" ") });
     pending = null;
   };
-  for (const ch of diffArrays(moveWords(fromText), words.map((w) => w.text))) {
+  for (const ch of diffArrays(
+    moveWords(fromText),
+    words.map((w) => w.text),
+  )) {
     const count = ch.count ?? ch.value.length;
     if (ch.removed) (pending ??= { was: [], now: [] }).was.push(...ch.value);
     else if (ch.added) {
@@ -157,7 +164,10 @@ function wholeBlock(it: Item, text: string, r: MoveRules): string | null {
   if (env) return r.describeBlock?.(env) ?? `${env} environment`;
   const before = it.context.before + /^\s*/.exec(text)![0];
   const after = /\s*$/.exec(text)![0] + it.context.after;
-  const prevLine = before.replace(/[ \t]*$/, "").split("\n").slice(-2, -1)[0];
+  const prevLine = before
+    .replace(/[ \t]*$/, "")
+    .split("\n")
+    .slice(-2, -1)[0];
   const starts = /(^|\n[ \t]*\n)[ \t]*$/.test(before) || (/\n[ \t]*$/.test(before) && prevLine !== undefined && r.structureLine.test(prevLine));
   const nextLine = after.replace(/^[ \t]*/, "").split("\n")[1];
   const ends = /^[ \t]*(\n[ \t]*\n|\n?[ \t]*$)/.test(after) || (/^[ \t]*\n/.test(after) && nextLine !== undefined && r.structureLine.test(nextLine));
@@ -232,7 +242,12 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       const iw = moveWords(i.newText);
       if (dw.length < s.minWords && normalizeWs(d.oldText) !== normalizeWs(i.newText)) continue;
       if (dw.length < s.minWords) {
-        cands.push({ from: [d], to: [i], changed: 0, title: `Move “${short(d.oldText)}” (${R(d).isEnvironmentBound(d.oldText) ? "environment line" : "heading"}, unchanged)` });
+        cands.push({
+          from: [d],
+          to: [i],
+          changed: 0,
+          title: `Move “${short(d.oldText)}” (${R(d).isEnvironmentBound(d.oldText) ? "environment line" : "heading"}, unchanged)`,
+        });
         continue;
       }
       if (Math.abs(dw.length - iw.length) > allowed) continue;
@@ -289,7 +304,10 @@ export function detectMoves(items: Item[], s: MoveSettings, abbreviations: strin
       const pieces: typeof found = [];
       for (const f of found) if (!pieces.length || f.at[0] > pieces[pieces.length - 1]!.at[1]) pieces.push(f);
       if (pieces.length < 2) continue;
-      const changed = changedWords(pieces.flatMap((p) => p.words), bw);
+      const changed = changedWords(
+        pieces.flatMap((p) => p.words),
+        bw,
+      );
       if (changed > allowed) continue;
       const n = sentences(bw, abbr, R(big));
       if (n < 1 && !pieces.every((p) => wholeBlock(p.item, smallText(p.item), R(p.item)))) continue;
@@ -337,10 +355,19 @@ function mergeNeighbours(moves: MovePair[], abbr: Set<string>, R: (it: Item) => 
         from.sort((x, y) => before(landing(x), landing(y)) || before(x, y));
         const names = from.map((d) => `“${short(d.oldText)}”`).join(", ");
         const changed = m1.changed + m2.changed;
-        const n = sentences(from.flatMap((d) => moveWords(d.oldText)), abbr, R(from[0]!));
+        const n = sentences(
+          from.flatMap((d) => moveWords(d.oldText)),
+          abbr,
+          R(from[0]!),
+        );
         const reordered = from.some((d, k) => k > 0 && before(from[k - 1]!, d) > 0);
         list.splice(b, 1);
-        list[a] = { from, to, changed, title: `Move ${from.length} passages ${names} (${reordered ? "reordered, " : ""}${n >= 2 ? `${n} sentences` : "paragraphs"}, ${howChanged(changed)})` };
+        list[a] = {
+          from,
+          to,
+          changed,
+          title: `Move ${from.length} passages ${names} (${reordered ? "reordered, " : ""}${n >= 2 ? `${n} sentences` : "paragraphs"}, ${howChanged(changed)})`,
+        };
         merged = true;
       }
     }
@@ -360,7 +387,12 @@ const compareIds = (a: string, b: string) => {
  * of the same agent, a sentence or more of at least `minWords` words each, at least REWRITTEN_MIN
  * alike. Accepting only one of them would lose or duplicate the passage, so they are linked.
  */
-export function detectRewritten(items: Item[], s: MoveSettings, abbreviations: string[], rulesOf: RulesOf = () => undefined): { from: Item; to: Item; title: string }[] {
+export function detectRewritten(
+  items: Item[],
+  s: MoveSettings,
+  abbreviations: string[],
+  rulesOf: RulesOf = () => undefined,
+): { from: Item; to: Item; title: string }[] {
   if (!s.enabled) return [];
   const abbr = new Set(abbreviations);
   const R = (it: Item) => rulesOf(it) ?? PROSE;

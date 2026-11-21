@@ -1,11 +1,11 @@
 import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { checkToolUse } from "../src/guard.js";
-import { findInbox, followInbox, InboxWriter, INBOX_FILE, INBOX_TIMING, parseInboxLine } from "../src/inbox.js";
-import { notifyMode, NOTIFY_TRIGGERS, triggerOf } from "../src/model.js";
-import { PassThrough } from "node:stream";
-import { serveStdio, StetMcpServer } from "../src/mcp.js";
+import { findInbox, followInbox, INBOX_FILE, INBOX_TIMING, InboxWriter, parseInboxLine } from "../src/inbox.js";
+import { StetMcpServer, serveStdio } from "../src/mcp.js";
+import { NOTIFY_TRIGGERS, notifyMode, triggerOf } from "../src/model.js";
 import { edit, git, PAPER, read, setup, write } from "./helpers.js";
 
 const FAKE_CLI = { command: process.execPath, args: ["/opt/stet/cli.js"] };
@@ -296,9 +296,7 @@ describe("MCP tool results", () => {
     await stet.reject([r.items[0]!.id]);
     await stet.addNote("a", { file: "main.tex", fromLine: 6 }, "Tone this down.");
     const loud = await server.callTool("stet_list", {});
-    expect(loud.content.at(-1)!.text).toBe(
-      "Stet: 1 unread feedback event(s) (call stet_get_feedback); 1 note(s) from the reviewer waiting (call stet_sync).",
-    );
+    expect(loud.content.at(-1)!.text).toBe("Stet: 1 unread feedback event(s) (call stet_get_feedback); 1 note(s) from the reviewer waiting (call stet_sync).");
     // The tools that report this anyway don't repeat it.
     expect((await server.callTool("stet_status", {})).content).toHaveLength(1);
   });

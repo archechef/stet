@@ -36,7 +36,14 @@ async function submit(before: Files, after: Files, groups?: any[]): Promise<Run>
   const items = [...r.items].sort((x, y) => x.file.localeCompare(y.file) || x.range.start - y.range.start);
   if (process.env.DUMP) {
     const sh = (t: string) => JSON.stringify(t.length > 60 ? t.slice(0, 30) + "…" + t.slice(-25) : t);
-    console.log(["", ...items.map((i) => `${i.id} ${i.file}@${i.range.start}: ${sh(i.oldText)} → ${sh(i.newText)}${i.move ? " [move]" : ""}`), ...groupsOut.map((g) => `${g.kind} [${g.items.join(",")}] ${g.title}`), ...r.warnings.map((w) => "! " + w.slice(0, 120))].join("\n"));
+    console.log(
+      [
+        "",
+        ...items.map((i) => `${i.id} ${i.file}@${i.range.start}: ${sh(i.oldText)} → ${sh(i.newText)}${i.move ? " [move]" : ""}`),
+        ...groupsOut.map((g) => `${g.kind} [${g.items.join(",")}] ${g.title}`),
+        ...r.warnings.map((w) => "! " + w.slice(0, 120)),
+      ].join("\n"),
+    );
   }
   return { items, groups: groupsOut, moves: r.moves, warnings: r.warnings, stet, repo };
 }
@@ -47,7 +54,10 @@ const isDel = (i: Item) => !!n(i.oldText) && !n(i.newText);
 const has = (s: string, part: string) => n(s).includes(n(part));
 const find = (r: Run, pred: (i: Item) => boolean, what: string): Item => {
   const hits = r.items.filter(pred);
-  if (hits.length !== 1) throw new Error(`${what}: ${hits.length} items match: ${r.items.map((i) => `${i.id} ${JSON.stringify(n(i.oldText).slice(0, 40))} → ${JSON.stringify(n(i.newText).slice(0, 40))}`).join(" | ")}`);
+  if (hits.length !== 1)
+    throw new Error(
+      `${what}: ${hits.length} items match: ${r.items.map((i) => `${i.id} ${JSON.stringify(n(i.oldText).slice(0, 40))} → ${JSON.stringify(n(i.newText).slice(0, 40))}`).join(" | ")}`,
+    );
   return hits[0]!;
 };
 const linkedOf = (r: Run, id: string) => r.groups.filter((g) => g.kind === "linked" && g.items.includes(id));
@@ -63,7 +73,11 @@ function units(r: Run): string[][] {
 }
 
 /** Paragraphs of a LaTeX text, whitespace-normalized. */
-const paragraphs = (t: string) => t.split(/\n[ \t]*\n/).map(n).filter(Boolean);
+const paragraphs = (t: string) =>
+  t
+    .split(/\n[ \t]*\n/)
+    .map(n)
+    .filter(Boolean);
 const macrosDefined = (t: string) => new Set([...t.matchAll(/\\newcommand\{?\\([A-Za-z]+)/g)].map((m) => m[1]!));
 
 /** What must hold for any document a review can produce from `before` and `after`. */
@@ -101,10 +115,16 @@ function wellFormed(result: Files, before: Files, after: Files, what: string) {
 async function checkReviews(before: Files, after: Files, groups?: any[]) {
   const r = await submit(before, after, groups);
   const readAll = (repo: string) => Object.fromEntries(Object.keys({ ...before, ...after }).map((f) => [f, read(repo, f)]));
-  await r.stet.accept(r.items.map((i) => i.id), { overrideLinked: true });
+  await r.stet.accept(
+    r.items.map((i) => i.id),
+    { overrideLinked: true },
+  );
   expect(readAll(r.repo)).toEqual({ ...before, ...after });
   const check = async (u: string[]) => {
-    const shown = u.map((id) => r.items.find((i) => i.id === id)!).map((i) => `${i.id} ${JSON.stringify(n(i.oldText).slice(0, 30))}→${JSON.stringify(n(i.newText).slice(0, 30))}`).join(", ");
+    const shown = u
+      .map((id) => r.items.find((i) => i.id === id)!)
+      .map((i) => `${i.id} ${JSON.stringify(n(i.oldText).slice(0, 30))}→${JSON.stringify(n(i.newText).slice(0, 30))}`)
+      .join(", ");
     const [fresh, other] = await Promise.all([submit(before, after, groups), submit(before, after, groups)]);
     // Ids are the same in every copy: the same submission splits the same way.
     await fresh.stet.accept(u);
@@ -313,7 +333,8 @@ describe("restructuring: moves of every kind next to edits", () => {
 // Scenario 3: moving material into an appendix (several files)
 
 describe("moving material into an appendix", () => {
-  const proof = "\\begin{proof}\nWe argue by contradiction and assume that the bound fails for some input of length $n$.\n\nThen the run visits more than $\\log n$ cells, which contradicts the choice of the input and ends the proof.\n\\end{proof}";
+  const proof =
+    "\\begin{proof}\nWe argue by contradiction and assume that the bound fails for some input of length $n$.\n\nThen the run visits more than $\\log n$ cells, which contradicts the choice of the input and ends the proof.\n\\end{proof}";
   const before = {
     "main.tex": `\\documentclass{article}\n\\begin{document}\n\\section{Results}\\label{sec:results}\n\\begin{theorem}\\label{thm:main}\nEvery run uses at most $\\log n$ cells.\n\\end{theorem}\n${proof}\n\nTheorem~\\ref{thm:main} is the main result of this paper, and the rest of it explains its consequences.\n\\input{appendix}\n\\end{document}\n`,
     "appendix.tex": "\\section{Appendix}\\label{sec:app}\nThis appendix collects the proofs that are too long for the main text of the paper.\n",

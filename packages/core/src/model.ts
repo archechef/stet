@@ -136,14 +136,7 @@ export interface Changeset {
 
 export type ItemKind = "modify" | "add-file" | "delete-file" | "rename-file" | "binary";
 
-export type ItemStatus =
-  | "pending"
-  | "needs_revision"
-  | "accepted"
-  | "rejected"
-  | "withdrawn"
-  | "superseded"
-  | "stale";
+export type ItemStatus = "pending" | "needs_revision" | "accepted" | "rejected" | "withdrawn" | "superseded" | "stale";
 
 export const LIVE_STATUSES: readonly ItemStatus[] = ["pending", "needs_revision"];
 export const isLive = (s: ItemStatus) => LIVE_STATUSES.includes(s);
@@ -231,8 +224,7 @@ export const moveTo = (m: MoveInfo): string[] => ids(m.to);
 /** Does the item remove text for its move (rather than insert it)? */
 export const movesOut = (it: Pick<Item, "id" | "move">): boolean => !!it.move && moveFrom(it.move).includes(it.id);
 /** The other items of an item's move (empty if it is none). */
-export const moveOthers = (it: Pick<Item, "id" | "move">): string[] =>
-  it.move ? [...moveFrom(it.move), ...moveTo(it.move)].filter((i) => i !== it.id) : [];
+export const moveOthers = (it: Pick<Item, "id" | "move">): string[] => (it.move ? [...moveFrom(it.move), ...moveTo(it.move)].filter((i) => i !== it.id) : []);
 
 /**
  * A reviewer's note to one agent about a passage of the document (spec §7.8), e.g. "shorten this

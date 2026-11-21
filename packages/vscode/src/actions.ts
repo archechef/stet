@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { hasPreview, movesOut, oneLine, profileByName, type Item } from "@stet/core";
+import { hasPreview, type Item, movesOut, oneLine, profileByName } from "@stet/core";
 import { isLive, type Ref, type TreeModel } from "./model.js";
 
 export interface ChangeAction {
@@ -43,7 +43,12 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
   const own = model.withMove(item);
   const unit = [...own, ...model.linkedRest(own).map((i) => i.id)];
   const g = model.linkedGroup(item);
-  const others = g ? model.members(g).filter((m) => isLive(m) && !unit.includes(m.id)).map((m) => m.id) : [];
+  const others = g
+    ? model
+        .members(g)
+        .filter((m) => isLive(m) && !unit.includes(m.id))
+        .map((m) => m.id)
+    : [];
   if (unit.length === own.length && !others.length) return null;
   const part = model.partOf(item);
   const n = (k: number) => `${k} change${k === 1 ? "" : "s"}`;
@@ -52,24 +57,38 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
   // "Accept all of G1", "Accept only 1.10 (breaks G1)".
   if (unit.length > own.length) {
     choices.push({
-      label: part ? `${partPhrase(part)} (${n(unit.length)})` : g && !others.length ? `Accept all of ${g.id} (${n(unit.length)})` : `Accept the whole move (${n(unit.length)})`,
+      label: part
+        ? `${partPhrase(part)} (${n(unit.length)})`
+        : g && !others.length
+          ? `Accept all of ${g.id} (${n(unit.length)})`
+          : `Accept the whole move (${n(unit.length)})`,
       detail: `${unit.join(", ")} go together.${others.length ? ` The other parts of ${g!.id} stay pending.` : ""}`,
       ids: unit,
       overrideLinked: false,
     });
   }
   if (g && others.length) {
-    choices.push({ label: `Accept all of ${g.id} (${n(unit.length + others.length)})`, detail: `“${oneLine(g.title, 80)}”, every part at once.`, ids: [...unit, ...others], overrideLinked: false });
+    choices.push({
+      label: `Accept all of ${g.id} (${n(unit.length + others.length)})`,
+      detail: `“${oneLine(g.title, 80)}”, every part at once.`,
+      ids: [...unit, ...others],
+      overrideLinked: false,
+    });
   }
   const breaks = unit.length > own.length;
   choices.push({
-    label: breaks ? `Accept only ${own.join(" + ")} (breaks ${g?.id ?? "the move"})` : `Accept only ${own.join(" + ")}${part ? ` (${partPhrase(part).replace(/^Accept /, "")})` : ""}`,
+    label: breaks
+      ? `Accept only ${own.join(" + ")} (breaks ${g?.id ?? "the move"})`
+      : `Accept only ${own.join(" + ")}${part ? ` (${partPhrase(part).replace(/^Accept /, "")})` : ""}`,
     detail: breaks ? onlyDetail(item) : `The other parts of ${g!.id} stay pending: the document is inconsistent until they are accepted too.`,
     ids: own,
     overrideLinked: breaks,
   });
   const linked = [...unit, ...others].filter((id) => !own.includes(id));
-  return { title: `${own.join(" + ")} ${own.length > 1 ? "are" : "is"} linked with ${linked.join(", ")} (${g?.id ?? "a move"} “${oneLine(g?.title ?? "", 80)}”)`, choices };
+  return {
+    title: `${own.join(" + ")} ${own.length > 1 ? "are" : "is"} linked with ${linked.join(", ")} (${g?.id ?? "a move"} “${oneLine(g?.title ?? "", 80)}”)`,
+    choices,
+  };
 }
 
 /** "Accept part 1 of 2 “title”". */
@@ -99,7 +118,13 @@ export function acceptAction(model: TreeModel, mainPath: string, item: Item): Ch
   const part = model.partOf(item);
   const g = model.linkedGroup(item);
   const first = q.choices[0]!;
-  const label = part ? `${partPhrase(part).replace(/ “.*”$/, "")}…` : first.ids.length > 1 && !first.overrideLinked ? (g ? `Accept all of ${g.id}…` : "Accept move…") : "Accept…";
+  const label = part
+    ? `${partPhrase(part).replace(/ “.*”$/, "")}…`
+    : first.ids.length > 1 && !first.overrideLinked
+      ? g
+        ? `Accept all of ${g.id}…`
+        : "Accept move…"
+      : "Accept…";
   return { ...base, label, detail: `${q.title}: asks which to accept.` };
 }
 
@@ -114,36 +139,125 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
     const accept = acceptAction(model, mainPath, item);
     out.push(accept);
     if (acceptQuestion(model, item)?.choices.some((c) => c.overrideLinked)) {
-      out.push({ label: `Accept only ${item.id} (breaks ${model.linkedGroup(item)?.id ?? "the move"})`, icon: "check", command: "stet.acceptOnly", args: r, tier: "decide", detail: onlyDetail(item) });
+      out.push({
+        label: `Accept only ${item.id} (breaks ${model.linkedGroup(item)?.id ?? "the move"})`,
+        icon: "check",
+        command: "stet.acceptOnly",
+        args: r,
+        tier: "decide",
+        detail: onlyDetail(item),
+      });
     }
-    out.push({ label: item.move ? "Reject move…" : "Reject…", icon: "close", key: "r", command: "stet.reject", args: r, tier: "decide", detail: "With an optional reason, which the agent gets." });
-    if (modify && !item.move) out.push({ label: "Edit & accept…", icon: "edit", key: "e", command: "stet.edit", args: r, tier: "decide", detail: "Change the wording, then accept it. The agent sees your version." });
-    out.push({ label: "Revise…", icon: "sync", key: "v", command: "stet.revise", args: r, tier: "decide", detail: "Tell the agent what to change; the change stays open until it resubmits." });
+    out.push({
+      label: item.move ? "Reject move…" : "Reject…",
+      icon: "close",
+      key: "r",
+      command: "stet.reject",
+      args: r,
+      tier: "decide",
+      detail: "With an optional reason, which the agent gets.",
+    });
+    if (modify && !item.move)
+      out.push({
+        label: "Edit & accept…",
+        icon: "edit",
+        key: "e",
+        command: "stet.edit",
+        args: r,
+        tier: "decide",
+        detail: "Change the wording, then accept it. The agent sees your version.",
+      });
+    out.push({
+      label: "Revise…",
+      icon: "sync",
+      key: "v",
+      command: "stet.revise",
+      args: r,
+      tier: "decide",
+      detail: "Tell the agent what to change; the change stays open until it resubmits.",
+    });
     // Can't be found in your file: accepting can't work, so Reject and Revise come first (test report v0.16.0).
     if (opts.lost) {
       const first = (label: string) => out.findIndex((a) => a.label.startsWith(label));
       const pick = [first("Reject"), first("Revise")].map((k) => out[k]!);
       for (const a of pick) out.splice(out.indexOf(a), 1);
       out.unshift(...pick);
-      for (const a of out) if (a.label.startsWith("Accept") || a.label.startsWith("Edit & accept")) a.detail = `Can't work now: the change can't be found in your file. ${a.detail ?? ""}`.trim();
+      for (const a of out)
+        if (a.label.startsWith("Accept") || a.label.startsWith("Edit & accept"))
+          a.detail = `Can't work now: the change can't be found in your file. ${a.detail ?? ""}`.trim();
     }
   }
-  out.push({ label: "Comment…", icon: "comment", key: "c", command: "stet.comment", args: r, tier: "talk", detail: "A message about the change; the agent can reply." });
-  out.push({ label: "Diff", icon: "diff", key: "d", command: "stet.showDiff", args: r, tier: "view", detail: "Your file with and without this change, side by side; edit the proposed side to change its wording." });
+  out.push({
+    label: "Comment…",
+    icon: "comment",
+    key: "c",
+    command: "stet.comment",
+    args: r,
+    tier: "talk",
+    detail: "A message about the change; the agent can reply.",
+  });
+  out.push({
+    label: "Diff",
+    icon: "diff",
+    key: "d",
+    command: "stet.showDiff",
+    args: r,
+    tier: "view",
+    detail: "Your file with and without this change, side by side; edit the proposed side to change its wording.",
+  });
   if (modify && hasPreview(item.file) && opts.previews !== false) {
-    out.push({ label: "PDF preview", icon: "file-pdf", key: "p", command: "stet.preview", args: r, tier: "view", detail: "The compiled page with the change, after and before." });
+    out.push({
+      label: "PDF preview",
+      icon: "file-pdf",
+      key: "p",
+      command: "stet.preview",
+      args: r,
+      tier: "view",
+      detail: "The compiled page with the change, after and before.",
+    });
   }
-  if (live && modify) out.push({ label: "Review file", icon: "diff-multiple", key: "f", command: "stet.reviewFile", args: r, tier: "view", detail: "All pending changes of this file in one editable diff." });
+  if (live && modify)
+    out.push({
+      label: "Review file",
+      icon: "diff-multiple",
+      key: "f",
+      command: "stet.reviewFile",
+      args: r,
+      tier: "view",
+      detail: "All pending changes of this file in one editable diff.",
+    });
   if (item.move) {
     const other = model.others(item).find((o) => movesOut(o) !== movesOut(item));
-    if (other) out.push({ label: movesOut(item) ? "Go to destination" : "Go to source", icon: movesOut(item) ? "arrow-down" : "arrow-up", command: "stet.showItem", args: [ref(other.id)], tier: "view" });
+    if (other)
+      out.push({
+        label: movesOut(item) ? "Go to destination" : "Go to source",
+        icon: movesOut(item) ? "arrow-down" : "arrow-up",
+        command: "stet.showItem",
+        args: [ref(other.id)],
+        tier: "view",
+      });
   }
   if (live && item.draft !== undefined) {
-    out.push({ label: "Use agent's wording", icon: "discard", command: "stet.clearDraft", args: r, tier: "other", detail: "Drops the wording you gave it in Review file." });
+    out.push({
+      label: "Use agent's wording",
+      icon: "discard",
+      command: "stet.clearDraft",
+      args: r,
+      tier: "other",
+      detail: "Drops the wording you gave it in Review file.",
+    });
   }
   // Undoable: a rejection, or an accept not committed yet.
   if (item.status === "rejected" || (item.status === "accepted" && !!item.resolution && !item.resolution.committed)) {
-    out.push({ label: "Undo", icon: "discard", key: "u", command: "stet.undo", args: r, tier: "other", detail: item.status === "accepted" ? "Takes the change out of your file; it is pending again." : "The change is pending again." });
+    out.push({
+      label: "Undo",
+      icon: "discard",
+      key: "u",
+      command: "stet.undo",
+      args: r,
+      tier: "other",
+      detail: item.status === "accepted" ? "Takes the change out of your file; it is pending again." : "The change is pending again.",
+    });
   }
   return out;
 }

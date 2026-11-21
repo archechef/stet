@@ -27,12 +27,12 @@ import { constants, existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, sep } from "node:path";
-import { filterOverrides, type Repo } from "./git.js";
 import { diffArrays } from "diff";
+import { filterOverrides, type Repo } from "./git.js";
 import { inlineDiff } from "./inline.js";
-import { writeInside } from "./safefs.js";
-import { fromLf, lineOf, type Eol } from "./text.js";
 import type { LanguageProfile, SourceBox, Typesetter } from "./lang/profile.js";
+import { writeInside } from "./safefs.js";
+import { type Eol, fromLf, lineOf } from "./text.js";
 import type { Token } from "./tokenizer.js";
 
 export interface PreviewConfig {
@@ -107,7 +107,13 @@ export const runProgram = (cmd: string, args: string[], opts: { input?: string; 
     let child: ReturnType<typeof spawn>;
     try {
       // Its own process group (POSIX), so a timeout also stops what it started (latexmk → TeX).
-      child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+      child = spawn(cmd, args, {
+        cwd: opts.cwd,
+        env: opts.env ?? process.env,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+      });
     } catch (e: any) {
       return resolve({ code: -1, stdout: "", stderr: String(e?.message ?? e) });
     }
@@ -188,7 +194,9 @@ export async function containerRuntime(opts: { podman?: string | null }, program
         process.platform === "win32"
           ? `PDF previews compile agents' text in a container, so ${program} can't read your files, and that isn't supported on Windows yet.`
           : `PDF previews compile agents' text in a container, so ${program} can't read your files, and Podman isn't installed.`,
-      fix: (process.platform === "win32" ? "Use Stet in WSL2 for previews. " : "Install Podman (podman.io), then try again (in VS Code: reload the window). ") + trusted,
+      fix:
+        (process.platform === "win32" ? "Use Stet in WSL2 for previews. " : "Install Podman (podman.io), then try again (in VS Code: reload the window). ") +
+        trusted,
     };
   }
   // Podman answers only while its service runs: on macOS, its Linux machine.
@@ -198,7 +206,10 @@ export async function containerRuntime(opts: { podman?: string | null }, program
       status: "unavailable",
       isolation: "container",
       message: `PDF previews run in a Podman container, but Podman doesn't answer${process.platform === "darwin" ? " (its machine isn't running)" : ""}.`,
-      fix: process.platform === "darwin" ? "Start it with `podman machine start` (once: `podman machine init`), then try again (in VS Code: reload the window)." : `Check \`podman info\`: ${oneLineOf(info.stderr)}`,
+      fix:
+        process.platform === "darwin"
+          ? "Start it with `podman machine start` (once: `podman machine init`), then try again (in VS Code: reload the window)."
+          : `Check \`podman info\`: ${oneLineOf(info.stderr)}`,
     };
   }
   return { podman, memoryLimit: /\bmemory\b/.test(info.stdout) };
@@ -234,28 +245,45 @@ export async function buildImage(podman: string, tag: string, containerfile: str
 export function containerArgs(env: PreviewEnv, image: string, work: string, name: string, cmd: string[], extra: Record<string, string> = {}): string[] {
   const vars = { PATH: `${env.bin}:/usr/bin:/bin`, HOME: "/tmp", ...extra };
   return [
-    "run", "--rm", "--name", name,
+    "run",
+    "--rm",
+    "--name",
+    name,
     // Only ever the image the user built: a missing one is an error, never a download.
     "--pull=never",
     "--network=none",
-    "--read-only", "--tmpfs", "/tmp:rw,size=256m",
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,size=256m",
     "--userns=keep-id",
-    "--cap-drop=ALL", "--security-opt=no-new-privileges",
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
     // A hostile document can loop, write or allocate until the timeout: bound what it can use.
     "--pids-limit=256",
-    "--ulimit", "fsize=536870912:536870912",
-    "--ulimit", "nofile=1024:1024",
+    "--ulimit",
+    "fsize=536870912:536870912",
+    "--ulimit",
+    "nofile=1024:1024",
     ...(env.memoryLimit ? ["--memory=2g", "--memory-swap=2g"] : []),
     ...(env.mounts ?? []).flatMap(([host, at]) => ["--volume", `${host}:${at}:ro`]),
-    "--volume", `${work}:/work`,
-    "--workdir", "/work",
+    "--volume",
+    `${work}:/work`,
+    "--workdir",
+    "/work",
     ...Object.entries(vars).flatMap(([k, v]) => ["--env", `${k}=${v}`]),
-    image, ...cmd,
+    image,
+    ...cmd,
   ];
 }
 
 /** Run one command of a build, isolated as configured, in `work` (paths inside it are relative). */
-async function runIsolated(env: PreviewEnv, cfg: PreviewConfig, typesetter: Typesetter, work: string, cmd: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function runIsolated(
+  env: PreviewEnv,
+  cfg: PreviewConfig,
+  typesetter: Typesetter,
+  work: string,
+  cmd: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
   const timeout = cfg.timeout * 1000;
   if (env.isolation === "container") {
     if (/[:,]/.test(work)) return { code: -1, stdout: "", stderr: `Can't mount ${work} into a container: its path contains ':' or ','.` };
@@ -284,7 +312,12 @@ export type SyncBox = SourceBox;
  * The region to show: the full page width (so lines read as on paper) and the lines of the
  * change with some context above and below, on the page of its first box.
  */
-export function cropRegion(boxes: SyncBox[], page: { width: number; height: number }, context = 36, minHeight = 110): { page: number; x: number; y: number; w: number; h: number } | null {
+export function cropRegion(
+  boxes: SyncBox[],
+  page: { width: number; height: number },
+  context = 36,
+  minHeight = 110,
+): { page: number; x: number; y: number; w: number; h: number } | null {
   if (!boxes.length) return null;
   const p = boxes[0]!.page;
   const on = boxes.filter((b) => b.page === p);
@@ -421,11 +454,19 @@ export class PreviewBuilder {
     }
     const baseDir = join(this.root, req.base);
     const itemDir = join(baseDir, "items", req.key);
-    const cached = await readFile(join(itemDir, "result.json"), "utf8").then((t) => JSON.parse(t) as PreviewResult, () => null);
+    const cached = await readFile(join(itemDir, "result.json"), "utf8").then(
+      (t) => JSON.parse(t) as PreviewResult,
+      () => null,
+    );
     // Only images in this change's own folder: a tampered record must not point anywhere else.
     const pagesOk = (r: PreviewResult) =>
       r.status !== "ready" || !r.pages || [r.pages.after.file, r.pages.before?.file].every((f) => f === undefined || insideTree(f, this.root));
-    if (cached && pagesOk(cached) && (cached.status !== "ready" || (insideDir(cached.after?.file, itemDir) && (cached.before === null || insideDir(cached.before?.file, itemDir))))) return cached;
+    if (
+      cached &&
+      pagesOk(cached) &&
+      (cached.status !== "ready" || (insideDir(cached.after?.file, itemDir) && (cached.before === null || insideDir(cached.before?.file, itemDir))))
+    )
+      return cached;
     return this.once(itemDir, async () => {
       const base = await this.once(join(baseDir, "base"), () => this.buildBase(req.base, baseDir));
       const result = await this.buildItem(req, base, baseDir, itemDir);
@@ -449,7 +490,10 @@ export class PreviewBuilder {
   private async buildBase(base: string, baseDir: string): Promise<{ dir: string; root: string | null; pdf: string | null; log: string }> {
     const dir = join(baseDir, "base");
     const done = join(dir, "build.json");
-    const prior = await readFile(done, "utf8").then((t) => JSON.parse(t), () => null);
+    const prior = await readFile(done, "utf8").then(
+      (t) => JSON.parse(t),
+      () => null,
+    );
     if (prior) return { dir, ...prior };
     await mkdir(baseDir, { recursive: true });
     await this.prune(baseDir);
@@ -482,10 +526,17 @@ export class PreviewBuilder {
     itemDir: string,
   ): Promise<PreviewResult> {
     if (!base.root) {
-      return { status: "unavailable", message: "Stet couldn't tell which file is the document to compile.", fix: `Set preview.rootFile in .git/stet/config.json (e.g. "${this.ts.rootHint}").` };
+      return {
+        status: "unavailable",
+        message: "Stet couldn't tell which file is the document to compile.",
+        fix: `Set preview.rootFile in .git/stet/config.json (e.g. "${this.ts.rootHint}").`,
+      };
     }
     if (!base.pdf) return this.failure("base", "Your document doesn't compile without this change either.", base.log);
-    const noSpot: PreviewResult = { status: "no-spot", message: "This change has no place of its own on the page (for example the preamble, a macro or bibliography data)." };
+    const noSpot: PreviewResult = {
+      status: "no-spot",
+      message: "This change has no place of its own on the page (for example the preamble, a macro or bibliography data).",
+    };
     const target = req.changes[req.target]!;
     if (this.ts.noSpot(target.baseText, target.range.start, target.file === base.root)) return noSpot;
 
@@ -506,16 +557,43 @@ export class PreviewBuilder {
     const after = applied.files.get(target.file)!;
     const lines = (text: string, from: number, to: number) => [lineOf(text, from), lineOf(text, Math.max(from, to - 1))];
     // Every change shown in this file, in each version's own text: the one asked for first.
-    const same = req.changes.map((c, k) => ({ c, k })).filter((x) => x.c.file === target.file).sort((a, b) => (a.k === req.target ? -1 : b.k === req.target ? 1 : 0));
+    const same = req.changes
+      .map((c, k) => ({ c, k }))
+      .filter((x) => x.c.file === target.file)
+      .sort((a, b) => (a.k === req.target ? -1 : b.k === req.target ? 1 : 0));
     const whole = same.map(({ c }) => shownWhole(c.baseText.slice(c.range.start, c.range.end), c.newText, this.tokenize));
     const spansAfter = same.map(({ c, k }, n) => around(after, applied.starts[k]!, applied.starts[k]! + c.newText.length, whole[n]));
     const spansBefore = same.map(({ c }, n) => around(c.baseText, c.range.start, c.range.end, whole[n]));
-    const afterAt = await this.region(work, built.pdf, target.file, lines(after, applied.start, applied.start + target.newText.length), join(itemDir, "after.png"), spansAfter);
+    const afterAt = await this.region(
+      work,
+      built.pdf,
+      target.file,
+      lines(after, applied.start, applied.start + target.newText.length),
+      join(itemDir, "after.png"),
+      spansAfter,
+    );
     if (!afterAt) return noSpot;
-    const beforeAt = await this.region(join(base.dir, "src"), join(base.dir, "src", base.pdf), target.file, lines(target.baseText, target.range.start, target.range.end), join(itemDir, "before.png"), spansBefore);
+    const beforeAt = await this.region(
+      join(base.dir, "src"),
+      join(base.dir, "src", base.pdf),
+      target.file,
+      lines(target.baseText, target.range.start, target.range.end),
+      join(itemDir, "before.png"),
+      spansBefore,
+    );
     const [afterImg, beforeImg] = [afterAt.img, beforeAt?.img ?? null];
     // Whole pages with the changed words marked (a word diff of the two versions, where the changes are).
-    const pages = await this.pageView(built.pdf, afterImg.page, base, beforeImg?.page ?? null, req, itemDir, baseDir, afterAt.found, beforeAt?.found ?? []).catch(() => undefined);
+    const pages = await this.pageView(
+      built.pdf,
+      afterImg.page,
+      base,
+      beforeImg?.page ?? null,
+      req,
+      itemDir,
+      baseDir,
+      afterAt.found,
+      beforeAt?.found ?? [],
+    ).catch(() => undefined);
     await rm(work, { recursive: true, force: true }); // keep the images and this version's PDF only
     await utimes(baseDir, new Date(), new Date()).catch(() => undefined);
     // Errors only this version has: the PDF is there, but the reviewer should know.
@@ -562,14 +640,16 @@ export class PreviewBuilder {
     const bWords = bInfo && base.pdf ? await this.pageWords(bWork, base.pdf, Math.max(1, bPage! - 1), Math.min(bInfo.count, bPage! + 1)) : [];
     const { inserted, removed } = wordDiff(bWords, aWords);
     const after: PageSide = {
-      page: aPage, ...aInfo,
+      page: aPage,
+      ...aInfo,
       file: await this.renderPage(itemDir, "after.pdf", aPage, join(itemDir, "pages", `after-${aPage}.png`)),
       marks: markRuns(changeMarks(aWords, inserted, aFound).filter((w) => w.page === aPage)),
     };
     const before: PageSide | null =
       bInfo && base.pdf
         ? {
-            page: bPage!, ...bInfo,
+            page: bPage!,
+            ...bInfo,
             file: await this.renderPage(bWork, base.pdf, bPage!, join(baseDir, "pages", `${bPage}.png`)),
             marks: markRuns(changeMarks(bWords, removed, bFound).filter((w) => w.page === bPage)),
           }
@@ -582,7 +662,8 @@ export class PreviewBuilder {
    * Null for a page that doesn't exist or a preview that isn't built.
    */
   async page(base: string, key: string, version: "after" | "before", n: number): Promise<{ file: string; width: number; height: number } | null> {
-    if (this.env.status !== "ready" || !/^[0-9a-f]{40,64}$/.test(base) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(key) || !Number.isInteger(n) || n < 1) return null;
+    if (this.env.status !== "ready" || !/^[0-9a-f]{40,64}$/.test(base) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(key) || !Number.isInteger(n) || n < 1)
+      return null;
     const baseDir = join(this.root, base);
     const itemDir = join(baseDir, "items", key);
     if (version === "after") {
@@ -590,7 +671,10 @@ export class PreviewBuilder {
       if (!info || n > info.count) return null;
       return { file: await this.renderPage(itemDir, "after.pdf", n, join(itemDir, "pages", `after-${n}.png`)), width: info.width, height: info.height };
     }
-    const build = await readFile(join(baseDir, "base", "build.json"), "utf8").then((t) => JSON.parse(t) as { pdf: string | null }, () => null);
+    const build = await readFile(join(baseDir, "base", "build.json"), "utf8").then(
+      (t) => JSON.parse(t) as { pdf: string | null },
+      () => null,
+    );
     if (!build?.pdf || !/^stet-build\/[^/]+\.pdf$/.test(build.pdf.replace(/\\/g, "/"))) return null;
     const work = join(baseDir, "base", "src");
     const info = await this.pdfInfo(work, build.pdf, n);
@@ -624,7 +708,9 @@ export class PreviewBuilder {
   /** A failed build, with what's missing if a file couldn't be found (a package not in the preview's TeX). */
   private failure(cause: "base" | "change", message: string, log: string): PreviewResult {
     const m = this.missingIn(log);
-    const say = m.missing ? ` ${m.missing.files.join(", ")} ${m.missing.files.length === 1 ? "isn't" : "aren't"} in ${this.ts.installHint(this.env, m.missing.extras)}.` : "";
+    const say = m.missing
+      ? ` ${m.missing.files.join(", ")} ${m.missing.files.length === 1 ? "isn't" : "aren't"} in ${this.ts.installHint(this.env, m.missing.extras)}.`
+      : "";
     return { status: "failed", cause, message: message + say, log: this.ts.excerpt(log), typesetter: this.ts.name, ...m };
   }
 
@@ -635,7 +721,14 @@ export class PreviewBuilder {
 
   /** Locate source lines in a PDF (the typesetter's `locate`) and render that region to `out`. */
   /** `found`: where the changes (`spans`) are on the page, for the page view's marks. */
-  private async region(work: string, pdf: string, file: string, lines: number[], out: string, spans: Span3[] = []): Promise<{ img: PreviewImage; found: Located[] } | null> {
+  private async region(
+    work: string,
+    pdf: string,
+    file: string,
+    lines: number[],
+    out: string,
+    spans: Span3[] = [],
+  ): Promise<{ img: PreviewImage; found: Located[] } | null> {
     const pdfRel = relTo(work, pdf);
     const boxes = await this.ts.locate(this.run, work, pdfRel, file, lines);
     if (!boxes?.length) return null;
@@ -647,7 +740,8 @@ export class PreviewBuilder {
     let located: Located[] = [];
     if (spans.length) {
       const pages = boxes.map((b) => b.page);
-      const first = Math.min(...pages), last = Math.max(...pages) + 1;
+      const first = Math.min(...pages),
+        last = Math.max(...pages) + 1;
       const text = await this.run(work, ["pdftotext", "-bbox-layout", "-f", String(first), "-l", String(last), pdfRel, "-"]);
       const words = text.code === 0 ? parseWords(text.stdout, first) : [];
       const found = spans.map((s) => {
@@ -670,8 +764,25 @@ export class PreviewBuilder {
     const px = (pt: number) => String(Math.round((pt * RESOLUTION) / 72));
     const name = `.region-${randomBytes(4).toString("hex")}`;
     const r = await this.run(work, [
-      "pdftoppm", "-f", String(crop.page), "-l", String(crop.page), "-r", String(RESOLUTION),
-      "-x", px(crop.x), "-y", px(crop.y), "-W", px(crop.w), "-H", px(crop.h), "-png", "-singlefile", pdfRel, name,
+      "pdftoppm",
+      "-f",
+      String(crop.page),
+      "-l",
+      String(crop.page),
+      "-r",
+      String(RESOLUTION),
+      "-x",
+      px(crop.x),
+      "-y",
+      px(crop.y),
+      "-W",
+      px(crop.w),
+      "-H",
+      px(crop.h),
+      "-png",
+      "-singlefile",
+      pdfRel,
+      name,
     ]);
     if (r.code !== 0) return null;
     await rename(join(work, `${name}.png`), out);
@@ -707,7 +818,9 @@ export class PreviewBuilder {
   private async prune(current: string): Promise<void> {
     const dirs = await readdir(this.root, { withFileTypes: true }).catch(() => []);
     const bases = await Promise.all(
-      dirs.filter((d) => d.isDirectory() && join(this.root, d.name) !== current).map(async (d) => ({ p: join(this.root, d.name), t: (await stat(join(this.root, d.name))).mtimeMs })),
+      dirs
+        .filter((d) => d.isDirectory() && join(this.root, d.name) !== current)
+        .map(async (d) => ({ p: join(this.root, d.name), t: (await stat(join(this.root, d.name))).mtimeMs })),
     );
     bases.sort((a, b) => b.t - a.t);
     for (const b of bases.slice(KEEP_BASES - 1)) await rm(b.p, { recursive: true, force: true });
@@ -723,7 +836,10 @@ export function applyChanges(changes: PreviewChange[], target: number): { files:
   let start = -1;
   const starts: number[] = changes.map(() => -1);
   for (const file of new Set(changes.map((c) => c.file))) {
-    const list = changes.map((c, k) => ({ c, k })).filter((x) => x.c.file === file).sort((a, b) => a.c.range.start - b.c.range.start || a.k - b.k);
+    const list = changes
+      .map((c, k) => ({ c, k }))
+      .filter((x) => x.c.file === file)
+      .sort((a, b) => a.c.range.start - b.c.range.start || a.k - b.k);
     for (let i = 1; i < list.length; i++) if (list[i]!.c.range.start < list[i - 1]!.c.range.end) return null;
     let text = list[0]!.c.baseText;
     let shift = 0;
@@ -770,9 +886,16 @@ export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
     if (m[0] === "<page") {
       page++;
       block = null;
-    }
-    else if (m[0] === "<block") blocks.push((block = []));
-    else (block ?? blocks[blocks.push((block = [])) - 1]!).push({ text: decodeXml(m[5]!), page, x0: Number(m[1]), y0: Number(m[2]), x1: Number(m[3]), y1: Number(m[4]) });
+    } else if (m[0] === "<block") blocks.push((block = []));
+    else
+      (block ?? blocks[blocks.push((block = [])) - 1]!).push({
+        text: decodeXml(m[5]!),
+        page,
+        x0: Number(m[1]),
+        y0: Number(m[2]),
+        x1: Number(m[3]),
+        y1: Number(m[4]),
+      });
   }
   const out: PdfWord[] = [];
   for (const words of blocks) {
@@ -788,8 +911,7 @@ export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
         row.words.push(w);
         row.y0 = Math.min(row.y0, w.y0);
         row.y1 = Math.max(row.y1, w.y1);
-      }
-      else rows.push({ mid: mid(w), y0: w.y0, y1: w.y1, words: [w] });
+      } else rows.push({ mid: mid(w), y0: w.y0, y1: w.y1, words: [w] });
     }
     // The rest: into the line its middle is in, else the nearest.
     for (const w of words.filter((w) => h(w) < 0.85 * usual)) {
@@ -814,16 +936,27 @@ export function parseWords(xhtml: string, firstPage: number): PdfWord[] {
   return out;
 }
 
-const decodeXml = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+const decodeXml = (s: string) =>
+  s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
 
 /** A word as it compares: letters and digits only, lower case, ligatures (ﬁ) taken apart. */
 /** A word as it is compared on the page: case, accents' forms and punctuation aside. */
-export const normWord = (w: string) => w.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+export const normWord = (w: string) =>
+  w
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
 const norm = normWord;
 
 /** The longest common subsequence of `a` and `b`, as pairs of indices. */
 function lcs(a: string[], b: string[]): [number, number][] {
-  const n = a.length, m = b.length;
+  const n = a.length,
+    m = b.length;
   const d: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
   for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) d[i]![j] = a[i] === b[j] ? d[i + 1]![j + 1]! + 1 : Math.max(d[i + 1]![j]!, d[i]![j + 1]!);
   const out: [number, number][] = [];
@@ -920,7 +1053,14 @@ export function wordDiff(before: PdfWord[], after: PdfWord[]): { inserted: PdfWo
       if (last && !last.prose) last.pieces.push(...pieces);
       else out.push({ key: "", pieces, prose: false });
     });
-    for (const t of out) t.key = t.prose ? t.pieces[0]!.text : "\u0001" + t.pieces.map((p) => p.text).sort().join("\u0001");
+    for (const t of out)
+      t.key = t.prose
+        ? t.pieces[0]!.text
+        : "\u0001" +
+          t.pieces
+            .map((p) => p.text)
+            .sort()
+            .join("\u0001");
     return out;
   };
   const [bt, at] = [tokens(before), tokens(after)];
@@ -1030,12 +1170,22 @@ interface Span3 {
   /** The editor shows it whole: marked whole on the page too. */
   whole: boolean;
 }
-const around = (text: string, start: number, end: number, whole = false): Span3 => ({ before: text.slice(Math.max(0, start - 300), start), text: text.slice(start, end), after: text.slice(end, end + 300), whole });
+const around = (text: string, start: number, end: number, whole = false): Span3 => ({
+  before: text.slice(Math.max(0, start - 300), start),
+  text: text.slice(start, end),
+  after: text.slice(end, end + 300),
+  whole,
+});
 
 /** Does the editor show this change whole (mostly rewritten), rather than the words that differ? */
 const shownWhole = (oldText: string, newText: string, tokenize?: (text: string) => Token[]): boolean => {
   const d = inlineDiff(oldText, newText, tokenize);
-  return d.removed.length <= 1 && d.inserted.length <= 1 && (d.removed[0]?.[1] ?? 0) - (d.removed[0]?.[0] ?? 0) === oldText.length && (d.inserted[0]?.text ?? "") === newText;
+  return (
+    d.removed.length <= 1 &&
+    d.inserted.length <= 1 &&
+    (d.removed[0]?.[1] ?? 0) - (d.removed[0]?.[0] ?? 0) === oldText.length &&
+    (d.inserted[0]?.text ?? "") === newText
+  );
 };
 
 /** Whether `file` is somewhere below `root` (no `..`). */

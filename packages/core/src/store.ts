@@ -1,12 +1,13 @@
 /** On-disk store in `<git-common-dir>/stet/` (spec §4, §15). */
-import { appendFile, link, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { hostname } from "node:os";
+
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
+import { appendFile, link, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
-import { configDelta, defaultConfig, mergeConfig, validateConfig, type StetConfig } from "./config.js";
-import { compareItemIds, type Agent, type Changeset, type Group, type Item, type Note, type StetEvent, type StoreState } from "./model.js";
+import { configDelta, defaultConfig, mergeConfig, type StetConfig, validateConfig } from "./config.js";
 import { StetError } from "./errors.js";
+import { type Agent, type Changeset, compareItemIds, type Group, type Item, type Note, type StetEvent, type StoreState } from "./model.js";
 import { pathExists } from "./paths.js";
 
 /**
@@ -225,7 +226,8 @@ export class Store {
   async fence(): Promise<void> {
     if (lockContext.getStore() !== this || !this.token) return;
     const cur = await readJson<{ token?: string }>(this.lockPath).catch(() => null);
-    if (cur?.token !== this.token) throw new StetError("Stet lost its lock to another process (this one was unresponsive for too long); nothing more was written. Please try again.");
+    if (cur?.token !== this.token)
+      throw new StetError("Stet lost its lock to another process (this one was unresponsive for too long); nothing more was written. Please try again.");
   }
 
   /** Allocate sequential ids. Call while holding the lock. */

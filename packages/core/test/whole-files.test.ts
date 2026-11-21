@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { lineDiff, textWithBadBytes } from "../src/text.js";
 import { edit, git, PAPER, setup, write } from "./helpers.js";
 
-
 describe("accepted binary replacements (Codex review 2026-09, F6)", () => {
   it("stays uncommitted until its content is committed", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER, "image.bin": "" });

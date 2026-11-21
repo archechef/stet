@@ -30,43 +30,43 @@ for (const runtime of ["auto", "vscode"]) {
 process.exitCode = failedRuns ? 1 : 0;
 
 function runOnce(runtime) {
-const tmp = mkdtempSync(join(tmpdir(), "stet-vscode-it-"));
-try {
-  // The bundled fixture (from `npm run build`) runs without node_modules.
-  const fixtureScript = existsSync(join(extDir, "dist", "it-fixture.mjs")) ? join(extDir, "dist", "it-fixture.mjs") : join(here, "fixture.mjs");
-  const fixture = execFileSync(process.execPath, [fixtureScript, tmp], { cwd: extDir, encoding: "utf8" }).trim().split("\n").pop();
-  const { repo } = JSON.parse(fixture);
-  const out = join(tmp, "results.json");
-  // When started from another Electron app, this variable would make VS Code run as plain Node.
-  const env = { ...process.env, STET_IT_OUT: out, STET_IT_FIXTURE: fixture, STET_IT_RUNTIME: runtime };
-  mkdirSync(join(tmp, "user", "User"), { recursive: true });
-  writeFileSync(join(tmp, "user", "User", "settings.json"), JSON.stringify({ "stet.runtime": runtime }));
-  delete env.ELECTRON_RUN_AS_NODE;
-  const r = spawnSync(
-    vscodeExe(),
-    [
-      `--user-data-dir=${join(tmp, "user")}`,
-      `--extensions-dir=${join(tmp, "ext")}`,
-      "--disable-workspace-trust",
-      "--skip-welcome",
-      "--skip-release-notes",
-      "--new-window",
-      `--extensionDevelopmentPath=${extDir}`,
-      `--extensionTestsPath=${join(here, "suite.cjs")}`,
-      repo,
-    ],
-    { env, encoding: "utf8", timeout: 180_000 },
-  );
-  if (!existsSync(out)) {
-    console.error("VS Code produced no results.", r.error ?? "", r.stdout, r.stderr);
-    return false;
+  const tmp = mkdtempSync(join(tmpdir(), "stet-vscode-it-"));
+  try {
+    // The bundled fixture (from `npm run build`) runs without node_modules.
+    const fixtureScript = existsSync(join(extDir, "dist", "it-fixture.mjs")) ? join(extDir, "dist", "it-fixture.mjs") : join(here, "fixture.mjs");
+    const fixture = execFileSync(process.execPath, [fixtureScript, tmp], { cwd: extDir, encoding: "utf8" }).trim().split("\n").pop();
+    const { repo } = JSON.parse(fixture);
+    const out = join(tmp, "results.json");
+    // When started from another Electron app, this variable would make VS Code run as plain Node.
+    const env = { ...process.env, STET_IT_OUT: out, STET_IT_FIXTURE: fixture, STET_IT_RUNTIME: runtime };
+    mkdirSync(join(tmp, "user", "User"), { recursive: true });
+    writeFileSync(join(tmp, "user", "User", "settings.json"), JSON.stringify({ "stet.runtime": runtime }));
+    delete env.ELECTRON_RUN_AS_NODE;
+    const r = spawnSync(
+      vscodeExe(),
+      [
+        `--user-data-dir=${join(tmp, "user")}`,
+        `--extensions-dir=${join(tmp, "ext")}`,
+        "--disable-workspace-trust",
+        "--skip-welcome",
+        "--skip-release-notes",
+        "--new-window",
+        `--extensionDevelopmentPath=${extDir}`,
+        `--extensionTestsPath=${join(here, "suite.cjs")}`,
+        repo,
+      ],
+      { env, encoding: "utf8", timeout: 180_000 },
+    );
+    if (!existsSync(out)) {
+      console.error("VS Code produced no results.", r.error ?? "", r.stdout, r.stderr);
+      return false;
+    }
+    const results = JSON.parse(readFileSync(out, "utf8"));
+    for (const c of results) console.log(`${c.ok ? "✓" : "✗"} ${c.name}${c.ok ? "" : `\n    ${c.detail}`}`);
+    const failed = results.filter((c) => !c.ok).length;
+    console.log(failed ? `\n${failed} of ${results.length} checks failed` : `\nAll ${results.length} checks passed`);
+    return failed === 0;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 5 });
   }
-  const results = JSON.parse(readFileSync(out, "utf8"));
-  for (const c of results) console.log(`${c.ok ? "✓" : "✗"} ${c.name}${c.ok ? "" : `\n    ${c.detail}`}`);
-  const failed = results.filter((c) => !c.ok).length;
-  console.log(failed ? `\n${failed} of ${results.length} checks failed` : `\nAll ${results.length} checks passed`);
-  return failed === 0;
-} finally {
-  rmSync(tmp, { recursive: true, force: true, maxRetries: 5 });
-}
 }

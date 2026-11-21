@@ -2,17 +2,73 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, validateConfig } from "../src/config.js";
 import { LATEX } from "../src/lang/index.js";
-import { detectEngine, detectRoot, errorsOf, excerpt, LATEX_TYPESETTER, missingFiles, parseSynctex, plainWords, previewExtrasContainerfile } from "../src/lang/latex-preview.js";
-import { applyChanges, changeMarks, containerArgs, cropRegion, DEFAULT_PREVIEW, detectPreviewEnv, findWords, findWordsIn, insideDir, markRuns, parseWords, PreviewBuilder, wordDiff } from "../src/preview.js";
+import {
+  detectEngine,
+  detectRoot,
+  errorsOf,
+  excerpt,
+  LATEX_TYPESETTER,
+  missingFiles,
+  parseSynctex,
+  plainWords,
+  previewExtrasContainerfile,
+} from "../src/lang/latex-preview.js";
+import {
+  applyChanges,
+  changeMarks,
+  containerArgs,
+  cropRegion,
+  DEFAULT_PREVIEW,
+  detectPreviewEnv,
+  findWords,
+  findWordsIn,
+  insideDir,
+  markRuns,
+  PreviewBuilder,
+  parseWords,
+  wordDiff,
+} from "../src/preview.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
 describe("preview: the document", () => {
   it("finds the document to compile", () => {
     const doc = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
-    expect(detectRoot(new Map([["main.tex", doc], ["intro.tex", "Intro."]]), null)).toBe("main.tex");
-    expect(detectRoot(new Map([["paper.tex", doc], ["sections/a.tex", doc]]), null)).toBe("paper.tex");
-    expect(detectRoot(new Map([["a.tex", doc], ["b.tex", doc]]), null)).toBeNull(); // two candidates: ask
-    expect(detectRoot(new Map([["a.tex", doc], ["b.tex", doc]]), "b.tex")).toBe("b.tex");
+    expect(
+      detectRoot(
+        new Map([
+          ["main.tex", doc],
+          ["intro.tex", "Intro."],
+        ]),
+        null,
+      ),
+    ).toBe("main.tex");
+    expect(
+      detectRoot(
+        new Map([
+          ["paper.tex", doc],
+          ["sections/a.tex", doc],
+        ]),
+        null,
+      ),
+    ).toBe("paper.tex");
+    expect(
+      detectRoot(
+        new Map([
+          ["a.tex", doc],
+          ["b.tex", doc],
+        ]),
+        null,
+      ),
+    ).toBeNull(); // two candidates: ask
+    expect(
+      detectRoot(
+        new Map([
+          ["a.tex", doc],
+          ["b.tex", doc],
+        ]),
+        "b.tex",
+      ),
+    ).toBe("b.tex");
     expect(detectRoot(new Map([["a.tex", doc]]), "missing.tex")).toBeNull();
   });
 
@@ -69,7 +125,15 @@ SyncTeX result end
     expect(top.h).toBeGreaterThanOrEqual(110);
     expect(cropRegion([], { width: 1, height: 1 })).toBeNull();
     // Boxes on another page than the first are left out.
-    expect(cropRegion([{ page: 3, h: 0, v: 100, W: 1, H: 7 }, { page: 4, h: 0, v: 700, W: 1, H: 7 }], { width: 612, height: 792 })!.h).toBeLessThan(300);
+    expect(
+      cropRegion(
+        [
+          { page: 3, h: 0, v: 100, W: 1, H: 7 },
+          { page: 4, h: 0, v: 700, W: 1, H: 7 },
+        ],
+        { width: 612, height: 792 },
+      )!.h,
+    ).toBeLessThan(300);
   });
 
   it("picks the error out of a LaTeX log", () => {
@@ -80,10 +144,17 @@ SyncTeX result end
 
 describe("preview: isolation", () => {
   it("runs builds in a container with no network, no privileges and a read-only TeX", () => {
-    const env = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/2026/bin/x86_64-linux", mounts: [["/tl", "/tl"]] as [string, string][] };
+    const env = {
+      status: "ready" as const,
+      isolation: "container" as const,
+      message: "",
+      bin: "/tl/2026/bin/x86_64-linux",
+      mounts: [["/tl", "/tl"]] as [string, string][],
+    };
     const tex = (e: typeof env | { status: "ready"; isolation: "container"; message: string; bin: string }) => LATEX_TYPESETTER.buildEnv(e, "/tmp", true);
     const a = containerArgs(env, "localhost/stet-preview:1", "/cache/abc/base/src", "stet-preview-1", ["latexmk", "main.tex"], tex(env));
-    for (const flag of ["--rm", "--network=none", "--read-only", "--userns=keep-id", "--cap-drop=ALL", "--security-opt=no-new-privileges"]) expect(a).toContain(flag);
+    for (const flag of ["--rm", "--network=none", "--read-only", "--userns=keep-id", "--cap-drop=ALL", "--security-opt=no-new-privileges"])
+      expect(a).toContain(flag);
     // Exactly two mounts: TeX read-only, the build folder.
     const vols = a.flatMap((x, i) => (x === "--volume" ? [a[i + 1]] : []));
     expect(vols).toEqual(["/tl:/tl:ro", "/cache/abc/base/src:/work"]);
@@ -120,7 +191,8 @@ describe("preview: isolation", () => {
   it("accepts only safe settings", () => {
     const cfg = (pv: object) => validateConfig({ ...defaultConfig("main"), preview: { ...DEFAULT_PREVIEW, ...pv } });
     expect(cfg({ rootFile: "paper/main.tex" }).preview.rootFile).toBe("paper/main.tex");
-    for (const rootFile of ["../outside.tex", "/etc/main.tex", "-shell-escape.tex", "main.pdf", "a;b.tex"]) expect(() => cfg({ rootFile })).toThrow(/preview.rootFile/);
+    for (const rootFile of ["../outside.tex", "/etc/main.tex", "-shell-escape.tex", "main.pdf", "a;b.tex"])
+      expect(() => cfg({ rootFile })).toThrow(/preview.rootFile/);
     expect(() => cfg({ engine: "pdflatex -shell-escape" })).toThrow(/preview.engine/);
     expect(() => cfg({ isolation: "none" })).toThrow(/preview.isolation/);
     expect(() => cfg({ image: "x; rm -rf /" })).toThrow(/preview.image/);
@@ -147,7 +219,13 @@ describe("preview: changes without a place on the page", () => {
 describe("preview: several changes at once", () => {
   const base = "\\begin{proof}\nA.\n\\end{proof}\nB.\n";
   const at = (s: string) => base.indexOf(s);
-  const ch = (from: string, to: string, file = "main.tex") => ({ file, baseText: base, eol: "lf" as const, range: { start: at(from), end: at(from) + from.length }, newText: to });
+  const ch = (from: string, to: string, file = "main.tex") => ({
+    file,
+    baseText: base,
+    eol: "lf" as const,
+    range: { start: at(from), end: at(from) + from.length },
+    newText: to,
+  });
 
   it("applies the changes of a file together and finds the shown one in the result", () => {
     const r = applyChanges([ch("A.", "Proof text."), ch("\\begin{proof}\n", ""), ch("\\end{proof}\n", "")], 0)!;
@@ -159,7 +237,11 @@ describe("preview: several changes at once", () => {
   });
 
   it("compares errors without their line numbers", () => {
-    expect(errorsOf("./main.tex:3344: LaTeX Error: \\begin{proof} on input line 3274 ended by \\end{document}.\n! Undefined control sequence.\nl.17 We conclude that the method is \\newword")).toEqual([
+    expect(
+      errorsOf(
+        "./main.tex:3344: LaTeX Error: \\begin{proof} on input line 3274 ended by \\end{document}.\n! Undefined control sequence.\nl.17 We conclude that the method is \\newword",
+      ),
+    ).toEqual([
       "LaTeX Error: \\begin{proof} on input line # ended by \\end{document}.",
       "Undefined control sequence. @ We conclude that the method is \\newword",
     ]);
@@ -170,7 +252,8 @@ describe("preview: several changes at once", () => {
 
 describe("preview: missing packages", () => {
   it("names the files LaTeX couldn't find", () => {
-    const log = "! LaTeX Error: File `dsfont.sty' not found.\nType X to quit or <RETURN> to proceed,\n! I can't find file `bbm.sty'.\n! LaTeX Error: File `dsfont.sty' not found.";
+    const log =
+      "! LaTeX Error: File `dsfont.sty' not found.\nType X to quit or <RETURN> to proceed,\n! I can't find file `bbm.sty'.\n! LaTeX Error: File `dsfont.sty' not found.";
     expect(missingFiles(log)).toEqual(["dsfont.sty", "bbm.sty"]);
     expect(missingFiles("! Undefined control sequence.")).toEqual([]);
   });
@@ -187,7 +270,12 @@ describe("preview: finding a change's words on the page", () => {
   const xhtml = (lines: string[][]) =>
     `<doc><page width="612" height="792"><flow><block>` +
     lines
-      .map((ws, k) => `<line>` + ws.map((w, i) => `<word xMin="${100 + i * 40}" yMin="${100 + k * 12}" xMax="${130 + i * 40}" yMax="${110 + k * 12}">${w}</word>`).join("") + `</line>`)
+      .map(
+        (ws, k) =>
+          `<line>` +
+          ws.map((w, i) => `<word xMin="${100 + i * 40}" yMin="${100 + k * 12}" xMax="${130 + i * 40}" yMax="${110 + k * 12}">${w}</word>`).join("") +
+          `</line>`,
+      )
       .join("") +
     `</block></flow></page></doc>`;
 
@@ -204,22 +292,39 @@ describe("preview: finding a change's words on the page", () => {
   });
 
   it("reads the words in order and joins a word hyphenated at a line end", () => {
-    const w = parseWords(xhtml([["Sentence", "one", "repre-"], ["sentation", "ends."]]), 3);
+    const w = parseWords(
+      xhtml([
+        ["Sentence", "one", "repre-"],
+        ["sentation", "ends."],
+      ]),
+      3,
+    );
     expect(w.map((x) => x.text)).toEqual(["Sentence", "one", "representation", "ends."]);
     expect(w[0]!.page).toBe(3);
   });
 
   it("turns LaTeX into the words it typesets", () => {
-    expect(plainWords("We \\emph{study} the $x^2$ case~\\cite{knuth} of reviewing % a comment\nchanges.")).toEqual(["we", "study", "the", "case", "of", "reviewing", "changes"]);
+    expect(plainWords("We \\emph{study} the $x^2$ case~\\cite{knuth} of reviewing % a comment\nchanges.")).toEqual([
+      "we",
+      "study",
+      "the",
+      "case",
+      "of",
+      "reviewing",
+      "changes",
+    ]);
   });
 
   // The same sentence twice: only the context tells which one changed.
-  const page = parseWords(xhtml([
-    ["Sentence", "12", "says", "something", "about", "reviewing"],
-    ["changes.", "Sentence", "13", "now", "SAYS", "SOMETHING"],
-    ["NEW", "about", "reviewing", "changes.", "Sentence", "14"],
-    ["says", "something", "about", "reviewing", "changes."],
-  ]), 1);
+  const page = parseWords(
+    xhtml([
+      ["Sentence", "12", "says", "something", "about", "reviewing"],
+      ["changes.", "Sentence", "13", "now", "SAYS", "SOMETHING"],
+      ["NEW", "about", "reviewing", "changes.", "Sentence", "14"],
+      ["says", "something", "about", "reviewing", "changes."],
+    ]),
+    1,
+  );
 
   it("finds the changed words by their context, across lines", () => {
     const f = findWords(page, ["changes", "sentence", "13"], ["now", "says", "something", "new"], ["about", "reviewing"], 1)!;
@@ -268,7 +373,10 @@ describe("preview: marking the changed words", () => {
 
   it("reads maths alike however the line is spaced or broken", () => {
     // pdftotext splits "p+i" by the spacing of the line.
-    const spaced = wordDiff([w("so", 0, 0), w("p+i", 20, 0), w("holds", 60, 0)], [w("so", 0, 0), w("p", 20, 0), w("+", 30, 0), w("i", 40, 0), w("holds", 60, 0)]);
+    const spaced = wordDiff(
+      [w("so", 0, 0), w("p+i", 20, 0), w("holds", 60, 0)],
+      [w("so", 0, 0), w("p", 20, 0), w("+", 30, 0), w("i", 40, 0), w("holds", 60, 0)],
+    );
     expect([spaced.inserted, spaced.removed]).toEqual([[], []]);
     // A formula that stays while the words around it change is not a change.
     const moved = wordDiff(
@@ -313,7 +421,14 @@ describe("preview: marking the changed words", () => {
 
 describe("isolation and the image cache (security review 2026-11-19)", () => {
   it("runs previews only in the user's image, with limits, and never downloads one", () => {
-    const env = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][], memoryLimit: true };
+    const env = {
+      status: "ready" as const,
+      isolation: "container" as const,
+      message: "",
+      bin: "/tl/bin",
+      mounts: [["/tl", "/tl"]] as [string, string][],
+      memoryLimit: true,
+    };
     const args = containerArgs(env, "localhost/stet-preview:1", "/w", "n", ["latexmk"]);
     expect(args).toContain("--pull=never");
     expect(args.join(" ")).toMatch(/--ulimit fsize=\d+:\d+/);
@@ -329,7 +444,12 @@ describe("isolation and the image cache (security review 2026-11-19)", () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const ready = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][] };
     const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), DEFAULT_PREVIEW, ready, LATEX);
-    const req = { base: "../../../../tmp", key: "1.1-abc", target: 0, changes: [{ file: "main.tex", baseText: PAPER, eol: "lf" as const, range: { start: 0, end: 1 }, newText: "x" }] };
+    const req = {
+      base: "../../../../tmp",
+      key: "1.1-abc",
+      target: 0,
+      changes: [{ file: "main.tex", baseText: PAPER, eol: "lf" as const, range: { start: 0, end: 1 }, newText: "x" }],
+    };
     expect((await b.preview(req)).status).toBe("unavailable");
     expect((await b.preview({ ...req, base: "a".repeat(40), key: "../x" })).status).toBe("unavailable");
   });

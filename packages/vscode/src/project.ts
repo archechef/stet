@@ -1,9 +1,9 @@
 /** One Stet-enabled repository open in VS Code: service access, snapshot and live updates. */
-import { watch, type FSWatcher } from "node:fs";
+import { type FSWatcher, watch } from "node:fs";
 import { relative, resolve } from "node:path";
-import * as vscode from "vscode";
 import { CHANGED_FILE, foldPath, isSafeRepoPath, type Stet } from "@stet/core";
-import { shownAgentText, type Snapshot } from "./model.js";
+import * as vscode from "vscode";
+import { type Snapshot, shownAgentText } from "./model.js";
 
 export class Project implements vscode.Disposable {
   snapshot: Snapshot = { agents: [], changesets: [], groups: [], items: [], notes: [], syncNeeded: new Set(), uncommitted: [], unshared: false, missing: [] };
@@ -181,4 +181,3 @@ export class Project implements vscode.Disposable {
     this.changed.dispose();
   }
 }
-

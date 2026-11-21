@@ -6,7 +6,9 @@ import { tokenize } from "../src/lang/latex.js";
 function apply(oldText: string, d: ReturnType<typeof inlineDiff>): string {
   let out = "";
   let pos = 0;
-  const cuts = [...d.removed.map(([s, e]) => ({ s, e, ins: "" })), ...d.inserted.map((i) => ({ s: i.at, e: i.at, ins: i.text }))].sort((a, b) => a.e - b.e || a.s - b.s);
+  const cuts = [...d.removed.map(([s, e]) => ({ s, e, ins: "" })), ...d.inserted.map((i) => ({ s: i.at, e: i.at, ins: i.text }))].sort(
+    (a, b) => a.e - b.e || a.s - b.s,
+  );
   for (const c of cuts) {
     out += oldText.slice(pos, c.s) + c.ins;
     pos = Math.max(pos, c.e);

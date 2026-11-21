@@ -3,70 +3,68 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { applyItems, conflicts, locate, overlaps, type FileChange, type FileView, type TextFile } from "./apply.js";
+import { AgentFiles } from "./agentfiles.js";
 import { anchor, anchorNear, captureContext, chainInsertions, type Neighbour, type Span } from "./anchor.js";
-import { validateConfig, type StetConfig } from "./config.js";
+import { applyItems, conflicts, type FileChange, type FileView, locate, overlaps, type TextFile } from "./apply.js";
+import { type StetConfig, validateConfig } from "./config.js";
+import { itemEffect } from "./effects.js";
+import { StetError } from "./errors.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
+import { autoGroups, type GroupDraft, type GroupHint, type HintUnit, joinTitles, type NoteHint, normalizeGroups, parseWhere, unitMatches } from "./grouping.js";
+import { installHooks } from "./hooks.js";
+import { pingInbox } from "./inbox.js";
+import { archivedMessage, STET_MARKER } from "./instructions.js";
+import { DOCUMENT_LANGUAGES, detectLanguage, documentProfile, type LanguageProfile, profileFor } from "./lang/index.js";
 import {
-  autoGroups,
-  joinTitles,
-  normalizeGroups,
-  parseWhere,
-  unitMatches,
-  type GroupDraft,
-  type GroupHint,
-  type HintUnit,
-  type NoteHint,
-} from "./grouping.js";
-import {
-  compareItemIds,
-  FEEDBACK_TYPES,
-  itemId,
-  linkedUnit,
-  numberInRound,
-  isLive,
-  moveFrom,
-  moveOthers,
-  moveTo,
-  NOTIFY_MODES,
-  NOTIFY_TRIGGERS,
-  notifyMode,
-  notifyTriggers,
-  type NotifyTrigger,
-  parsePartId,
-  partId,
-  type NotifyMode,
   type Agent,
   type AgentKind,
   type Changeset,
+  compareItemIds,
+  FEEDBACK_TYPES,
   type Group,
   type GroupKind,
   type GroupPart,
   type Item,
   type ItemStatus,
+  isLive,
+  itemId,
+  linkedUnit,
   type MoveInfo,
+  moveFrom,
+  moveOthers,
+  moveTo,
+  NOTIFY_MODES,
+  NOTIFY_TRIGGERS,
   type Note,
+  type NotifyMode,
+  type NotifyTrigger,
+  notifyMode,
+  notifyTriggers,
+  numberInRound,
+  parsePartId,
+  partId,
   type StetEvent,
 } from "./model.js";
 import { detectMoves, detectRewritten, separateMoved } from "./moves.js";
-import { describeNote, type DeliveredNote } from "./notes.js";
-import { combineParts, imbalance, settleParts, type PartDraft, type ProfileOf } from "./parts.js";
-import { splitText, type Edit } from "./split.js";
-import { detectLanguage, DOCUMENT_LANGUAGES, documentProfile, profileFor, type LanguageProfile } from "./lang/index.js";
-import { Store, writeJsonAtomic } from "./store.js";
-import { inspect, prepare, readInside, replaceFile, UnsafePathError, writeInside, type Target } from "./safefs.js";
-import { detectPreviewEnv, PreviewBuilder, setupPreviewImage, type PreviewChange, type PreviewEnv, type PreviewRequest, type PreviewResult } from "./preview.js";
-import { mapReviewEdits, reviewDocument, type ReviewChange, type ReviewDocument } from "./review.js";
-import { pingInbox } from "./inbox.js";
-import { archivedMessage, STET_MARKER } from "./instructions.js";
-import { installHooks } from "./hooks.js";
-import { itemEffect } from "./effects.js";
-import { changedToolConfigs, isWorkspaceFile, writeWorkspaceFiles, type CliCommand, type WorkspaceResult } from "./workspace.js";
+import { type DeliveredNote, describeNote } from "./notes.js";
+import { combineParts, imbalance, type PartDraft, type ProfileOf, settleParts } from "./parts.js";
 import { isInside, pathExists, samePath } from "./paths.js";
-import { StetError } from "./errors.js";
-import { AgentFiles } from "./agentfiles.js";
-import { verifyAgentWorktree } from "./worktree.js";
+import {
+  detectPreviewEnv,
+  PreviewBuilder,
+  type PreviewChange,
+  type PreviewEnv,
+  type PreviewRequest,
+  type PreviewResult,
+  setupPreviewImage,
+} from "./preview.js";
+import { mapReviewEdits, type ReviewChange, type ReviewDocument, reviewDocument } from "./review.js";
+import { inspect, prepare, readInside, replaceFile, type Target, UnsafePathError, writeInside } from "./safefs.js";
+import { type Edit, splitText } from "./split.js";
+import { Store, writeJsonAtomic } from "./store.js";
 import { detectEol, fromLf, isBinary, isSafeRepoPath, lineOf, lineRange, normalizeWs, oneLine, sha256, textWithBadBytes, toLf } from "./text.js";
+import { type CliCommand, changedToolConfigs, isWorkspaceFile, type WorkspaceResult, writeWorkspaceFiles } from "./workspace.js";
+import { verifyAgentWorktree } from "./worktree.js";
 
 export { StetError };
 
@@ -207,7 +205,9 @@ function unlinkedRefusal(comps: string[][]): string {
   const free = comps.filter((c) => c.length === 1).map((c) => c[0]!);
   return (
     `Not linked: Stet sees no dependency between all of these changes` +
-    (linked.length ? ` (${linked.map((c) => c.join(" + ")).join("; ")} need each other` + (free.length ? `; ${free.join(", ")} don't depend on them)` : ")") : ")") +
+    (linked.length
+      ? ` (${linked.map((c) => c.join(" + ")).join("; ")} need each other` + (free.length ? `; ${free.join(", ")} don't depend on them)` : ")")
+      : ")") +
     `. Group them as "related" and link only the changes that need each other, or pass a "reason" if accepting only some really breaks the document (the reviewer sees it).`
   );
 }
@@ -215,15 +215,15 @@ function unlinkedRefusal(comps: string[][]): string {
 /** Text changes accepted from the same base as `item` in its file, from `all` items (see `anchorNear`). */
 function neighboursIn(all: readonly Item[], item: Item): Neighbour[] {
   return all
-    .filter((i) => i.id !== item.id && i.status === "accepted" && i.resolution && i.kind === "modify" && i.file === item.file && i.baseCommit === item.baseCommit)
+    .filter(
+      (i) => i.id !== item.id && i.status === "accepted" && i.resolution && i.kind === "modify" && i.file === item.file && i.baseCommit === item.baseCommit,
+    )
     .map((i) => ({ range: { ...i.range }, oldText: i.oldText, text: i.resolution!.appliedText }));
 }
 
 /** Why a project in this language has no PDF previews. */
 function noPreviews(doc: LanguageProfile): string {
-  return doc.id === "typst"
-    ? "Stet has no PDF previews for Typst projects yet. Everything else works as usual."
-    : `Stet has no PDF previews for ${doc.name}.`;
+  return doc.id === "typst" ? "Stet has no PDF previews for Typst projects yet. Everything else works as usual." : `Stet has no PDF previews for ${doc.name}.`;
 }
 
 /** Above these, a submit is said to be very large (not refused). */
@@ -281,7 +281,10 @@ export class Stet {
       if (opts.language !== undefined && !DOCUMENT_LANGUAGES.some((p) => p.id === opts.language))
         throw new StetError(`Unknown language '${opts.language}' (${DOCUMENT_LANGUAGES.map((p) => p.id).join(" or ")}).`);
       if (fresh || opts.language) {
-        const paths = fresh && !opts.language ? ((await repo.tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${branch}`])) ?? "").split("\0").filter(Boolean) : [];
+        const paths =
+          fresh && !opts.language
+            ? ((await repo.tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${branch}`])) ?? "").split("\0").filter(Boolean)
+            : [];
         const language = opts.language ?? detectLanguage(paths, cfg.files);
         if (language !== cfg.language) await store.saveConfig((cfg = { ...cfg, language }));
       }
@@ -385,7 +388,8 @@ export class Stet {
         const buf = isSafeRepoPath(p) ? await readInside(this.mainPath, p) : null;
         if (!buf) return null;
         // Changed in words, it would be written back as UTF-8: every other character lost.
-        if (isBinary(buf)) throw new StetError(`${p} is not UTF-8 text (any more), so Stet can't change it without damaging it. Save it as UTF-8, then try again.`);
+        if (isBinary(buf))
+          throw new StetError(`${p} is not UTF-8 text (any more), so Stet can't change it without damaging it. Save it as UTF-8, then try again.`);
         const raw = buf.toString("utf8");
         return { text: toLf(raw), eol: detectEol(raw) };
       },
@@ -412,7 +416,13 @@ export class Stet {
     const all = known ?? (await this.store.items());
     const files = new Map<string, Promise<TextFile | null>>();
     const fileOf = (p: string) => {
-      if (!files.has(p)) files.set(p, this.workingView().read(p).catch(() => null));
+      if (!files.has(p))
+        files.set(
+          p,
+          this.workingView()
+            .read(p)
+            .catch(() => null),
+        );
       return files.get(p)!;
     };
     const out = new Map<string, { line: number; span: Span | null }>();
@@ -818,7 +828,10 @@ export class Stet {
     const env = { GIT_INDEX_FILE: join(dir, "index") };
     try {
       // Starting from a copy of the user's index makes git re-read only files whose stat changed.
-      const copied = await copyFile(join(this.commonDir, "index"), env.GIT_INDEX_FILE).then(() => true, () => false);
+      const copied = await copyFile(join(this.commonDir, "index"), env.GIT_INDEX_FILE).then(
+        () => true,
+        () => false,
+      );
       if (!copied || (await this.repo.tryRun(["add", "-u"], { env })) === null) {
         await this.repo.run(["read-tree", head], { env });
         await this.repo.run(["add", "-u"], { env });
@@ -889,13 +902,16 @@ export class Stet {
       const old = await this.store.getAgent(id);
       if (old?.state === "active") throw new StetError(`Agent '${id}' already exists.`);
       if (old && ((await pathExists(old.worktree)) || (await this.repo.revParse(`refs/heads/${old.branch}`))))
-        throw new StetError(`Agent '${id}' is archived, but its folder or branch is still there. Delete them with \`stet agent archive ${id} --remove\`, or choose another name.`);
+        throw new StetError(
+          `Agent '${id}' is archived, but its folder or branch is still there. Delete them with \`stet agent archive ${id} --remove\`, or choose another name.`,
+        );
       if (await this.repo.revParse(`refs/heads/${branch}`)) throw new StetError(`Branch '${branch}' already exists.`);
       const base = await this.ensureBase();
       const root = resolve(this.mainPath, cfg.worktreeRoot.replace("{repo}", basename(this.mainPath)));
       const path = opts.path ? resolve(opts.path) : join(root, id);
       // Inside the project, the workspace would be both "the project" and "the workspace" to the guard.
-      if (isInside(path, this.mainPath)) throw new StetError(`The agent workspace (${path}) must be outside your project folder; check worktreeRoot in .git/stet/config.json.`);
+      if (isInside(path, this.mainPath))
+        throw new StetError(`The agent workspace (${path}) must be outside your project folder; check worktreeRoot in .git/stet/config.json.`);
       await mkdir(dirname(path), { recursive: true });
       await this.repo.run(["worktree", "add", "-b", branch, path, base]);
       const agent: Agent = {
@@ -1135,7 +1151,10 @@ export class Stet {
     for (const ch of changes) {
       if (!touched.has(ch.path) && !(ch.oldPath && touched.has(ch.oldPath))) continue;
       for (const p of [ch.path, ch.oldPath ?? ch.path]) {
-        if (!isSafeRepoPath(p)) throw new StetError(`The path '${p}' is not allowed in a proposal (it could reach the git directory on some systems). Remove or rename it, then submit again.`);
+        if (!isSafeRepoPath(p))
+          throw new StetError(
+            `The path '${p}' is not allowed in a proposal (it could reach the git directory on some systems). Remove or rename it, then submit again.`,
+          );
       }
       // Stet's own workspace files are never proposals (unless the project tracks them).
       if (isWorkspaceFile(ch.path) && ch.status === "A") continue;
@@ -1191,10 +1210,7 @@ export class Stet {
     return "sha256:" + sha256([c.file, c.kind, normalizeWs(c.oldText), normalizeWs(c.newText), c.newBlob ?? ""].join("\u0000"));
   }
 
-  async submit(
-    agentId: string,
-    opts: { title: string; rationale?: string; groups?: GroupHint[]; notes?: NoteHint[] },
-  ): Promise<SubmitResult> {
+  async submit(agentId: string, opts: { title: string; rationale?: string; groups?: GroupHint[]; notes?: NoteHint[] }): Promise<SubmitResult> {
     return this.store.withLock(async () => {
       const cfg = await this.config();
       const agent = await this.requireAgent(agentId);
@@ -1203,7 +1219,16 @@ export class Stet {
       const files = await this.agentFiles(agent);
       const tip = await files.commitAll(`${opts.title}\n\n${opts.rationale ?? ""}\n\nStet-Agent: ${agentId}`);
       const result: SubmitResult = {
-        changeset: null, items: [], groups: [], ungrouped: [], superseded: [], withdrawn: [], repeats: [], moves: [], warnings: [], sync: null,
+        changeset: null,
+        items: [],
+        groups: [],
+        ungrouped: [],
+        superseded: [],
+        withdrawn: [],
+        repeats: [],
+        moves: [],
+        warnings: [],
+        sync: null,
       };
 
       if (tip !== agent.lastTip) {
@@ -1266,15 +1291,26 @@ export class Stet {
       const tipText = (await this.textAt(tip, e.file))!.text;
       const baseText = (await this.textAt(base, e.file))!.text;
       const merged: Candidate = {
-        file: e.file, kind: "modify", start: e.range.start, end: e.range.end, newStart, newEnd,
-        oldText: baseText.slice(e.range.start, e.range.end), newText: tipText.slice(newStart, newEnd),
+        file: e.file,
+        kind: "modify",
+        start: e.range.start,
+        end: e.range.end,
+        newStart,
+        newEnd,
+        oldText: baseText.slice(e.range.start, e.range.end),
+        newText: tipText.slice(newStart, newEnd),
       };
       cands = [...cands.filter((c) => !inside.includes(c)), merged];
     }
 
     const sameAs = (c: Candidate, e: Item) =>
-      c.file === e.file && c.kind === e.kind && (c.oldFile ?? null) === (e.oldFile ?? null) &&
-      c.start === e.range.start && c.end === e.range.end && c.newText === e.newText && (c.newBlob ?? null) === (e.newBlob ?? null);
+      c.file === e.file &&
+      c.kind === e.kind &&
+      (c.oldFile ?? null) === (e.oldFile ?? null) &&
+      c.start === e.range.start &&
+      c.end === e.range.end &&
+      c.newText === e.newText &&
+      (c.newBlob ?? null) === (e.newBlob ?? null);
 
     const matched = new Map<Candidate, Item>();
     const used = new Set<Item>();
@@ -1298,8 +1334,14 @@ export class Stet {
       return { file: where.file, range: lineRange(t.text, where.from, where.to!), text };
     };
     const unit = (c: Candidate, key: string): HintUnit => ({
-      key, file: c.file, ...(c.oldFile ? { oldFile: c.oldFile } : {}), wholeFile: c.kind !== "modify", newStart: c.newStart, newEnd: c.newEnd,
-      oldText: c.oldText, newText: c.newText,
+      key,
+      file: c.file,
+      ...(c.oldFile ? { oldFile: c.oldFile } : {}),
+      wholeFile: c.kind !== "modify",
+      newStart: c.newStart,
+      newEnd: c.newEnd,
+      oldText: c.oldText,
+      newText: c.newText,
     });
     const hintMatches = async (where: string[], pool: Candidate[]) => {
       const out = new Set<Candidate>();
@@ -1321,7 +1363,9 @@ export class Stet {
       const keyEdits = matchedC.filter((c) => this.isKeyEdit(cfg, c));
       const members = matchedC.filter((c) => !keyEdits.includes(c));
       if (keyEdits.length)
-        result.warnings.push(`Atomic group '${h.title}': kept ${keyEdits.map((k) => JSON.stringify(k.newText.trim())).join(", ")} separate (renames are items of their own; link them instead).`);
+        result.warnings.push(
+          `Atomic group '${h.title}': kept ${keyEdits.map((k) => JSON.stringify(k.newText.trim())).join(", ")} separate (renames are items of their own; link them instead).`,
+        );
       if (members.length < 2) continue;
       const files = new Set(members.map((m) => m.file));
       members.sort((a, b) => a.start - b.start);
@@ -1342,8 +1386,14 @@ export class Stet {
       }
       const tipText = (await this.textAt(tip, first.file))!.text;
       const merged: Candidate = {
-        file: first.file, kind: "modify", start: first.start, end: last.end, newStart: first.newStart, newEnd: last.newEnd,
-        oldText: baseText.slice(first.start, last.end), newText: tipText.slice(first.newStart, last.newEnd),
+        file: first.file,
+        kind: "modify",
+        start: first.start,
+        end: last.end,
+        newStart: first.newStart,
+        newEnd: last.newEnd,
+        oldText: baseText.slice(first.start, last.end),
+        newText: tipText.slice(first.newStart, last.newEnd),
       };
       fresh.splice(0, fresh.length, ...fresh.filter((c) => !members.includes(c)), merged);
       (merged as any).note = h.rationale ? `${h.title}: ${h.rationale}` : h.title;
@@ -1372,8 +1422,14 @@ export class Stet {
         const first = run[0]!;
         const last = run[run.length - 1]!;
         const merged: Candidate = {
-          file, kind: "modify", start: first.start, end: last.end, newStart: first.newStart, newEnd: last.newEnd,
-          oldText: baseText.slice(first.start, last.end), newText: tipText.slice(first.newStart, last.newEnd),
+          file,
+          kind: "modify",
+          start: first.start,
+          end: last.end,
+          newStart: first.newStart,
+          newEnd: last.newEnd,
+          oldText: baseText.slice(first.start, last.end),
+          newText: tipText.slice(first.newStart, last.newEnd),
         };
         fresh.splice(fresh.indexOf(first), 1, merged);
         for (const c of run.slice(1)) fresh.splice(fresh.indexOf(c), 1);
@@ -1491,7 +1547,9 @@ export class Stet {
     const drafts: GroupDraft[] = [];
     // Auto-detection also sees the agent's earlier pending items (a \label here, its \ref from before).
     const newIds = new Set(created.map((i) => i.id));
-    const earlier = (await this.store.items()).filter((i) => i.agent === agent.id && isLive(i.status) && !newIds.has(i.id) && !result.superseded.includes(i.id));
+    const earlier = (await this.store.items()).filter(
+      (i) => i.agent === agent.id && isLive(i.status) && !newIds.has(i.id) && !result.superseded.includes(i.id),
+    );
     // Moved passages (§6.4.7), decided as one change. Over all pending items: re-splitting at a
     // later submit can leave the two sides of a move in different rounds.
     for (const m of detectMoves([...earlier, ...live], cfg.grouping.moves, cfg.split.abbreviations, (it) => this.profile(cfg, it.file).syntax)) {
@@ -1528,14 +1586,25 @@ export class Stet {
       // dependency Stet can see, and without the agent's reason, the group is related, and only the
       // changes that need each other are linked.
       if (h.kind === "linked" && !h.reason && members.length > 1) {
-        const units = parts?.length ? [...parts.map((p) => p.items), members.filter((m) => !parts!.some((p) => p.items.includes(m)))].filter((u) => u.length) : undefined;
-        const comps = await this.dependencies(members.map((id) => known.get(id)).filter((x): x is Item => !!x), units);
+        const units = parts?.length
+          ? [...parts.map((p) => p.items), members.filter((m) => !parts!.some((p) => p.items.includes(m)))].filter((u) => u.length)
+          : undefined;
+        const comps = await this.dependencies(
+          members.map((id) => known.get(id)).filter((x): x is Item => !!x),
+          units,
+        );
         if (comps.length > 1) {
           drafts.push({ kind: "related", title: h.title, rationale: h.rationale ?? null, source: "agent", items: members });
           const kept = comps.filter((c) => c.length > 1);
           for (const c of kept) {
             const part = parts?.find((p) => c.every((i) => p.items.includes(i)));
-            drafts.push({ kind: "linked", title: part?.title ?? `${h.title} (${c.length} changes that need each other)`, rationale: null, source: "auto", items: c });
+            drafts.push({
+              kind: "linked",
+              title: part?.title ?? `${h.title} (${c.length} changes that need each other)`,
+              rationale: null,
+              source: "auto",
+              items: c,
+            });
           }
           result.warnings.push(unlinkedWarning(h.title, kept));
           continue;
@@ -1566,8 +1635,16 @@ export class Stet {
       }
     }
     const groups: Group[] = finalDrafts.map((d, k) => ({
-      id: gids[k]!, agent: agent.id, changeset: csId!, kind: d.kind, title: d.title, rationale: d.rationale,
-      source: d.source, items: d.items, ...(d.kind === "linked" && d.parts ? { parts: d.parts } : {}), state: "open",
+      id: gids[k]!,
+      agent: agent.id,
+      changeset: csId!,
+      kind: d.kind,
+      title: d.title,
+      rationale: d.rationale,
+      source: d.source,
+      items: d.items,
+      ...(d.kind === "linked" && d.parts ? { parts: d.parts } : {}),
+      state: "open",
     }));
     // Linked groups from earlier submissions that now share members get merged into the new one.
     const priorGroups = (await this.store.groups()).filter((g) => g.agent === agent.id && g.kind === "linked" && g.state === "open");
@@ -1603,8 +1680,13 @@ export class Stet {
     for (const it of byId.values()) if (!created.includes(it)) await this.store.putItem(it);
 
     const changeset: Changeset = {
-      id: csId!, agent: agent.id, title: opts.title, rationale: opts.rationale ?? "", submittedAt: now(),
-      items: created.map((i) => i.id), groups: groups.map((g) => g.id),
+      id: csId!,
+      agent: agent.id,
+      title: opts.title,
+      rationale: opts.rationale ?? "",
+      submittedAt: now(),
+      items: created.map((i) => i.id),
+      groups: groups.map((g) => g.id),
     };
     for (const it of created) await this.store.putItem(it);
     await this.store.putChangeset(changeset);
@@ -1612,7 +1694,9 @@ export class Stet {
     for (const id of result.repeats) {
       const it = byId.get(id)!;
       await this.store.appendEvent({
-        type: "repeat_rejected", agent: agent.id, items: [id],
+        type: "repeat_rejected",
+        agent: agent.id,
+        items: [id],
         data: { item: await this.describe(it), previous: it.history[it.history.length - 1]!.note },
       });
     }
@@ -1661,7 +1745,10 @@ export class Stet {
         }
         item.baseCommit = base;
       }
-      chainInsertions(res.applied.map((a) => a.item), compareItemIds);
+      chainInsertions(
+        res.applied.map((a) => a.item),
+        compareItemIds,
+      );
       for (const { item } of res.applied) await this.store.putItem(item);
       const commit = res.changes.size
         ? await this.repo.buildCommit({
@@ -1696,7 +1783,9 @@ export class Stet {
       }
     }
     await this.store.appendEvent({
-      type: "stale", agent: item.agent, items: [item.id],
+      type: "stale",
+      agent: item.agent,
+      items: [item.id],
       data: { item: await this.describe(item), reason, ...(current !== undefined ? { currentText: current } : {}) },
     });
   }
@@ -1716,7 +1805,11 @@ export class Stet {
     const unitOf = new Map((units ?? []).flatMap((u, k) => u.map((i) => [i, k] as const)));
     const sameSymbol = (a: Item, b: Item) => !units || unitOf.get(a.id) === unitOf.get(b.id);
     const cfg = await this.config();
-    const { parts } = await settleParts(singles, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { sameSymbol, profileOf: (f) => this.profile(cfg, f), grouping: cfg.grouping });
+    const { parts } = await settleParts(singles, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, {
+      sameSymbol,
+      profileOf: (f) => this.profile(cfg, f),
+      grouping: cfg.grouping,
+    });
     return parts ? parts.map((p) => p.items) : [members.map((m) => m.id)];
   }
 
@@ -1728,7 +1821,11 @@ export class Stet {
     const members = (await Promise.all(g.items.map(get))).filter((x): x is Item => !!x && x.status !== "superseded");
     const base = members.find((m) => isLive(m.status))?.baseCommit;
     const cfg = await this.config();
-    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, { profileOf: (f) => this.profile(cfg, f), quietOverlaps: merged, grouping: cfg.grouping });
+    const { parts, notes } = await settleParts(g.parts, members, base ? (lists) => this.interference(lists, this.treeView(base)) : undefined, {
+      profileOf: (f) => this.profile(cfg, f),
+      quietOverlaps: merged,
+      grouping: cfg.grouping,
+    });
     if (parts) g.parts = parts;
     else delete g.parts;
     // Joins of parts Stet proposed itself are no news to the agent.
@@ -1763,7 +1860,15 @@ export class Stet {
         // Part a is accepted in this simulation: a change next to it is found with its text, as
         // after a real accept (bug report 2026-11-19: parts in one paragraph were always joined).
         const simulated = { ...opts, neighbours: async (it: Item) => [...appliedAsNeighbours(res.applied, it), ...(await this.neighbours(it))] };
-        const lost = clash ? [] : (await locate(located.map((l) => l.item), after, simulated)).failed;
+        const lost = clash
+          ? []
+          : (
+              await locate(
+                located.map((l) => l.item),
+                after,
+                simulated,
+              )
+            ).failed;
         if (clash || lost.length) out.push([a, b]);
       }
     }
@@ -1777,9 +1882,7 @@ export class Stet {
       const g = await this.store.getGroup(gid);
       if (!g) continue;
       // Superseded members have been replaced by newer versions; they no longer count.
-      const members = (await Promise.all(g.items.map((i) => this.store.getItem(i)))).filter(
-        (x): x is Item => !!x && x.status !== "superseded",
-      );
+      const members = (await Promise.all(g.items.map((i) => this.store.getItem(i)))).filter((x): x is Item => !!x && x.status !== "superseded");
       if (!members.length) continue;
       const statuses = members.map((m) => m.status);
       let state: Group["state"] = statuses.every((s) => !isLive(s)) ? "resolved" : "open";
@@ -1792,7 +1895,10 @@ export class Stet {
       }
       if (state === "broken" && g.state !== "broken") {
         await this.store.appendEvent({
-          type: "group_broken", agent: g.agent, group: g.id, items: g.items,
+          type: "group_broken",
+          agent: g.agent,
+          group: g.id,
+          items: g.items,
           data: { title: g.title, members: members.map((m) => ({ id: m.id, status: m.status, file: m.file })) },
         });
       }
@@ -1834,7 +1940,9 @@ export class Stet {
   /** Current 1-based line of an item in the working copy (or its base line if it can't be located). */
   async locateInWorkingCopy(item: Item): Promise<{ line: number; span: Span | null }> {
     if (item.kind !== "modify") return { line: 1, span: null };
-    const f = await this.workingView().read(item.file).catch(() => null); // not UTF-8 any more: not located
+    const f = await this.workingView()
+      .read(item.file)
+      .catch(() => null); // not UTF-8 any more: not located
     const span = f ? await this.anchorItem(item, f.text) : null;
     return { line: span && f ? lineOf(f.text, span.start) : await this.itemLine(item), span };
   }
@@ -1911,7 +2019,9 @@ export class Stet {
         if (want.blob !== blob) out.push(p);
         continue;
       }
-      const cur = await this.workingView().read(p).catch(() => null);
+      const cur = await this.workingView()
+        .read(p)
+        .catch(() => null);
       if (!cur || cur.text !== want.text) out.push(p);
     }
     return out;
@@ -2087,7 +2197,9 @@ export class Stet {
       }
       // Typst stops at a reference to a missing label; say so (test report 5e4c6af, D1).
       const strict = [...items, ...missing].some((m) => !!this.profile(cfg, m.file).references?.strict);
-      warnings.push(`Accepted without linked items ${missing.map((m) => m.id).join(", ")}; the group is now broken${strict ? ", and the document may not compile until they are accepted too" : ""}.`);
+      warnings.push(
+        `Accepted without linked items ${missing.map((m) => m.id).join(", ")}; the group is now broken${strict ? ", and the document may not compile until they are accepted too" : ""}.`,
+      );
     }
     // The reviewer's drafts (from a file's review document), unless this accept gives other text.
     const overrides = new Map(items.filter((i) => i.draft !== undefined).map((i) => [i.id, i.draft!]));
@@ -2102,7 +2214,9 @@ export class Stet {
       `Nothing was applied, because ${failed.length === 1 ? "a change" : "some changes"} could not be applied:\n` +
       failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n") +
       // What to do next, for a change whose words were edited meanwhile (test report v0.16.0, UX).
-      (lost.length ? `\nYou edited ${lost.length > 1 ? "their" : "its"} text or the text around ${lost.length > 1 ? "them" : "it"} since (${lost.join(", ")}): reject ${lost.length > 1 ? "them" : "it"}, or ask the agent for a revision against your current text.` : "")
+      (lost.length
+        ? `\nYou edited ${lost.length > 1 ? "their" : "its"} text or the text around ${lost.length > 1 ? "them" : "it"} since (${lost.join(", ")}): reject ${lost.length > 1 ? "them" : "it"}, or ask the agent for a revision against your current text.`
+        : "")
     );
   }
 
@@ -2111,7 +2225,10 @@ export class Stet {
    * those files; writes nothing. An editor saves its buffers only for an accept that will work:
    * a failed accept had already saved them (test report v0.16.0, D7).
    */
-  async checkAccept(ids: string[], opts: { edited?: Record<string, string>; overrideLinked?: boolean; confirmEffects?: boolean; unsaved?: Record<string, string> } = {}): Promise<void> {
+  async checkAccept(
+    ids: string[],
+    opts: { edited?: Record<string, string>; overrideLinked?: boolean; confirmEffects?: boolean; unsaved?: Record<string, string> } = {},
+  ): Promise<void> {
     return this.store.withLock(async () => {
       await this.recoverInterrupted();
       const disk = this.workingView();
@@ -2158,9 +2275,7 @@ export class Stet {
       const spans = new Map((await locate(others, view, { refText: this.refText, neighbours: this.neighbours })).located.map((l) => [l.item.id, l.span]));
       for (const o of others) {
         const span = spans.get(o.id);
-        const hit = res.applied.find(
-          (a) => a.item.file === o.file && (o.kind !== "modify" || a.item.kind !== "modify" || (span && conflicts(span, a.span))),
-        );
+        const hit = res.applied.find((a) => a.item.file === o.file && (o.kind !== "modify" || a.item.kind !== "modify" || (span && conflicts(span, a.span))));
         if (hit) stale.push(o);
       }
 
@@ -2184,7 +2299,9 @@ export class Stet {
         a.item.resolution = { appliedText: appliedText(a), edited, committed: null, headBlob: headBlobs.get(a.item.file) ?? null };
         await this.store.putItem(a.item);
         await this.store.appendEvent({
-          type: "accepted", agent: a.item.agent, items: [a.item.id],
+          type: "accepted",
+          agent: a.item.agent,
+          items: [a.item.id],
           data: { item: await this.describe(a.item), ...(edited ? { finalText: a.text } : {}) },
         });
       }
@@ -2194,7 +2311,11 @@ export class Stet {
       let committed: string | null = null;
       if (wantCommit) {
         if (dirtyBefore.size) warnings.push(`Not committed: ${[...dirtyBefore].join(", ")} had uncommitted edits of yours.`);
-        else committed = await this.commitAccepted(res.applied.map((a) => a.item), [...res.changes.keys()]);
+        else
+          committed = await this.commitAccepted(
+            res.applied.map((a) => a.item),
+            [...res.changes.keys()],
+          );
       }
       await this.updateGroups([...items, ...stale]);
       if (!missing.length) warnings.push(...(await this.partlyDecided(items)));
@@ -2234,7 +2355,9 @@ export class Stet {
 
   private async commitAccepted(items: Item[], paths: string[], subject?: string, yourEdits: string[] = []): Promise<string | null> {
     const msg = await this.commitMessage(items, subject);
-    const body = yourEdits.length ? msg.body.replace(/\n\nStet-Applied:/, `\n\nAlso the reviewer's own edits in ${yourEdits.join(", ")}.\n\nStet-Applied:`) : msg.body;
+    const body = yourEdits.length
+      ? msg.body.replace(/\n\nStet-Applied:/, `\n\nAlso the reviewer's own edits in ${yourEdits.join(", ")}.\n\nStet-Applied:`)
+      : msg.body;
     await this.repo.run(["add", "-A", "--", ...paths]);
     const r = await this.repo.tryRun(["commit", "-q", "--only", "-m", `${msg.subject}\n\n${body}`, "--", ...paths]);
     if (r === null) return null;
@@ -2269,7 +2392,9 @@ export class Stet {
         if (opts.reason) it.thread.push({ at: now(), author: "user", text: `Rejected: ${opts.reason}` });
         await this.store.putItem(it);
         await this.store.appendEvent({
-          type: "rejected", agent: it.agent, items: [it.id],
+          type: "rejected",
+          agent: it.agent,
+          items: [it.id],
           data: {
             item: await this.describe(it),
             ...(opts.reason ? { reason: opts.reason } : {}),
@@ -2404,7 +2529,11 @@ export class Stet {
             res.failed.map((f) => `  ${f.item.id}: ${f.reason}`).join("\n"),
         );
       }
-      await this.writeWorking(res.changes, unit.map((i) => ({ id: i.id, appliedText: "", edited: false })), true);
+      await this.writeWorking(
+        res.changes,
+        unit.map((i) => ({ id: i.id, appliedText: "", edited: false })),
+        true,
+      );
       for (const it of unit) await this.reopen(it, "accept undone", "accepted");
       await rm(this.journalPath, { force: true });
 
@@ -2516,7 +2645,8 @@ export class Stet {
     const doc = documentProfile(cfg);
     if (!doc.typesetter) return { status: "no-spot", message: noPreviews(doc) };
     const isTex = (i: Item) => i.kind === "modify" && this.profile(cfg, i.file) === doc && !!doc.typesetter?.source.test(i.file);
-    if (!isTex(item)) return { status: "no-spot", message: `Only changes to the text of ${doc.typesetter?.sourceName ?? "the document's source files"} have a PDF preview.` };
+    if (!isTex(item))
+      return { status: "no-spot", message: `Only changes to the text of ${doc.typesetter?.sourceName ?? "the document's source files"} have a PDF preview.` };
     const change = async (i: Item): Promise<PreviewChange | null> => {
       const t = await this.textAt(i.baseCommit, i.file);
       return t && { file: i.file, baseText: t.text, eol: t.eol, range: i.range, newText: i.newText };
@@ -2538,11 +2668,32 @@ export class Stet {
     // it; plus the changes of its round that complete it (an environment opened in one change and
     // closed in another, bug report 2026-11-19); its whole round. Else the best of them.
     const round = together((await this.store.items()).filter((i) => i.changeset === item.changeset && isLive(i.status)));
-    const pair = completing(item, round.filter((i) => !unit.includes(i)), (f) => this.profile(cfg, f));
+    const pair = completing(
+      item,
+      round.filter((i) => !unit.includes(i)),
+      (f) => this.profile(cfg, f),
+    );
     const tries: { others: Item[]; tag: string; note: (x: Item[]) => string }[] = [
       { others: unit, tag: "", note: (x) => `Shown together with ${list(x)}, which ${x.length === 1 ? "is" : "are"} accepted with it.` },
-      ...(pair.length ? [{ others: [...unit, ...pair], tag: "-pair", note: (x: Item[]) => `On its own this change breaks the document, so it is shown with ${list(x)}, which complete${x.length === 1 ? "s" : ""} it. Accept them together.` }] : []),
-      ...(round.length > unit.length + pair.length ? [{ others: round, tag: "-round", note: (x: Item[]) => `On its own this change breaks the document, so it is shown with the rest of its round (${list(x)}).` }] : []),
+      ...(pair.length
+        ? [
+            {
+              others: [...unit, ...pair],
+              tag: "-pair",
+              note: (x: Item[]) =>
+                `On its own this change breaks the document, so it is shown with ${list(x)}, which complete${x.length === 1 ? "s" : ""} it. Accept them together.`,
+            },
+          ]
+        : []),
+      ...(round.length > unit.length + pair.length
+        ? [
+            {
+              others: round,
+              tag: "-round",
+              note: (x: Item[]) => `On its own this change breaks the document, so it is shown with the rest of its round (${list(x)}).`,
+            },
+          ]
+        : []),
     ];
     let best: { r: PreviewResult; note: string } | null = null;
     const errors = (x: PreviewResult) => (x.status === "ready" ? (x.warning?.count ?? 0) : Infinity);
@@ -2600,11 +2751,23 @@ export class Stet {
         const after = doc.content.slice(r.end, r.end + g.after);
         const ref = await this.refText(it);
         const { start, end } = it.range;
-        if (it.kind !== "modify" || it.move || ref === undefined || ref.slice(start - before.length, start) !== before || ref.slice(end, end + after.length) !== after) {
+        if (
+          it.kind !== "modify" ||
+          it.move ||
+          ref === undefined ||
+          ref.slice(start - before.length, start) !== before ||
+          ref.slice(end, end + after.length) !== after
+        ) {
           return { error: `You reworded text next to ${id} that you changed yourself since: edit that in your file itself, or only ${id}'s own words here.` };
         }
         const range = { start: start - before.length, end: end + after.length };
-        wider.set(id, { ...it, range, oldText: before + it.oldText + after, newText: before + it.newText + after, context: captureContext(ref, range.start, range.end) });
+        wider.set(id, {
+          ...it,
+          range,
+          oldText: before + it.oldText + after,
+          newText: before + it.newText + after,
+          context: captureContext(ref, range.start, range.end),
+        });
       }
       const changed: string[] = [];
       for (const [id, text] of mapped.texts) {
@@ -2713,7 +2876,9 @@ export class Stet {
       it!.thread.push({ at: now(), author, text });
       await this.store.putItem(it!);
       await this.store.appendEvent({
-        type: author === "user" ? "comment" : "reply", agent: it!.agent, items: [it!.id],
+        type: author === "user" ? "comment" : "reply",
+        agent: it!.agent,
+        items: [it!.id],
         data: { item: await this.describe(it!), text },
       });
       return it!;
@@ -2763,15 +2928,25 @@ export class Stet {
       if (kind === "atomic") return { group: null, merged: await this.mergeAtomic(items, title, rationale), warnings: [] };
       // An agent's linked group needs a dependency Stet can see, or a reason (§6.4.6).
       if (kind === "linked" && agentId && !reason) {
-        const units = partList.length ? [...partList.map((p) => p.items), items.map((i) => i.id).filter((i) => !partList.some((p) => p.items.includes(i)))].filter((u) => u.length) : undefined;
+        const units = partList.length
+          ? [...partList.map((p) => p.items), items.map((i) => i.id).filter((i) => !partList.some((p) => p.items.includes(i)))].filter((u) => u.length)
+          : undefined;
         const comps = await this.dependencies(items, units);
         if (comps.length > 1) throw new StetError(unlinkedRefusal(comps));
       }
       if (reason) rationale = `Linked because: ${reason}${rationale ? `\n\n${rationale}` : ""}`;
       const [gid] = await this.store.allocate("group");
       const group: Group = {
-        id: gid!, agent, changeset: items[0]!.changeset, kind, title, rationale: rationale ?? null, source: "agent",
-        items: items.map((i) => i.id), ...(partList.length ? { parts: partList } : {}), state: "open",
+        id: gid!,
+        agent,
+        changeset: items[0]!.changeset,
+        kind,
+        title,
+        rationale: rationale ?? null,
+        source: "agent",
+        items: items.map((i) => i.id),
+        ...(partList.length ? { parts: partList } : {}),
+        state: "open",
       };
       const warnings: string[] = [];
       if (kind === "linked") {
@@ -2921,8 +3096,17 @@ export class Stet {
       if (start < 0 || end > text.length || start > end) throw new StetError("The passage is outside the file.");
       const [id] = await this.store.allocate("note");
       const note: Note = {
-        id: id!, agent: agent.id, file, text: text.slice(start, end), range: { start, end }, context: captureContext(text, start, end),
-        body: body.trim(), createdAt: now(), state: "open", deliveredAt: null, thread: [],
+        id: id!,
+        agent: agent.id,
+        file,
+        text: text.slice(start, end),
+        range: { start, end },
+        context: captureContext(text, start, end),
+        body: body.trim(),
+        createdAt: now(),
+        state: "open",
+        deliveredAt: null,
+        thread: [],
       };
       await this.store.putNote(note);
       await this.store.appendEvent({ type: "note_added", agent: agent.id, data: { note: note.id, file } });
@@ -2951,7 +3135,11 @@ export class Stet {
       if (!text.trim()) throw new StetError("The reply is empty.");
       n.thread.push({ at: now(), author, text: text.trim() });
       await this.store.putNote(n);
-      await this.store.appendEvent({ type: author === "user" ? "note_comment" : "note_reply", agent: n.agent, data: { note: n.id, file: n.file, text: text.trim() } });
+      await this.store.appendEvent({
+        type: author === "user" ? "note_comment" : "note_reply",
+        agent: n.agent,
+        data: { note: n.id, file: n.file, text: text.trim() },
+      });
       return n;
     });
   }

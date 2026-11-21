@@ -1,10 +1,10 @@
 /** Grouping helpers (spec §6.4). */
 import { posix } from "node:path";
 import type { GroupingConfig } from "./config.js";
+import { type LanguageProfile, profileByName } from "./lang/index.js";
+import type { KeyKind } from "./lang/profile.js";
 import type { GroupKind, Item } from "./model.js";
 import { changedSides, changeTitle, combineParts, type PartDraft } from "./parts.js";
-import { profileByName, type LanguageProfile } from "./lang/index.js";
-import type { KeyKind } from "./lang/profile.js";
 import { normalizeWs } from "./text.js";
 
 export interface GroupHint {
@@ -185,7 +185,10 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
           if (!users.length) continue;
           const members = [def, ...users];
           groups.push({
-            kind: "linked", title: d.kind.addTitle?.(key) ?? `Add ${d.kind.noun} ${key} and refer to it`, rationale: null, source: "auto",
+            kind: "linked",
+            title: d.kind.addTitle?.(key) ?? `Add ${d.kind.noun} ${key} and refer to it`,
+            rationale: null,
+            source: "auto",
             items: members.map((m) => m.id),
             ...(strict(users) ? {} : { parts: members.map((m) => ({ title: changeTitle(m), items: [m.id] })) }),
           });

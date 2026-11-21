@@ -192,9 +192,10 @@ export function printable(s: string): string {
  * breaks and tabs), direction marks and overrides, zero-width characters, the soft hyphen, the
  * byte-order mark, fillers and tag characters.
  */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it finds.
-// biome-ignore lint/suspicious/noMisleadingCharacterClass: single code points, listed on purpose.
-const INVISIBLE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]/gu;
+const INVISIBLE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: these are the characters it finds.
+  // biome-ignore lint/suspicious/noMisleadingCharacterClass: single code points, listed on purpose.
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]/gu;
 
 /** Text on one line (whitespace collapsed), cut to `max` characters with an ellipsis. */
 export function oneLine(s: string, max = 120): string {
@@ -204,7 +205,10 @@ export function oneLine(s: string, max = 120): string {
 
 /** Whitespace shown: ¶ a paragraph break, ↵ a line break, ␣ a space, for text that is only whitespace. */
 function shownWs(s: string): string {
-  return s.replace(/\n[ \t]*\n\s*/g, "¶").replace(/\n/g, "↵").replace(/[ \t]/g, "␣");
+  return s
+    .replace(/\n[ \t]*\n\s*/g, "¶")
+    .replace(/\n/g, "↵")
+    .replace(/[ \t]/g, "␣");
 }
 
 const PARBREAK = /\n[ \t]*\n/;

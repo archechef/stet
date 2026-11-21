@@ -184,7 +184,11 @@ describe("undo after editing an accepted change (test report v0.16, D1)", () => 
   it("refuses instead of reverting another accepted change with the same words", async () => {
     const { stet, repo } = await setup({ "main.tex": LINES });
     const { worktree: wt } = await stet.newAgent("a");
-    write(wt, "main.tex", read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds").replace("omega10 in every round", "omega10 in all rounds"));
+    write(
+      wt,
+      "main.tex",
+      read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds").replace("omega10 in every round", "omega10 in all rounds"),
+    );
     const { items } = await stet.submit("a", { title: "t" });
     expect(items).toHaveLength(2);
     await stet.accept(items.map((i) => i.id));
@@ -201,7 +205,11 @@ describe("undo after editing an accepted change (test report v0.16, D1)", () => 
   it("still undoes an accepted change the user didn't touch, next to one they did", async () => {
     const { stet, repo } = await setup({ "main.tex": LINES });
     const { worktree: wt } = await stet.newAgent("a");
-    write(wt, "main.tex", read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds").replace("omega10 in every round", "omega10 in all rounds"));
+    write(
+      wt,
+      "main.tex",
+      read(wt, "main.tex").replace("omega3 in every round", "omega3 in all rounds").replace("omega10 in every round", "omega10 in all rounds"),
+    );
     const { items } = await stet.submit("a", { title: "t" });
     await stet.accept(items.map((i) => i.id));
     write(repo, "main.tex", read(repo, "main.tex").replace("Line 10 computes", "Line ten computes"));

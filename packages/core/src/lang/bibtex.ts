@@ -3,13 +3,12 @@
  * of the documents that cite them.
  */
 import type { Item } from "../model.js";
-import { makeEdit, type Edit } from "../split.js";
+import { type Edit, makeEdit } from "../split.js";
 import { CITATION, LATEX_PARTS } from "./latex.js";
 import type { LanguageProfile } from "./profile.js";
 
 // ---------------------------------------------------------------------------
 // One edit per changed entry
-
 
 interface BibEntry {
   key: string;
@@ -66,12 +65,20 @@ function splitBib(oldText: string, newText: string): Edit[] | null {
   if (bare(o.skeleton) !== bare(n.skeleton)) return null;
   // An entry whose key changed, and nothing else, in the same place: one change of the key, so
   // that it links with the citations renamed along (spec §6.4: "Rename citation key a → b").
-  const after = (entries: BibEntry[], k: number, has: Map<string, BibEntry>) => entries.slice(0, k).reverse().find((x) => has.has(x.key))?.key ?? null;
+  const after = (entries: BibEntry[], k: number, has: Map<string, BibEntry>) =>
+    entries
+      .slice(0, k)
+      .reverse()
+      .find((x) => has.has(x.key))?.key ?? null;
   const renamed = new Map<string, BibEntry>();
   for (const [k, e] of o.entries.entries()) {
     if (newByKey.has(e.key)) continue;
     const ne = n.entries.find(
-      (x, j) => !oldByKey.has(x.key) && ![...renamed.values()].includes(x) && x.text.replace(x.key, e.key) === e.text && after(n.entries, j, oldByKey) === after(o.entries, k, newByKey),
+      (x, j) =>
+        !oldByKey.has(x.key) &&
+        ![...renamed.values()].includes(x) &&
+        x.text.replace(x.key, e.key) === e.text &&
+        after(n.entries, j, oldByKey) === after(o.entries, k, newByKey),
     );
     if (ne) renamed.set(e.key, ne);
   }
@@ -100,7 +107,10 @@ function splitBib(oldText: string, newText: string): Edit[] | null {
   for (let i = 0; i < n.entries.length; i++) {
     const ne = n.entries[i]!;
     if (oldByKey.has(ne.key) || [...renamed.values()].includes(ne)) continue;
-    const prev = n.entries.slice(0, i).reverse().find((e) => oldByKey.has(e.key));
+    const prev = n.entries
+      .slice(0, i)
+      .reverse()
+      .find((e) => oldByKey.has(e.key));
     let at: number;
     let insert: string;
     if (prev) {

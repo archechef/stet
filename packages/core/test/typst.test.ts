@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config.js";
 import { autoGroups } from "../src/grouping.js";
 import { inlineDiff } from "../src/inline.js";
-import { documentProfile, hasPreview, LATEX, profileByName, profileFor, PROFILES } from "../src/lang/index.js";
+import { documentProfile, hasPreview, LATEX, PROFILES, profileByName, profileFor } from "../src/lang/index.js";
 import type { LanguageProfile } from "../src/lang/profile.js";
 import type { Item, MoveInfo } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
@@ -62,10 +62,26 @@ let n = 0;
 function item(oldText: string, newText: string, extra: Partial<Item> = {}): Item {
   n++;
   return {
-    id: `1.${n}`, agent: "a", changeset: "C1", file: "main.typ", kind: "modify", baseCommit: "x",
-    range: { start: 0, end: oldText.length }, oldText, newText, context: { before: "", after: "" },
-    fingerprint: String(n), note: null, groups: [], status: "pending", resolution: null, supersedes: null,
-    conflictsWith: [], history: [], thread: [], ...extra,
+    id: `1.${n}`,
+    agent: "a",
+    changeset: "C1",
+    file: "main.typ",
+    kind: "modify",
+    baseCommit: "x",
+    range: { start: 0, end: oldText.length },
+    oldText,
+    newText,
+    context: { before: "", after: "" },
+    fingerprint: String(n),
+    note: null,
+    groups: [],
+    status: "pending",
+    resolution: null,
+    supersedes: null,
+    conflictsWith: [],
+    history: [],
+    thread: [],
+    ...extra,
   };
 }
 const one = (...items: Item[]) => items.map((i) => ({ title: i.id, items: [i.id] }));
@@ -117,7 +133,10 @@ spec("Typst: files and projects", () => {
 // ---------------------------------------------------------------------------
 
 spec("Typst: tokens", () => {
-  const types = (s: string) => T().syntax!.tokenize(s).map((t) => `${t.type}:${t.text}`);
+  const types = (s: string) =>
+    T()
+      .syntax!.tokenize(s)
+      .map((t) => `${t.type}:${t.text}`);
 
   it("splits words, markup, brackets and punctuation", () => {
     expect(types("Hello #emph[world].")).toEqual(["word:Hello", "ws: ", "cmd:#emph", "lbrace:[", "word:world", "rbrace:]", "punct:."]);
@@ -140,7 +159,11 @@ spec("Typst: tokens", () => {
   });
 
   it("records offsets", () => {
-    expect(T().syntax!.tokenize("ab  cd").map((x) => x.start)).toEqual([0, 2, 4]);
+    expect(
+      T()
+        .syntax!.tokenize("ab  cd")
+        .map((x) => x.start),
+    ).toEqual([0, 2, 4]);
   });
 });
 
@@ -154,7 +177,10 @@ spec("Typst: splitting a change into edits", () => {
   });
 
   it("keeps edits in different sentences separate", () => {
-    expect(pairs(s("The cat sat on the mat. The dog ran in the park.\n", "The cat lay on the mat. The dog ran in the garden.\n"))).toEqual([["sat", "lay"], ["park", "garden"]]);
+    expect(pairs(s("The cat sat on the mat. The dog ran in the park.\n", "The cat lay on the mat. The dog ran in the garden.\n"))).toEqual([
+      ["sat", "lay"],
+      ["park", "garden"],
+    ]);
   });
 
   it("merges nearby edits in the same sentence", () => {
@@ -206,7 +232,9 @@ spec("Typst: splitting a change into edits", () => {
   });
 
   it("a heading is a structure of its own: a change next to it doesn't take it along", () => {
-    expect(pairs(s("= Introduction\nSome text that stays the same here.\n", "= Overview\nSome text that stays the same here.\n"))).toEqual([["Introduction", "Overview"]]);
+    expect(pairs(s("= Introduction\nSome text that stays the same here.\n", "= Overview\nSome text that stays the same here.\n"))).toEqual([
+      ["Introduction", "Overview"],
+    ]);
     const edits = s("== Method\nWe measure speed.\n", "== Method\nWe measure the speed.\n");
     expect(edits.every((e) => !e.oldText.includes("=="))).toBe(true);
   });
@@ -231,7 +259,9 @@ spec("Typst: splitting a change into edits", () => {
   });
 
   it("coarsens heavily rewritten paragraphs into one edit", () => {
-    expect(s("One two three four five six seven eight nine ten.\n", "Uno dos tres four cinco seis siete eight nueve ten.\n", { ...split, mergeGap: 0 })).toHaveLength(1);
+    expect(
+      s("One two three four five six seven eight nine ten.\n", "Uno dos tres four cinco seis siete eight nueve ten.\n", { ...split, mergeGap: 0 }),
+    ).toHaveLength(1);
   });
 
   it("reconstructs the new text exactly when edits are applied (strict mode)", () => {
@@ -274,7 +304,7 @@ spec("Typst: references and citations", () => {
   });
 
   it("@key is a citation when the bibliography has it: a new one is linked with its entry", async () => {
-    const { stet } = await setup({ "main.typ": TYPST_PAPER + "#bibliography(\"refs.bib\")\n", "refs.bib": BIB });
+    const { stet } = await setup({ "main.typ": TYPST_PAPER + '#bibliography("refs.bib")\n', "refs.bib": BIB });
     const { worktree: wt } = await stet.newAgent("a");
     edit(wt, "main.typ", "effective in practice.", "effective in practice @knuth84.");
     write(wt, "refs.bib", BIB2);
@@ -287,7 +317,7 @@ spec("Typst: references and citations", () => {
   });
 
   it("renaming a citation key links the entry with its @-uses and #cite(<…>)s", async () => {
-    const doc = TYPST_PAPER + "Old idea @knuth84 and #cite(<knuth84>).\n#bibliography(\"refs.bib\")\n";
+    const doc = TYPST_PAPER + 'Old idea @knuth84 and #cite(<knuth84>).\n#bibliography("refs.bib")\n';
     const { stet } = await setup({ "main.typ": doc, "refs.bib": BIB2 });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "main.typ", doc.replaceAll("knuth84", "knuth1984"));
@@ -344,7 +374,7 @@ spec("Typst: what parts of a linked group must keep together", () => {
 
   it("keeps imports, set rules and show rules with everything", async () => {
     const other = typ("is", "was");
-    for (const g of ['#import "@preview/cetz:0.2.2": canvas', "#set text(lang: \"de\")", "#show heading: set text(blue)"]) {
+    for (const g of ['#import "@preview/cetz:0.2.2": canvas', '#set text(lang: "de")', "#show heading: set text(blue)"]) {
       const glob = typ("", g);
       expect((await settleParts(one(glob, other), [glob, other])).parts).toBeUndefined();
     }
@@ -368,7 +398,7 @@ spec("Typst: files read in", () => {
     const { stet } = await setup({ "main.typ": TYPST_PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "chapters/discussion.typ", "= Discussion\nIt works.\n");
-    write(wt, "figs/plot.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n");
+    write(wt, "figs/plot.svg", '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
     write(wt, "main.typ", read(wt, "main.typ") + '#include "chapters/discussion.typ"\n#image("figs/plot.svg", width: 50%)\n');
     const r = await stet.submit("a", { title: "t" });
     const linked = r.groups.filter((g) => g.kind === "linked");
@@ -403,7 +433,10 @@ spec("Typst: moves", () => {
     const r = await stet.submit("a", { title: "move" });
     // (Moving the heading over the paragraph is the same document: the diff may show either.)
     expect(r.moves).toEqual([expect.objectContaining({ changed: 0 })]);
-    expect(r.items.every((i) => i.move), shown(r.items)).toBe(true);
+    expect(
+      r.items.every((i) => i.move),
+      shown(r.items),
+    ).toBe(true);
   });
 });
 
@@ -460,7 +493,9 @@ spec("Typst: labels across rounds, and in rewrites", () => {
     expect(parts.every((p) => p.length <= 6)).toBe(true);
     let out = "";
     let pos = 0;
-    const cuts = [...d.removed.map(([s, e]) => ({ s, e, ins: "" })), ...d.inserted.map((i) => ({ s: i.at, e: i.at, ins: i.text }))].sort((a, b) => a.e - b.e || a.s - b.s);
+    const cuts = [...d.removed.map(([s, e]) => ({ s, e, ins: "" })), ...d.inserted.map((i) => ({ s: i.at, e: i.at, ins: i.text }))].sort(
+      (a, b) => a.e - b.e || a.s - b.s,
+    );
     for (const c of cuts) {
       out += ALIGN.slice(pos, c.s) + c.ins;
       pos = Math.max(pos, c.e);
@@ -512,7 +547,10 @@ spec("Typst: prose", () => {
 
     it("but word swaps a few words apart stay apart", async () => {
       const { items } = await submitted(doc(S), doc("Plants are immobile organisms and therefore cannot avoid stress."));
-      expect(items.map((i) => [i.oldText, i.newText])).toEqual([["sessile", "immobile"], ["escape", "avoid"]]);
+      expect(items.map((i) => [i.oldText, i.newText])).toEqual([
+        ["sessile", "immobile"],
+        ["escape", "avoid"],
+      ]);
     });
 
     it("and so do edits in different sentences", async () => {
@@ -617,16 +655,31 @@ function units(r: Run): string[][] {
 
 /** What must hold for any Typst document a review can produce from `before` and `after`. */
 function wellFormedTyp(result: Files, before: Files, after: Files, what: string) {
-  const all = (fs: Files) => Object.entries(fs).filter(([f]) => f.endsWith(".typ")).map(([, t]) => t).join("\n\n");
+  const all = (fs: Files) =>
+    Object.entries(fs)
+      .filter(([f]) => f.endsWith(".typ"))
+      .map(([, t]) => t)
+      .join("\n\n");
   const [res, old, neu] = [all(result), all(before), all(after)];
   // No paragraph twice (unless it was there twice).
-  const paras = (t: string) => t.split(/\n[ \t]*\n/).map(nw).filter((p) => p.length > 40);
+  const paras = (t: string) =>
+    t
+      .split(/\n[ \t]*\n/)
+      .map(nw)
+      .filter((p) => p.length > 40);
   const count = (t: string) => paras(t).reduce((m, p) => m.set(p, (m.get(p) ?? 0) + 1), new Map<string, number>());
   const [cr, co, cn] = [count(res), count(old), count(neu)];
   for (const [p, k] of cr) expect(k, `${what}: paragraph twice: ${p.slice(0, 60)}`).toBeLessThanOrEqual(Math.max(co.get(p) ?? 1, cn.get(p) ?? 1));
   // Brackets balanced, and every $ with its partner (outside raw text and strings, without escapes).
-  const plain = res.replace(/\\./g, "").replace(/```[\s\S]*?```|`[^`]*`/g, "").replace(/"[^"\n]*"/g, '""');
-  for (const [o, c] of [["[", "]"], ["{", "}"], ["(", ")"]] as const) {
+  const plain = res
+    .replace(/\\./g, "")
+    .replace(/```[\s\S]*?```|`[^`]*`/g, "")
+    .replace(/"[^"\n]*"/g, '""');
+  for (const [o, c] of [
+    ["[", "]"],
+    ["{", "}"],
+    ["(", ")"],
+  ] as const) {
     const depth = [...plain].reduce((d, ch) => d + (ch === o ? 1 : ch === c ? -1 : 0), 0);
     expect(depth, `${what}: ${o}${c} don't balance`).toBe(0);
   }
@@ -646,10 +699,16 @@ function wellFormedTyp(result: Files, before: Files, after: Files, what: string)
 async function checkTyp(before: Files, after: Files, groups?: any[]) {
   const r = await submitTyp(before, after, groups);
   const readAll = (repo: string) => Object.fromEntries(Object.keys({ ...before, ...after }).map((f) => [f, read(repo, f)]));
-  await r.stet.accept(r.items.map((i) => i.id), { overrideLinked: true });
+  await r.stet.accept(
+    r.items.map((i) => i.id),
+    { overrideLinked: true },
+  );
   expect(readAll(r.repo)).toEqual({ ...before, ...after });
   const check = async (u: string[]) => {
-    const shown = u.map((id) => r.items.find((i) => i.id === id)!).map((i) => `${i.id} ${JSON.stringify(nw(i.oldText).slice(0, 30))}→${JSON.stringify(nw(i.newText).slice(0, 30))}`).join(", ");
+    const shown = u
+      .map((id) => r.items.find((i) => i.id === id)!)
+      .map((i) => `${i.id} ${JSON.stringify(nw(i.oldText).slice(0, 30))}→${JSON.stringify(nw(i.newText).slice(0, 30))}`)
+      .join(", ");
     const [fresh, other] = await Promise.all([submitTyp(before, after, groups), submitTyp(before, after, groups)]);
     await fresh.stet.accept(u);
     wellFormedTyp(readAll(fresh.repo), before, after, `accepting only ${shown}`);
@@ -806,7 +865,8 @@ spec("Typst: restructuring, moves of every kind next to edits", () => {
 // Scenario 3: moving a proof into an appendix (another file)
 
 spec("Typst: moving material into an appendix", () => {
-  const proof = "#block[\n  _Proof._ We argue by contradiction and assume that the bound fails for some input of length $n$.\n\n  Then the run visits more than $log n$ cells, which contradicts the choice of the input and ends the proof.\n]";
+  const proof =
+    "#block[\n  _Proof._ We argue by contradiction and assume that the bound fails for some input of length $n$.\n\n  Then the run visits more than $log n$ cells, which contradicts the choice of the input and ends the proof.\n]";
   const main = (body: string) =>
     `= Results <sec:results>\n#figure(kind: "theorem", supplement: [Theorem])[\n  Every run uses at most $log n$ cells.\n] <thm:main>\n${body}\n\n@thm:main is the main result of this paper, and the rest of it explains its consequences.\n#include "appendix.typ"\n`;
   const appendix = "= Appendix <sec:app>\nThis appendix collects the proofs that are too long for the main text of the paper.\n";
@@ -1037,7 +1097,16 @@ describe("labels, references and files read in (test report 5e4c6af)", () => {
     const label = item("= Intro <intro>", "= Intro <start>");
     const ref = item("See @intro.", "See @start.");
     const other = item("is", "was");
-    const { parts, notes } = await settleParts([{ title: "label", items: [label.id] }, { title: "ref", items: [ref.id] }, { title: "o", items: [other.id] }], [label, ref, other], undefined, { grouping: cfg.grouping });
+    const { parts, notes } = await settleParts(
+      [
+        { title: "label", items: [label.id] },
+        { title: "ref", items: [ref.id] },
+        { title: "o", items: [other.id] },
+      ],
+      [label, ref, other],
+      undefined,
+      { grouping: cfg.grouping },
+    );
     expect(parts?.map((p) => p.items)).toEqual([[label.id, ref.id], [other.id]]);
     expect(notes.join()).toMatch(/stops the build/);
   });

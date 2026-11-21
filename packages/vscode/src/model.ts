@@ -3,33 +3,33 @@
  * so it can be unit-tested with vitest.
  */
 import {
+  type Agent,
+  type Changeset,
+  changeSummary,
   compareItemIds,
+  type Group,
+  type InlineDiff,
+  type Item,
+  type ItemStatus,
   inlineDiff,
+  lineDiff,
   linkedUnit,
   moveChangesOf,
   moveFrom,
   moveOthers,
   movesOut,
   moveTo,
+  type Note,
   numberInRound,
   oneLine,
-  printable,
-  lineDiff,
-  spokenChange,
-  summaryTexts,
-  changeSummary,
   paragraphChange,
-  profileByName,
   partId,
   partIndexOf,
+  printable,
+  profileByName,
   roundOf,
-  type Agent,
-  type Changeset,
-  type Group,
-  type InlineDiff,
-  type Item,
-  type ItemStatus,
-  type Note,
+  spokenChange,
+  summaryTexts,
 } from "@stet/core";
 
 export interface Snapshot {
@@ -69,8 +69,7 @@ export interface Ref {
   id: string;
 }
 
-export const isRef = (v: unknown): v is Ref =>
-  !!v && typeof v === "object" && typeof (v as Ref).path === "string" && typeof (v as Ref).id === "string";
+export const isRef = (v: unknown): v is Ref => !!v && typeof v === "object" && typeof (v as Ref).path === "string" && typeof (v as Ref).id === "string";
 
 /**
  * Whether a command's argument means it came from the Review panel (a key there, or a row's
@@ -147,7 +146,12 @@ export class TreeModel {
     if (node.type === "item") return matchesFilter(node.item, f!);
     if (node.type === "note") {
       const q = f!.text?.trim().toLowerCase();
-      return !f!.status && (!f!.agent || node.note.agent === f!.agent) && (!f!.file || node.note.file === f!.file) && (!q || [node.note.body, node.note.text, ...node.note.thread.map((t) => t.text)].join("\n").toLowerCase().includes(q));
+      return (
+        !f!.status &&
+        (!f!.agent || node.note.agent === f!.agent) &&
+        (!f!.file || node.note.file === f!.file) &&
+        (!q || [node.note.body, node.note.text, ...node.note.thread.map((t) => t.text)].join("\n").toLowerCase().includes(q))
+      );
     }
     return this.allChildren(node).some((c) => this.keeps(c));
   }
@@ -164,7 +168,10 @@ export class TreeModel {
   /** Visible members of a group (atomic groups never show: their members are merged). */
   members(g: Group): Item[] {
     if (g.kind === "atomic") return [];
-    return g.items.map((id) => this.items.get(id)).filter((i): i is Item => !!i && this.visible(i)).sort(byId);
+    return g.items
+      .map((id) => this.items.get(id))
+      .filter((i): i is Item => !!i && this.visible(i))
+      .sort(byId);
   }
 
   /** Visible members of the k-th part of a group. */
@@ -187,10 +194,13 @@ export class TreeModel {
   private ungrouped(cs: Changeset): Item[] {
     return this.snap.items
       .filter((i) => i.changeset === cs.id && this.visible(i))
-      .filter((i) => !i.groups.some((gid) => {
-        const g = this.groups.get(gid);
-        return g && g.kind !== "atomic";
-      }))
+      .filter(
+        (i) =>
+          !i.groups.some((gid) => {
+            const g = this.groups.get(gid);
+            return g && g.kind !== "atomic";
+          }),
+      )
       .sort(byId);
   }
 
@@ -201,7 +211,12 @@ export class TreeModel {
   private allChildren(node?: Node): Node[] {
     if (!node) {
       return this.snap.agents
-        .filter((a) => (this.mode === "review" && a.state === "active") || this.snap.items.some((i) => i.agent === a.id && this.visible(i)) || this.resolvedNotes(a.id).length > 0)
+        .filter(
+          (a) =>
+            (this.mode === "review" && a.state === "active") ||
+            this.snap.items.some((i) => i.agent === a.id && this.visible(i)) ||
+            this.resolvedNotes(a.id).length > 0,
+        )
         .sort((a, b) => a.id.localeCompare(b.id))
         .map((agent) => ({ type: "agent", agent }));
     }
@@ -264,7 +279,10 @@ export class TreeModel {
     const counts = new Map<ItemStatus, number>();
     for (const i of this.snap.items) if (!isLive(i) && pred(i)) counts.set(i.status, (counts.get(i.status) ?? 0) + 1);
     const order: ItemStatus[] = ["accepted", "rejected", "stale", "withdrawn", "superseded"];
-    return order.filter((st) => counts.has(st)).map((st) => `${counts.get(st)} ${STATUS_TEXT[st]}`).join(" · ");
+    return order
+      .filter((st) => counts.has(st))
+      .map((st) => `${counts.get(st)} ${STATUS_TEXT[st]}`)
+      .join(" · ");
   }
 
   item(id: string): Item | undefined {
@@ -311,7 +329,11 @@ export class TreeModel {
 
   /** The other items of an item's move that are still pending. */
   private moveRest(item: Item | undefined): Item[] {
-    return item ? moveOthers(item).map((o) => this.items.get(o)).filter((o): o is Item => !!o && isLive(o)) : [];
+    return item
+      ? moveOthers(item)
+          .map((o) => this.items.get(o))
+          .filter((o): o is Item => !!o && isLive(o))
+      : [];
   }
 
   /** An item and the rest of its move, if it is part of one (spec §6.4.7): decided together. */
@@ -321,7 +343,9 @@ export class TreeModel {
 
   /** The other items of an item's move, in their order (moved-out ones first). */
   others(item: Item): Item[] {
-    return moveOthers(item).map((o) => this.items.get(o)).filter((o): o is Item => !!o);
+    return moveOthers(item)
+      .map((o) => this.items.get(o))
+      .filter((o): o is Item => !!o);
   }
 
   /** Is the group exactly one move? */
@@ -466,7 +490,11 @@ export const noLinks = (s: string): string => printable(s).replace(/\]\s*\(/g, "
 
 export function ghostText(s: string, max = 80): string {
   // Whitespace alone (a paragraph split or joined) would be invisible: shown as ¶ and ␣.
-  if (s && !s.trim()) return s.replace(/\r?\n[ \t]*\r?\n\s*/g, "¶").replace(/\r?\n/g, "↵").replace(/[ \t]/g, "␣");
+  if (s && !s.trim())
+    return s
+      .replace(/\r?\n[ \t]*\r?\n\s*/g, "¶")
+      .replace(/\r?\n/g, "↵")
+      .replace(/[ \t]/g, "␣");
   const t = printable(s).replace(/\n/g, " ⏎ ");
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
@@ -529,13 +557,26 @@ export const FINISH_SAVE = "Save and commit";
  * Finish review's question: which files are committed, which hold edits of yours that go along,
  * which have unsaved text (not committed unless saved), and that undo ends with the commit.
  */
-export function finishQuestion(count: number, files: string[], yourEdits: string[], unsaved: string[], project = ""): { message: string; detail: string; buttons: string[] } {
+export function finishQuestion(
+  count: number,
+  files: string[],
+  yourEdits: string[],
+  unsaved: string[],
+  project = "",
+): { message: string; detail: string; buttons: string[] } {
   const list = (xs: string[]) => xs.join(", ");
   const detail = [`Files: ${list(files)}.`];
   if (yourEdits.length) detail.push(`Your own edits in ${list(yourEdits)} are committed too (Stet commits whole files).`);
-  if (unsaved.length) detail.push(`${list(unsaved)} ${unsaved.length === 1 ? "has" : "have"} unsaved edits: “Commit” leaves them out, “${FINISH_SAVE}” saves them into the commit.`);
+  if (unsaved.length)
+    detail.push(
+      `${list(unsaved)} ${unsaved.length === 1 ? "has" : "have"} unsaved edits: “Commit” leaves them out, “${FINISH_SAVE}” saves them into the commit.`,
+    );
   detail.push("After the commit, Undo no longer takes these changes back (git revert can).");
-  return { message: `Commit ${count} accepted change${count === 1 ? "" : "s"}${project ? ` in ${project}` : ""}?`, detail: detail.join("\n"), buttons: unsaved.length ? ["Commit", FINISH_SAVE] : ["Commit"] };
+  return {
+    message: `Commit ${count} accepted change${count === 1 ? "" : "s"}${project ? ` in ${project}` : ""}?`,
+    detail: detail.join("\n"),
+    buttons: unsaved.length ? ["Commit", FINISH_SAVE] : ["Commit"],
+  };
 }
 
 /**
@@ -591,11 +632,27 @@ export function manyQuestion(
   otherParts: string[] = [],
 ): { title: string; choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] } {
   const choices: { label: string; detail: string; withRest: boolean; withGroups?: boolean }[] = [];
-  if (rest.length) choices.push({ label: `${verb} the ${count} selected and the ${rest.length} linked with them`, detail: "Linked changes belong together.", withRest: true });
+  if (rest.length)
+    choices.push({ label: `${verb} the ${count} selected and the ${rest.length} linked with them`, detail: "Linked changes belong together.", withRest: true });
   if (otherParts.length)
-    choices.push({ label: `${verb} the ${count} selected and all ${otherParts.length + rest.length} other changes of their linked groups`, detail: "Every part at once.", withRest: true, withGroups: true });
-  if (rest.length) choices.push({ label: `${verb} only the ${count} selected (breaks their linked groups)`, detail: "The agent is asked to repair the document.", withRest: false });
-  else choices.push({ label: `${verb} only the ${count} selected`, detail: `The other parts of their linked groups (${otherParts.join(", ")}) stay pending: the document is inconsistent until they are accepted too.`, withRest: true });
+    choices.push({
+      label: `${verb} the ${count} selected and all ${otherParts.length + rest.length} other changes of their linked groups`,
+      detail: "Every part at once.",
+      withRest: true,
+      withGroups: true,
+    });
+  if (rest.length)
+    choices.push({
+      label: `${verb} only the ${count} selected (breaks their linked groups)`,
+      detail: "The agent is asked to repair the document.",
+      withRest: false,
+    });
+  else
+    choices.push({
+      label: `${verb} only the ${count} selected`,
+      detail: `The other parts of their linked groups (${otherParts.join(", ")}) stay pending: the document is inconsistent until they are accepted too.`,
+      withRest: true,
+    });
   return { title: `The ${count} selected changes are linked with ${[...rest, ...otherParts].join(", ")}`, choices };
 }
 
@@ -628,8 +685,16 @@ export function diffBlock(oldText: string, newText: string): string {
   // line around them, not the whole entry twice (test report 5e4c6af, UX).
   if (oldText.split("\n").length >= 3 && newText.split("\n").length >= 3) return fence(lineDiff(printable(oldText), printable(newText), 1).join("\n"), "diff");
   const lines = [
-    ...(oldText ? printable(oldText).split("\n").map((l) => "- " + l) : []),
-    ...(newText ? printable(newText).split("\n").map((l) => "+ " + l) : []),
+    ...(oldText
+      ? printable(oldText)
+          .split("\n")
+          .map((l) => "- " + l)
+      : []),
+    ...(newText
+      ? printable(newText)
+          .split("\n")
+          .map((l) => "+ " + l)
+      : []),
   ];
   return fence(lines.join("\n"), "diff");
 }
@@ -690,8 +755,16 @@ export function changeAt<T extends { range: { start: Pos; end: Pos } }>(located:
   const before = (a: Pos, b: Pos) => a.line < b.line || (a.line === b.line && a.character <= b.character);
   const inside = (r: { start: Pos; end: Pos }) => before(r.start, pos) && before(pos, r.end);
   const gap = (r: { start: Pos; end: Pos }) =>
-    inside(r) ? 0 : 1 + Math.min(r.start.line === pos.line ? Math.abs(r.start.character - pos.character) : Infinity, r.end.line === pos.line ? Math.abs(r.end.character - pos.character) : Infinity);
-  return located.filter((l) => inside(l.range) || l.range.start.line === pos.line || l.range.end.line === pos.line).sort((a, b) => gap(a.range) - gap(b.range))[0];
+    inside(r)
+      ? 0
+      : 1 +
+        Math.min(
+          r.start.line === pos.line ? Math.abs(r.start.character - pos.character) : Infinity,
+          r.end.line === pos.line ? Math.abs(r.end.character - pos.character) : Infinity,
+        );
+  return located
+    .filter((l) => inside(l.range) || l.range.start.line === pos.line || l.range.end.line === pos.line)
+    .sort((a, b) => gap(a.range) - gap(b.range))[0];
 }
 
 /**
@@ -727,7 +800,8 @@ export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what
 
 /** The question before dissolving a group, or null: a linked group's changes can then be decided apart, which can break the document. */
 export function dissolveQuestion(g: { id: string; kind: string; title: string }): string | null {
-  if (g.kind === "linked") return `Dissolve linked group ${g.id} “${g.title}”? Its changes can then be accepted one by one, which can break the document. This can't be undone.`;
+  if (g.kind === "linked")
+    return `Dissolve linked group ${g.id} “${g.title}”? Its changes can then be accepted one by one, which can break the document. This can't be undone.`;
   // A related group too: dissolving it can't be undone either (test report v0.16.0).
   if (g.kind === "related") return `Dissolve group ${g.id} “${g.title}”? Its changes are then listed one by one in their round. This can't be undone.`;
   return null;

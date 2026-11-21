@@ -1,21 +1,60 @@
 /** What the panel's rows say, and its menu entries. */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
+import { describe, expect, it } from "vitest";
 import { changeActions } from "../src/actions.js";
-import { behindAgents, itemSpoken, type Snapshot, threadText, TreeModel, unreadReplies } from "../src/model.js";
+import { behindAgents, itemSpoken, type Snapshot, TreeModel, threadText, unreadReplies } from "../src/model.js";
 
-const agent: Agent = { id: "a", kind: "claude-code", branch: "stet/a", worktree: "/w/a", baseCommit: "b", lastTip: "b", replayedAt: "", feedbackCursor: 0, createdAt: "", state: "active" };
+const agent: Agent = {
+  id: "a",
+  kind: "claude-code",
+  branch: "stet/a",
+  worktree: "/w/a",
+  baseCommit: "b",
+  lastTip: "b",
+  replayedAt: "",
+  feedbackCursor: 0,
+  createdAt: "",
+  state: "active",
+};
 
 const item = (id: string, extra: Partial<Item> = {}): Item => ({
-  id, agent: "a", changeset: "C1", file: "main.tex", kind: "modify", baseCommit: "b", range: { start: 0, end: 1 },
-  oldText: "old", newText: "new", context: { before: "", after: "" }, fingerprint: "", note: null, groups: ["G1"],
-  status: "pending", resolution: null, supersedes: null, conflictsWith: [], history: [], thread: [], ...extra,
+  id,
+  agent: "a",
+  changeset: "C1",
+  file: "main.tex",
+  kind: "modify",
+  baseCommit: "b",
+  range: { start: 0, end: 1 },
+  oldText: "old",
+  newText: "new",
+  context: { before: "", after: "" },
+  fingerprint: "",
+  note: null,
+  groups: ["G1"],
+  status: "pending",
+  resolution: null,
+  supersedes: null,
+  conflictsWith: [],
+  history: [],
+  thread: [],
+  ...extra,
 });
 
 function model(g: Partial<Group>, items: Item[] = ["1.1", "1.2", "1.3"].map((i) => item(i))): TreeModel {
-  const group: Group = { id: "G1", agent: "a", changeset: "C1", kind: "linked", title: "Rename label sec:a → sec:b", rationale: null, source: "auto", items: items.filter((i) => i.groups.includes("G1")).map((i) => i.id), state: "open", ...g };
+  const group: Group = {
+    id: "G1",
+    agent: "a",
+    changeset: "C1",
+    kind: "linked",
+    title: "Rename label sec:a → sec:b",
+    rationale: null,
+    source: "auto",
+    items: items.filter((i) => i.groups.includes("G1")).map((i) => i.id),
+    state: "open",
+    ...g,
+  };
   const s: Snapshot = { agents: [agent], changesets: [cs], groups: [group], items } as Snapshot;
   return new TreeModel(s, "review");
 }
@@ -68,8 +107,30 @@ describe("A change that can't be found in your file", () => {
 
 describe("resolved notes in History (test report v0.16)", () => {
   it("are listed under their agent in History, not in the Review panel", () => {
-    const note = (id: string, state: "open" | "resolved") => ({ id, agent: "a", file: "main.tex", text: "", range: { start: 0, end: 0 }, context: { before: "", after: "" }, body: "b", createdAt: "", state, deliveredAt: "", thread: [] });
-    const s = { agents: [agent], changesets: [], groups: [], items: [], notes: [note("N1", "open"), note("N2", "resolved")], syncNeeded: new Set(), uncommitted: [], unshared: false, missing: [] } as unknown as Snapshot;
+    const note = (id: string, state: "open" | "resolved") => ({
+      id,
+      agent: "a",
+      file: "main.tex",
+      text: "",
+      range: { start: 0, end: 0 },
+      context: { before: "", after: "" },
+      body: "b",
+      createdAt: "",
+      state,
+      deliveredAt: "",
+      thread: [],
+    });
+    const s = {
+      agents: [agent],
+      changesets: [],
+      groups: [],
+      items: [],
+      notes: [note("N1", "open"), note("N2", "resolved")],
+      syncNeeded: new Set(),
+      uncommitted: [],
+      unshared: false,
+      missing: [],
+    } as unknown as Snapshot;
     const ids = (m: TreeModel) => m.children(m.children()[0]).map((n) => (n.type === "note" ? n.note.id : n.type));
     expect(ids(new TreeModel(s, "review"))).toEqual(["N1"]);
     expect(ids(new TreeModel(s, "history"))).toEqual(["N2"]);

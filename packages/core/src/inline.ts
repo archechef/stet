@@ -3,7 +3,7 @@
  * formula), but the editor shows only the tokens that actually differ.
  */
 import { diffArrays } from "diff";
-import { tokenizeWords, type Token } from "./tokenizer.js";
+import { type Token, tokenizeWords } from "./tokenizer.js";
 
 export interface InlineDiff {
   /** Spans of the old text that are removed, [start, end) offsets into the old text. */

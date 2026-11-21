@@ -1,7 +1,8 @@
 /** Item threads through the VS Code Comments API (spec §12.2). */
-import * as vscode from "vscode";
+
 import type { Item, Note } from "@stet/core";
-import { inlineMax, type Host, type Locator } from "./editor.js";
+import * as vscode from "vscode";
+import { type Host, inlineMax, type Locator } from "./editor.js";
 import { fitsInline, itemDiff, LineIndex, proposalMarkdown, toLf } from "./model.js";
 import type { Project } from "./project.js";
 
@@ -41,7 +42,8 @@ export class Threads implements vscode.Disposable {
       this.controller,
       host.onDidChange(() => void this.sync()),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("stet.longChanges") || e.affectsConfiguration("stet.newTextStyle") || e.affectsConfiguration("editor.wordWrap")) void this.rebuild();
+        if (e.affectsConfiguration("stet.longChanges") || e.affectsConfiguration("stet.newTextStyle") || e.affectsConfiguration("editor.wordWrap"))
+          void this.rebuild();
       }),
     );
   }
@@ -215,13 +217,13 @@ export class Threads implements vscode.Disposable {
   }
 
   private comments(project: Project, item: Item): vscode.Comment[] {
-    const proposal = this.showsProposal(project, item)
-      ? [new StetComment(new vscode.MarkdownString(proposalMarkdown(item)), { name: item.agent })]
-      : [];
-    return proposal.concat(item.thread.map(
-      // Plain text: agent replies must not render links or remote images.
-      (t) => new StetComment(new vscode.MarkdownString().appendText(t.text), { name: t.author === "user" ? "You" : item.agent }, new Date(t.at)),
-    ));
+    const proposal = this.showsProposal(project, item) ? [new StetComment(new vscode.MarkdownString(proposalMarkdown(item)), { name: item.agent })] : [];
+    return proposal.concat(
+      item.thread.map(
+        // Plain text: agent replies must not render links or remote images.
+        (t) => new StetComment(new vscode.MarkdownString().appendText(t.text), { name: t.author === "user" ? "You" : item.agent }, new Date(t.at)),
+      ),
+    );
   }
 
   /** The item a reply belongs to: known thread, or the item under a thread the user just opened. */
