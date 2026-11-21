@@ -64,12 +64,7 @@ Install it in VS Code: Extensions view → `…` → *Install from VSIX…*. Cow
 
 ### Command line
 
-Requirements: Node.js ≥ 20 and git ≥ 2.28. Get this repository first (clone it, or unpack a release's source archive), then in its folder:
-
-```bash
-npm install && npm run build
-cd packages/cli && npm link           # puts `stet` on your PATH
-```
+Requirements: Node.js ≥ 22 and git ≥ 2.28. Download `stet-<version>.mjs` from the [latest release](https://github.com/archechef/stet/releases/latest): it is the whole command in one file. Run it as `node stet-<version>.mjs`, or put a `stet` command on your PATH that does ([details](docs/cli.md#1-installation)).
 
 In your LaTeX or Typst project (a git repository with at least one commit):
 
@@ -99,22 +94,37 @@ stet commit -m "Polish the introduction"   # commits the files whole, your own e
 
 ## Status
 
-Version 0.16.0. Milestones M1–M3 are done:
+Version 0.17.0. Milestones M1–M3 and M5 are done:
 - **M1:** core library and CLI.
 - **M2:** MCP server and guardrails.
 - **M3:** VS Code extension.
+- **M5:** PDF previews of a change (LaTeX).
 
 **Tested:**
 - live with the Claude desktop app;
 - hands-on in VS Code;
-- by automated tests (about 130), run on Windows so far; the CI workflow runs them on Windows, macOS and Linux with Node.js 22 and 24, and checks that Stet runs on Node.js 20.
+- by about 630 automated tests, which CI runs on Windows, macOS and Linux with Node.js 22, 24 and 26, and the VS Code integration test (59 checks in real VS Code, run by hand).
 
 **Still to do:** live runs with the Claude Code CLI and with Codex ([docs/live-tests.md](docs/live-tests.md)).
 
-**Planned:**
-- **M4:** Overleaf pull/push helpers.
-- **M5:** PDF previews of a change.
+**Not there yet:**
+- PDF previews for Typst;
+- Hayagriva (`.yml`) bibliographies in Typst projects;
+- **M4:** Overleaf pull/push helpers;
 - **M6:** a web UI.
+
+On native Windows the guard is a heuristic ([SECURITY.md](SECURITY.md)).
+
+## Compatibility
+
+From 1.0, Stet follows [semantic versioning](https://semver.org). Within 1.x, these keep working as they are; something is removed or changed only in 2.0:
+- the `stet` commands, their options, exit codes and `--json` output;
+- the MCP tools' names and arguments;
+- the keys of `.git/stet/config.json`;
+- the VS Code extension's settings and command ids;
+- the data in `.git/stet/`: a newer 1.x reads what an older one wrote. If a newer Stet ever has to change that format in a way older versions can't read, an older Stet refuses to write to it and says to update, instead of damaging it.
+
+New commands, options, tools, settings and fields can come in any 1.x. Not covered: the wording of messages and of the agents' instructions, and `@stet/core`, which is internal to Stet's own packages.
 
 ## License
 

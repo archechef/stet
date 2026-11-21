@@ -105,7 +105,7 @@ The gear in the Stet panel holds everything you may want to switch while you wor
 | `stet.longChanges` | `collapsed` | Long proposals in a panel under the change, opened from the gutter (`collapsed`), open (`expanded`), or only on hover (`hover`). |
 | `stet.shareEdits` | `manual` | Which of your edits agents see: when you share them (`manual`), every save (`saved`), or only commits (`committed`). |
 | `stet.pdfPreviews` | `both` | Previews in the hover and the panel, in one of them, or `off`. |
-| `stet.runtime` | `auto` | What runs the agents' Stet server: Node.js 20+ if installed, else VS Code's own runtime. |
+| `stet.runtime` | `auto` | What runs the agents' Stet server: Node.js 22+ if installed, else VS Code's own runtime. |
 
 ---
 

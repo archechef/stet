@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 — 2026-11-21
 
 **Typst projects.** Stet reviews Typst as it does LaTeX: changes are split by words and sentences, with maths, labels and references (`<a>`, `@a`, `#ref(<a>)`) kept whole; a renamed label or citation key is linked with its uses, a `#let` with the code that uses it, a new chapter or figure with the `#include` or `#image` that reads it in; moved paragraphs and blocks are moves. `@key` is a citation when the bibliography (a .bib file) has the key, else a reference. `stet init` and *Set up project* tell a Typst project by its files, and agents get Typst examples. In Typst a reference to a missing label or citation is an error, not LaTeX's `??`: a label or citation key and its references are never in separately acceptable parts, and a new label is linked with new references to it. No PDF previews for Typst yet; their entries are hidden for Typst changes. Also for LaTeX: a .bib entry whose key alone changed is one change, linked with the renamed `\cite`s.
+
+**Requirements and compatibility.**
+- **Node.js 22 or newer** (Node.js 20 reached its end of life in April 2026), and VS Code 1.101 or newer, whose own runtime is Node.js 22. CI tests Node.js 22, 24 and 26.
+- **What 1.x will keep stable** is written down (README, *Compatibility*): commands, options, exit codes and `--json` output, MCP tools, config keys, VS Code settings and command ids, and the data in `.git/stet/`.
+- **A Stet that finds a store in a newer format than it knows refuses to write to it** and says to update, instead of writing records the newer one can't read. It still shows what is there. Today's format is the only one so far; older stores are read as before.
+- The extension is no longer marked *Preview*.
+- The command line is installed from a release's `stet-<version>.mjs` (docs/cli.md says how); building it from the source is the other way.
+
+**Not in this version:** PDF previews for Typst; Hayagriva (`.yml`) bibliographies in Typst projects (`.bib` files are read); Overleaf pull/push helpers (M4); a web UI (M6). On native Windows, where Claude Code has no sandbox, the guard parses shell commands heuristically (SECURITY.md).
 
 Fixes from the security review and the test report of commit 5e4c6af (2026-11-21).
 

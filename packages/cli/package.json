@@ -1,7 +1,8 @@
 {
   "name": "stet-tex",
-  "version": "0.16.0",
-  "description": "Stet: human-in-the-loop review of AI-proposed changes to LaTeX projects",
+  "version": "0.17.0",
+  "private": true,
+  "description": "Stet: human-in-the-loop review of AI-proposed changes to LaTeX and Typst projects",
   "type": "module",
   "bin": {
     "stet": "dist/index.js"
@@ -10,10 +11,10 @@
     "dist"
   ],
   "dependencies": {
-    "@stet/core": "0.16.0"
+    "@stet/core": "0.17.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "license": "MIT",
   "author": "Noah Tittelbach",

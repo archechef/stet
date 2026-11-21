@@ -2,7 +2,7 @@
 
 ## Setup
 
-**Requirements:** Node.js 20 or newer, git 2.28 or newer, and optionally VS Code for the extension.
+**Requirements:** Node.js 22.12 or newer, git 2.28 or newer, and optionally VS Code for the extension.
 
 ```bash
 npm install
@@ -47,13 +47,13 @@ The core in more detail:
 - git hooks, workspace files and `doctor`;
 - `AgentFiles`, the safe git access to agent workspaces.
 
-What `@stet/core` exports (`packages/core/src/index.ts`) is what the command line and the extension use: the `Stet` service, the MCP server, the guard, setup and their types. Keep helpers internal; `Stet`'s parts are marked `@internal` and left out of the built types (`stripInternal`), and `packages/core/test/api.test.ts` checks the built `.d.ts`. Something a language does differently belongs in its profile (`packages/core/src/lang/`), not in shared code. A change to how a record in `.git/stet/` is stored keeps the old shape readable: `upgradeItem` (`packages/core/src/model.ts`) turns every older format into today's as the store reads it, so the rest of the code sees one shape.
+What `@stet/core` exports (`packages/core/src/index.ts`) is what the command line and the extension use: the `Stet` service, the MCP server, the guard, setup and their types. Keep helpers internal; `Stet`'s parts are marked `@internal` and left out of the built types (`stripInternal`), and `packages/core/test/api.test.ts` checks the built `.d.ts`. Something a language does differently belongs in its profile (`packages/core/src/lang/`), not in shared code. What 1.x keeps stable is listed in the README (*Compatibility*). A change to how a record in `.git/stet/` is stored keeps the old shape readable: `upgradeItem` (`packages/core/src/model.ts`) turns every older format into today's as the store reads it, so the rest of the code sees one shape. Raise `STORE_SCHEMA` only for a change older versions can't read that way: they then refuse to write to the store.
 
 Design and rationale: [docs/spec.md](docs/spec.md). The milestone notes in §16 record what was built, tested and reviewed, and why.
 
 ## Tests
 
-- `npm test` runs everything under `packages/*/test` named `*.test.ts`. The test runner needs Node.js 22.12 or newer; Stet itself runs on Node.js 20 or newer. CI (`.github/workflows/ci.yml`) tests on Windows, macOS and Linux with Node.js 22 and 24, checks Node.js 20, and builds the `.vsix` as a downloadable artifact. The end-to-end tests create temporary git repositories and need `git` on the PATH. Some also use `sh`, which Git for Windows provides, and skip themselves without it.
+- `npm test` runs everything under `packages/*/test` named `*.test.ts`. The test runner needs Node.js 22.12 or newer; Stet itself runs on Node.js 22 or newer. CI (`.github/workflows/ci.yml`) tests on Windows, macOS and Linux with Node.js 22, 24 and 26, and builds the `.vsix` as a downloadable artifact. The end-to-end tests create temporary git repositories and need `git` on the PATH. Some also use `sh`, which Git for Windows provides, and skip themselves without it.
 - `npm run lint` checks the code with [Biome](https://biomejs.dev) (lint rules, formatting, import order; `biome.json`), and `npm run format` fixes what it can. `npm run typecheck` type-checks the tests of every package, which the build leaves out (`tsconfig.test.json`). CI runs both. The VS Code extension *Biome* (`biomejs.biome`) uses the same settings. The one-time reformat is listed in `.git-blame-ignore-revs`; `git config blame.ignoreRevsFile .git-blame-ignore-revs` makes `git blame` skip it.
 - `npm run test:integration -w stet-vscode` starts your installed VS Code with a throwaway profile against a fixture project, once with each runtime (Node.js and VS Code's own). A window appears briefly. It is not part of CI. It starts the VS Code binary next to the `code` launcher (which can hand off to an open VS Code and return at once); `VSCODE_EXE` points it at another one. The suite (`packages/vscode/test/integration/suite.cjs`) is a list of named steps, each run on its own: a step that throws is reported as failed, and the next one still runs. What a later step needs from an earlier one is declared before the list.
 - `npm run test:perf` times larger submissions (`*.perf.ts`: a linked group of 150 changes, a section of 60 paragraphs reordered, a 400-paragraph paper) and checks they still split right. Each prints its time; the limits are generous, to catch a slowdown by an order of magnitude. It is not part of `npm test` or CI, where machine speed varies too much. Run it before a release, or after changing splitting, moves or grouping.
@@ -89,7 +89,7 @@ The `.vsix` contains the extension and its own copy of the `stet` CLI. Users nee
 
 The tag starts `.github/workflows/release.yml`. It checks that every version matches the tag, builds, runs the tests and creates a GitHub release with:
 - `stet-vscode-<version>.vsix`, the VS Code extension;
-- `stet-<version>.mjs`, the whole CLI in one file (`node stet-<version>.mjs`, Node.js 20 or newer);
+- `stet-<version>.mjs`, the whole CLI in one file (`node stet-<version>.mjs`, Node.js 22 or newer);
 - `SHA256SUMS.txt`;
 - the changelog section as release notes.
 

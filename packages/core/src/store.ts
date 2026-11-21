@@ -15,6 +15,7 @@ import {
   type Item,
   type NewEvent,
   type Note,
+  STORE_SCHEMA,
   type StetEvent,
   type StoreState,
   upgradeItem,
@@ -118,7 +119,7 @@ export class Store {
     for (const d of ["agents", "changesets", "groups", "items", "notes"] as const) await mkdir(this.dir(d), { recursive: true });
     if (!(await pathExists(join(this.root, "config.json")))) await writeJsonAtomic(join(this.root, "config.json"), configDelta(defaultConfig(mainBranch)));
     if (!(await pathExists(join(this.root, "state.json")))) {
-      const state: StoreState = { schema: 1, nextChangeset: 1, nextGroup: 1, nextEvent: 1, base: null };
+      const state: StoreState = { schema: STORE_SCHEMA, nextChangeset: 1, nextGroup: 1, nextEvent: 1, base: null };
       await writeJsonAtomic(join(this.root, "state.json"), state);
     }
     if (!(await pathExists(join(this.root, "events.jsonl")))) await writeFile(join(this.root, "events.jsonl"), "");
@@ -178,6 +179,7 @@ export class Store {
     this.token = token;
     this.wrote = false;
     try {
+      await this.requireKnownFormat();
       return await lockContext.run(this, fn);
     } finally {
       // One signal per operation that changed records, while the lock is still held.
@@ -188,6 +190,20 @@ export class Store {
       const cur = await readJson<{ token?: string }>(this.lockPath).catch(() => null);
       if (cur?.token === token) await rm(this.lockPath, { force: true });
     }
+  }
+
+  /**
+   * Every write happens under the lock: refuse to take part in one on a store a newer Stet has
+   * changed the format of. An older Stet would write records the newer one can't read, or drop
+   * what it doesn't know (the bundled CLI, the copy agents run, a colleague's older extension).
+   */
+  private async requireKnownFormat(): Promise<void> {
+    const schema = (await readJson<Partial<StoreState>>(join(this.root, "state.json")).catch(() => null))?.schema;
+    if (typeof schema === "number" && schema > STORE_SCHEMA)
+      throw new StetError(
+        `This project's Stet records (${this.root}) were written by a newer version of Stet (store format ${schema}; this one knows ${STORE_SCHEMA}). ` +
+          "Update Stet (the VS Code extension, or the stet command) before changing anything here; nothing was written.",
+      );
   }
 
   /**

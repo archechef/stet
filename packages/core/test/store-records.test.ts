@@ -1,8 +1,8 @@
-/** Records written by older versions of Stet are read in today's shape. */
+/** Records written by older versions of Stet are read in today's shape; a store in a newer format is left alone. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { type Item, upgradeItem } from "../src/model.js";
+import { type Item, STORE_SCHEMA, upgradeItem } from "../src/model.js";
 import { edit, PAPER, setup } from "./helpers.js";
 
 describe("items stored by an older Stet (code quality report 6a517ae)", () => {
@@ -63,5 +63,27 @@ describe("a submit is written in one step (code quality report 6a517ae, refactor
     // Submitted again, it goes through as it would have.
     const r = await stet.submit("a", { title: "revised" });
     expect(r.superseded).toEqual([items[0]!.id]);
+  });
+});
+
+describe("a store a newer Stet changed the format of (release readiness 95a262a, item 3)", () => {
+  it("is read, but nothing is written to it", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const a = await stet.newAgent("a");
+    edit(a.worktree, "main.tex", "$a+b=c$", "$a+b=d$");
+    const [it] = (await stet.submit("a", { title: "t" })).items;
+    const stateFile = join(repo, ".git", "stet", "state.json");
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    writeFileSync(stateFile, JSON.stringify({ ...state, schema: STORE_SCHEMA + 1 }));
+    expect((await stet.getItem(it!.id))!.status).toBe("pending");
+    await expect(stet.reject([it!.id])).rejects.toThrow(/written by a newer version of Stet .*nothing was written/);
+    expect((await stet.getItem(it!.id))!.status).toBe("pending");
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).schema).toBe(STORE_SCHEMA + 1);
+  });
+
+  it("a store of this format is written as before", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    expect(JSON.parse(readFileSync(join(repo, ".git", "stet", "state.json"), "utf8")).schema).toBe(STORE_SCHEMA);
+    await expect(stet.newAgent("a")).resolves.toMatchObject({ id: "a" });
   });
 });

@@ -38,7 +38,7 @@ export async function findNode(): Promise<string | null> {
         continue;
       const v = await run(path, ["--version"]);
       const major = v ? nodeMajor(v) : null;
-      if (major !== null && major >= 20) return path;
+      if (major !== null && major >= MIN_NODE_MAJOR) return path;
     }
   }
   return null;
@@ -71,11 +71,14 @@ export async function cliCommand(mode: RuntimeMode, script: string): Promise<Cli
   if (mode !== "vscode") {
     const node = await findNode();
     if (node) return { command: node.replace(/\\/g, "/"), args: [script.replace(/\\/g, "/")] };
-    if (mode === "node") throw new Error('Node.js 20 or newer was not found on PATH (setting stet.runtime is "node").');
+    if (mode === "node") throw new Error(`Node.js ${MIN_NODE_MAJOR} or newer was not found on PATH (setting stet.runtime is "node").`);
   }
   // VS Code's own Electron binary behaves like Node with ELECTRON_RUN_AS_NODE.
   return { command: process.execPath.replace(/\\/g, "/"), args: [script.replace(/\\/g, "/")], env: { ELECTRON_RUN_AS_NODE: "1" } };
 }
+
+/** The oldest Node.js the CLI runs on (VS Code's own runtime has it from VS Code 1.101). */
+export const MIN_NODE_MAJOR = 22;
 
 /** Parse `node --version` output; returns the major version or null. */
 export function nodeMajor(version: string): number | null {

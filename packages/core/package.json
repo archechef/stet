@@ -1,7 +1,8 @@
 {
   "name": "@stet/core",
-  "version": "0.16.0",
-  "description": "Stet core: review AI-proposed changes to LaTeX projects",
+  "version": "0.17.0",
+  "private": true,
+  "description": "Stet core: review AI-proposed changes to LaTeX and Typst projects (internal to Stet's packages)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,7 +16,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "diff": "^9.0.0"

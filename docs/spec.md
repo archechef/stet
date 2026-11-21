@@ -70,10 +70,11 @@ Item, group and changeset IDs are short sequential numbers (`S12`, `G7`, `C4`) u
 |---|---|
 | `@stet/core` | Store, git operations, splitter, anchoring, replay, service API, event bus, and the language profiles (§6.0) that hold everything it knows about LaTeX and BibTeX. Has no UI. |
 | `stet-tex` (npm) → binary `stet` | CLI and MCP server (`stet mcp`). Later also `stet serve` (HTTP and web UI). |
-| `@stet/ui` | Web components: item list, diff view, comment threads, preview viewer. Used by the VS Code webview and by the web UI. |
-| `stet-vscode` | VS Code extension. Bundles the core and ui packages and adds native editor integration: decorations, CodeLens, the Comments API. |
+| `stet-vscode` | VS Code extension. Bundles the core and adds native editor integration: decorations, CodeLens, hovers, the Comments API, the Review panel. |
 
-**Runtime requirements:** git ≥ 2.28 (for the `reference-transaction` hook) and Node ≥ 20 (see §12 for a Node-free option). A TeX distribution with `latexmk` is needed only for PDF previews.
+A package of web components (`@stet/ui`) was planned for the web UI (M6) and the extension; the extension uses native VS Code views instead (§16, M3), and the package doesn't exist.
+
+**Runtime requirements:** git ≥ 2.28 (for the `reference-transaction` hook) and Node ≥ 22 (see §12 for a Node-free option). A TeX distribution with `latexmk` is needed only for PDF previews.
 
 There is **no long-running daemon**. Every process (extension, MCP servers, CLI) works on the shared on-disk store, using a lock and filesystem events.
 
@@ -661,12 +662,13 @@ An optional **committed** `stet.json` in the repo root supplies team defaults (f
 ## 12. Frontends and service API
 
 ### 12.1 Service API (`@stet/core`), used by every frontend
-- `listItems(filter)`, `getItem(id)`, `listChangesets()`, `listGroups(filter)`, `listAgents()`
-- `accept(ids, {editedText?, overrideLinked?})`, `reject(ids, reason?)`, `requestRevision(id, text)`, `comment(id, text)`, `revertAccepted(id)`, `restore(id)`
-- `acceptGroup(id)` (all-or-nothing for linked groups; `G7.2` accepts one part), `groupTarget(id)` (a group or part and its pending items), `rejectGroup(id, reason?)`, `rejectAndRevise(id, reason)` (§6.4.5), `ungroup(id)`
-- `preview(id) → {before: png, after: png, page}` (asynchronous, cached)
-- `subscribe(listener)`: a live event stream, backed by watching `events.jsonl`; frontends that show records reload when `changed` is rewritten, since not every change appends an event (merging changes into one, removing a group)
-- `commitAccepted()`, `sync remote` (pull / push according to config)
+The `Stet` class (`packages/core/src/service.ts`); the main operations:
+- `listItems(filter)`, `getItem(id)`, `listChangesets()`, `listGroups()`, `getGroup(id)`, `listAgents()`, `describe(id)`
+- `accept(ids, {edited?, overrideLinked?, commit?})`, `reject(ids, {reason?, mode?})` (`mode`: `all`, `revise-rest` (§6.4.5) or `only` for a linked group's other members), `requestRevision(id, text)`, `comment(id, text)`, `undo(id)` (takes back a decision)
+- `acceptGroup(id)` (all-or-nothing for linked groups; `G7.2` accepts one part), `groupTarget(id)` (a group or part and its pending items), `ungroup(id)`
+- `preview(id)`, `previewPage(…)`, `previewStatus(id)` (asynchronous, cached; §14)
+- `events(…)`: the event log (`events.jsonl`). Frontends watch the store's folder (`storeRoot`) and reload when `changed` is rewritten, since not every change appends an event (merging changes into one, removing a group)
+- `commitAcceptedItems()`, `commitPreview()`; Overleaf sync (M4) is not built yet
 
 The web UI will expose this API as REST plus Server-Sent Events on `localhost`, protected by a random token, with no other code changes.
 
@@ -683,7 +685,7 @@ The web UI will expose this API as REST plus Server-Sent Events on `localhost`, 
 - **Commands:** `Stet: Set up project`, `New agent workspace`, `Open agent workspace in…`, `Finish review (commit)`, `Preview S<n> in PDF`.
 - **Status bar:** number of pending items, with a warning when agents need a sync.
 - **Setup without a command line:** `Set up project` runs the equivalent of `stet init`. MCP configs point at the extension's bundled `stet` entry point.
-- **Node-free option (implemented in M3):** the extension launches the bundled server with VS Code's own Electron binary (`ELECTRON_RUN_AS_NODE=1`) when Node.js ≥ 20 is not on PATH (setting `stet.runtime`: `auto` | `node` | `vscode`), so users without Node still get the MCP server.
+- **Node-free option (implemented in M3):** the extension launches the bundled server with VS Code's own Electron binary (`ELECTRON_RUN_AS_NODE=1`) when Node.js ≥ 22 is not on PATH (setting `stet.runtime`: `auto` | `node` | `vscode`), so users without Node still get the MCP server.
 
 ### 12.3 Web UI (M6)
 `stet serve [--port] [--open]` serves `@stet/ui` as a full page with a read-only source view around each item. Features match the panel. Editor integration is replaced by a context view.

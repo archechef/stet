@@ -20,7 +20,7 @@ export interface DoctorCheck {
 
 /** Oldest git with every feature Stet uses (reference-transaction hook: 2.28). */
 export const MIN_GIT = "2.28.0";
-export const MIN_NODE = "20.0.0";
+export const MIN_NODE = "22.0.0";
 
 function which(cmd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
@@ -37,7 +37,12 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   add(
     compareVersions(node, MIN_NODE) >= 0
       ? { name: "Node.js", status: "ok", message: `v${node}` }
-      : { name: "Node.js", status: "error", message: `v${node} is too old (need ≥ ${MIN_NODE})`, fix: "Install Node.js 20 or newer from https://nodejs.org" },
+      : {
+          name: "Node.js",
+          status: "error",
+          message: `v${node} is too old (need ≥ ${MIN_NODE})`,
+          fix: `Install Node.js ${MIN_NODE.split(".")[0]} or newer from https://nodejs.org`,
+        },
   );
 
   const gv = await gitVersion();

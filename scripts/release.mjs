@@ -93,7 +93,7 @@ switch (cmd) {
 
 **Install the VS Code extension:** download \`stet-vscode-${v}.vsix\` below, then in VS Code: Extensions view → \`…\` → *Install from VSIX…*. It includes the \`stet\` command for the agents; you need neither Node.js nor this repository.
 
-**Command line only:** \`stet-${v}.mjs\` is the whole CLI in one file. Run it with Node.js 20 or newer: \`node stet-${v}.mjs --help\`.
+**Command line only:** \`stet-${v}.mjs\` is the whole CLI in one file. Run it with Node.js 22 or newer: \`node stet-${v}.mjs --help\`.
 
 Checksums: \`SHA256SUMS.txt\`.`);
     break;

@@ -433,8 +433,16 @@ export const FEEDBACK_TYPES: readonly EventType[] = [
   "reopened",
 ];
 
+/**
+ * The format of the store (`.git/stet`). Older formats are upgraded as they are read
+ * (`upgradeItem`); this changes only for one that can't be, and a Stet that finds a newer one
+ * than it knows refuses to write (`Store.withLock`).
+ */
+export const STORE_SCHEMA = 1;
+
 export interface StoreState {
-  schema: 1;
+  /** {@link STORE_SCHEMA} of the Stet that set the store up, or of a newer one that changed its format. */
+  schema: number;
   nextChangeset: number;
   nextGroup: number;
   /** Absent in stores made before reviewer notes (2026-11-11): starts at 1. */
