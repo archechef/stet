@@ -362,7 +362,11 @@ For LaTeX, BibTeX and Typst files, the extension sets `editor.inlayHints.maximum
 Development setup, tests and packaging: [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 - **Source:** `packages/vscode/src`
-  - `extension.ts`: panel, commands, setup
+  - `extension.ts`: the hub (projects, views, which change a command acts on) and command registration; its parts are
+    - `tree.ts`: the Review panel and History rows, their order, the filter
+    - `commands/`: review (accept, reject, edit, …), notes, navigation, agents, view options
+    - `undo.ts`, `unread.ts`, `previews.ts`, `setup.ts`: Undo, unread replies, PDF preview commands, *Set up project*
+  - `previewPage.ts`: the PDF preview's page, free of `vscode`
   - `editor.ts`: decorations, CodeLens, hovers, diff documents
   - `comments.ts`: threads
   - `project.ts`: store access, live updates
