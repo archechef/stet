@@ -528,8 +528,9 @@ export class Decisions {
     });
   }
 
-  /** Take accepted changes (whole units, see `decidedWith`) out of the working copy. Call under lock. */
+  /** Take accepted changes (whole units, see `decidedWith`) out of the working copy. */
   private async undoAccepted(unit: Item[]): Promise<UndoResult> {
+    this.stet.store.assertLocked("undoing an accept");
     const committed = unit.find((i) => i.resolution?.committed);
     if (committed) {
       const c = committed.resolution!.committed!;

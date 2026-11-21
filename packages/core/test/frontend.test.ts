@@ -103,7 +103,8 @@ describe("frontend support", () => {
     const saved = () => JSON.parse(readFileSync(join(stet.store.root, "config.json"), "utf8"));
     expect(saved()).toEqual({ mainBranch: "master" });
     expect((await stet.config()).autoCommit).toBe("on-finish");
-    await stet.store.saveConfig({ ...(await stet.config()), autoCommit: "when-clean" });
+    const cfg = { ...(await stet.config()), autoCommit: "when-clean" as const };
+    await stet.store.withLock(() => stet.store.saveConfig(cfg));
     expect(saved()).toEqual({ mainBranch: "master", autoCommit: "when-clean" });
   });
 

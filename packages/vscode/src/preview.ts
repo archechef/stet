@@ -12,6 +12,7 @@ import type { Item, PreviewEnv, PreviewResult } from "@stet/core";
 import * as vscode from "vscode";
 import { previewPage } from "./previewPage.js";
 import type { Project } from "./project.js";
+import { type Settings, setting } from "./settings.js";
 
 type Target = { project: Project; item: Item };
 
@@ -202,5 +203,5 @@ export function inPreviewCache(p: Project, file: string | undefined): boolean {
 }
 
 /** Where PDF previews are shown (setting stet.pdfPreviews). */
-export type PreviewPlace = "both" | "hover" | "panel" | "off";
-export const previewPlace = (): PreviewPlace => vscode.workspace.getConfiguration("stet").get<PreviewPlace>("pdfPreviews", "both");
+export type PreviewPlace = Settings["pdfPreviews"];
+export const previewPlace = (): PreviewPlace => setting("pdfPreviews");

@@ -425,7 +425,7 @@ export class Stet {
     const data = new Map<string, Buffer | string | null>();
     for (const [p, c] of changes) data.set(p, c === null ? null : "blob" in c ? await this.blobBytes(c.blob) : fromLf(c.text, c.eol));
 
-    await this.store.fence(); // never write the user's files without holding the lock
+    await this.store.fence("writing your files");
     const journal: AcceptJournal = { items: resolutions, ...(undo ? { undo } : {}), filesDone: false, files: [] };
     for (const [p, t] of targets) {
       const orig = t.exists ? await readFile(t.path) : null;
@@ -483,8 +483,9 @@ export class Stet {
     return kept;
   }
 
-  /** Finish (files all written) or undo (cut off while writing) an interrupted accept. Call under lock. */
+  /** Finish (files all written) or undo (cut off while writing) an interrupted accept. */
   async recoverInterrupted(): Promise<void> {
+    this.store.assertLocked("recovering an interrupted accept");
     let j: AcceptJournal;
     try {
       j = JSON.parse(await readFile(this.journalPath, "utf8"));

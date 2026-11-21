@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Item } from "../src/model.js";
 import { LOCK_TIMING, Store } from "../src/store.js";
-import { outsideDir } from "./helpers.js";
+import { outsideDir, PAPER, setup } from "./helpers.js";
 
 describe("store lock (Codex review 2026-09, F5)", () => {
   const saved = { ...LOCK_TIMING };
@@ -69,6 +69,37 @@ describe("store lock (Codex review 2026-09, F5)", () => {
       }),
     ).rejects.toThrow(/lost its lock/);
     expect(JSON.parse(readFileSync(join(root, "items", "S1.json"), "utf8")).status).toBe("pending");
+  });
+
+  it("refuses writes, new ids and events outside the lock (code quality report 6a517ae, lock)", async () => {
+    const root = outsideDir();
+    const store = new Store(root);
+    await store.init("master");
+    const other = new Store(root);
+    const item = { id: "S1", status: "pending", groups: [] } as unknown as Item;
+    const outside = /outside the Stet lock/;
+    await expect(store.putItem(item)).rejects.toThrow(outside);
+    await expect(store.deleteGroup("G1")).rejects.toThrow(outside);
+    await expect(store.saveState(await store.state())).rejects.toThrow(outside);
+    await expect(store.saveConfig(await store.config())).rejects.toThrow(outside);
+    await expect(store.allocate("group")).rejects.toThrow(outside);
+    await expect(store.appendEvent({ type: "submitted", actor: "x" } as never)).rejects.toThrow(outside);
+    // Another Store's lock on the same folder is not this one's.
+    await expect(other.withLock(() => store.putItem(item))).rejects.toThrow(outside);
+    expect(existsSync(join(root, "items", "S1.json"))).toBe(false);
+    expect(store.locked).toBe(false);
+    await store.withLock(async () => {
+      expect(store.locked).toBe(true);
+      await store.putItem(item);
+    });
+    expect(existsSync(join(root, "items", "S1.json"))).toBe(true);
+  });
+
+  it("refuses to update the base outside the lock (code quality report 6a517ae, lock)", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    await expect(stet.ensureBase()).rejects.toThrow(/updating the base outside the Stet lock/);
+    await expect(stet.recoverInterrupted()).rejects.toThrow(/outside the Stet lock/);
+    await expect(stet.store.withLock(() => stet.ensureBase())).resolves.toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("takes over an empty lock left by a process stopped while taking it (bug report 2026-11-20)", async () => {

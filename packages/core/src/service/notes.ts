@@ -109,8 +109,9 @@ export class Notes {
     });
   }
 
-  /** Hand the agent its open, undelivered notes, located in its workspace as it is now. Under the lock. */
+  /** Hand the agent its open, undelivered notes, located in its workspace as it is now. */
   async deliverNotes(agent: Agent): Promise<DeliveredNote[]> {
+    this.stet.store.assertLocked("delivering notes");
     const waiting = (await this.stet.store.notes()).filter((n) => n.agent === agent.id && n.state === "open" && !n.deliveredAt);
     const out: DeliveredNote[] = [];
     for (const n of waiting) {

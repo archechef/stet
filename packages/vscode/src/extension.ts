@@ -1,7 +1,20 @@
 /** Stet for VS Code (spec §12.2): review panel, in-editor review, threads and setup without a command line. */
 
 import { closeSync, openSync, readSync } from "node:fs";
-import { type CliCommand, doctor, foldPath, hasPreview, type Item, isLiveItem, parseId, pathExists, profileByName, type ShareMode, Stet } from "@stet/core";
+import {
+  type CliCommand,
+  doctor,
+  foldPath,
+  hasPreview,
+  type Item,
+  isLiveItem,
+  parseId,
+  pathExists,
+  profileByName,
+  SHARE_MODES,
+  type ShareMode,
+  Stet,
+} from "@stet/core";
 import * as vscode from "vscode";
 import type { ChangeAction } from "./actions.js";
 import { announce } from "./announce.js";
@@ -34,7 +47,8 @@ import { inPreviewCache, PreviewPanel, previewPlace } from "./preview.js";
 import { PreviewCommands } from "./previews.js";
 import { Project } from "./project.js";
 import { REVIEW_SCHEME, ReviewFiles, type ReviewHost } from "./review.js";
-import { cliCommand, installCli, isManaged, type RuntimeMode } from "./runtime.js";
+import { cliCommand, installCli, isManaged } from "./runtime.js";
+import { LONG_MODES, NEW_TEXT_STYLES, PREVIEW_PLACES, setting, type Toggle } from "./settings.js";
 import { SetupWizard } from "./setup.js";
 import { ReviewTree } from "./tree.js";
 import { UndoStack } from "./undo.js";
@@ -254,7 +268,7 @@ export class StetExtension implements Host, vscode.Disposable {
 
   /** Settings that cut or hide inline proposals in a project file: say so once, with a fix for that language. */
   private async checkInline(doc: vscode.TextDocument): Promise<void> {
-    if (!this.projectFor(doc.uri) || !vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true)) return;
+    if (!this.projectFor(doc.uri) || !setting("inlineChanges")) return;
     for (const p of inlineProblems(doc)) {
       const memo = `stet.inlineNotice:${p.key}:${doc.languageId}`;
       if (this.ctx.globalState.get<boolean>(memo)) continue;
@@ -325,7 +339,7 @@ export class StetExtension implements Host, vscode.Disposable {
     const present = !!current && (await pathExists(current.command)) && (await Promise.all(current.args.slice(0, 1).map(pathExists))).every(Boolean);
     if (current && present && !isManaged(current, storeRoot)) return null;
     const script = await installCli(this.ctx.asAbsolutePath("dist/stet.mjs"), storeRoot);
-    return { cli: await cliCommand(vscode.workspace.getConfiguration("stet").get<RuntimeMode>("runtime", "auto"), script), script };
+    return { cli: await cliCommand(setting("runtime"), script), script };
   }
 
   /**
@@ -338,7 +352,7 @@ export class StetExtension implements Host, vscode.Disposable {
     const set = i?.workspaceFolderValue ?? i?.workspaceValue ?? i?.globalValue;
     if (!changed && set === undefined) return;
     await this.run(p, async () => {
-      if (await p.stet.setShareEdits(conf.get<ShareMode>("shareEdits", "manual"))) p.scheduleRefresh(0);
+      if (await p.stet.setShareEdits(setting("shareEdits", vscode.Uri.file(p.mainPath)))) p.scheduleRefresh(0);
     });
   }
 
@@ -690,16 +704,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.clearDraft", (a) => ext.reviewing.clearDraft(a));
   reg("stet.previewSetup", () => ext.previews.setupPreview());
   // View options: settings you may switch back and forth, from the panel.
-  const toggle = (key: string) => () => ext.view.setOption(key, !vscode.workspace.getConfiguration("stet").get<boolean>(key, true));
-  const toggleOff = (key: string) => () => ext.view.setOption(key, !vscode.workspace.getConfiguration("stet").get<boolean>(key, false));
-  reg("stet.toggleDiffProposals", toggleOff("diffShowsProposals"));
+  const toggle = (key: Toggle) => () => ext.view.setOption(key, !setting(key));
+  reg("stet.toggleDiffProposals", toggle("diffShowsProposals"));
   reg("stet.toggleInlineChanges", toggle("inlineChanges"));
   reg("stet.toggleCodeLens", toggle("codeLens"));
   reg("stet.toggleAutoAdvance", toggle("autoAdvance"));
-  for (const v of ["expanded", "collapsed", "hover"]) reg(`stet.longChanges.${v}`, () => ext.view.setOption("longChanges", v));
-  for (const v of ["manual", "saved", "committed"]) reg(`stet.shareEdits.${v}`, () => ext.view.setOption("shareEdits", v));
-  for (const v of ["both", "hover", "panel", "off"]) reg(`stet.pdfPreviews.${v}`, () => ext.view.setOption("pdfPreviews", v));
-  for (const v of ["auto", "highlighted", "wrapping"]) reg(`stet.newTextStyle.${v}`, () => ext.view.setOption("newTextStyle", v));
+  for (const v of LONG_MODES) reg(`stet.longChanges.${v}`, () => ext.view.setOption("longChanges", v));
+  for (const v of SHARE_MODES) reg(`stet.shareEdits.${v}`, () => ext.view.setOption("shareEdits", v));
+  for (const v of PREVIEW_PLACES) reg(`stet.pdfPreviews.${v}`, () => ext.view.setOption("pdfPreviews", v));
+  for (const v of NEW_TEXT_STYLES) reg(`stet.newTextStyle.${v}`, () => ext.view.setOption("newTextStyle", v));
   reg("stet.refresh", () => ext.refresh());
   reg("stet.doctor", () => ext.doctor());
   reg("stet.finishReview", () => ext.reviewing.finishReview());

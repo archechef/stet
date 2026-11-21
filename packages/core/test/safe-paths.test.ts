@@ -39,7 +39,9 @@ describe("ids and repository paths (security audit 2026-09)", () => {
     const [real] = (await stet.submit("a", { title: "t" })).items;
     for (const file of ["../evil.tex", "GIT~1/config", ".git/config", ".GIT./hooks/x"]) {
       // An agent that can write the store forges an innocent-looking new-file proposal.
-      await stet.store.putItem({ ...real!, id: "S99", kind: "add-file", file, oldText: "", newText: "[core]\n", range: { start: 0, end: 0 }, groups: [] });
+      await stet.store.withLock(() =>
+        stet.store.putItem({ ...real!, id: "S99", kind: "add-file", file, oldText: "", newText: "[core]\n", range: { start: 0, end: 0 }, groups: [] }),
+      );
       await expect(stet.accept(["S99"])).rejects.toThrow(/Refusing to write/);
     }
     expect(existsSync(join(repo, "..", "evil.tex"))).toBe(false);

@@ -109,6 +109,8 @@ If a release fails after the tag was pushed, fix the problem, then move the tag:
 - **Errors meant for users:** `StetError` (`errors.ts`). Their message is shown as is.
 - **Paths:** compared with `paths.ts` (`samePath`, `isInside`).
 - **Files in user or agent folders:** written with `safefs.ts`, which never writes through links.
+- **The store's lock:** operations that write the store run inside `store.withLock`. The store's writes check that they do; a function that must run under the lock without writing through the store (git refs, the user's files) calls `store.assertLocked` first.
+- **VS Code settings:** read with `setting(key)` from `packages/vscode/src/settings.ts`. A new setting goes there and into `package.json`; `settings.test.ts` checks that the two agree.
 - **Submit (`itemize` in `core/src/service/submit.ts`):** its steps (candidates, merges, items, supersedes, conflicts, notes, moves, groups) still read from git and pass state along, so each is tested only through whole submits. Don't rewrite it in one go: it decides which changes the reviewer sees, and the end-to-end tests pin that down. When a bug fix or feature touches one step, move that step into a function that takes texts and items and returns its result, with unit tests of its own. Its records go through `PendingWrites` (`service/pending.ts`), which writes them in one step at the end; keep new writes there too.
 - **Comments:** say why the code is as it is, with the case that made it so ("an empty lock named no owner, which nobody took over"), not which report found it: the reports aren't in the repository. Tests name the report and finding in their titles (see Tests).
 - **Commits:** end with the change's rationale. Record notable decisions in the spec's §16 notes.

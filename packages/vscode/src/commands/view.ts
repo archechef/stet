@@ -4,6 +4,7 @@ import { announce } from "../announce.js";
 import { usesHints } from "../editor.js";
 import type { StetExtension } from "../extension.js";
 import { offerContrastStyle } from "../model.js";
+import type { Settings } from "../settings.js";
 
 /**
  * Green for Stet's proposed text in word-wrapped editors. Inlay hints can't be coloured per hint,
@@ -46,14 +47,11 @@ export class ViewOptions {
   }
 
   /** Set one of Stet's settings from the panel's View options (where it is set already, or for the user). */
-  async setOption(key: string, value: unknown): Promise<void> {
-    if (key === "shareEdits") return this.setShareOption(value);
+  async setOption<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void> {
+    if (key === "shareEdits") return this.setShareOption(value as Settings["shareEdits"]);
     const conf = vscode.workspace.getConfiguration("stet");
     const i = conf.inspect(key);
-    const target =
-      i?.workspaceValue !== undefined || (key === "shareEdits" && vscode.workspace.workspaceFolders?.length)
-        ? vscode.ConfigurationTarget.Workspace
-        : vscode.ConfigurationTarget.Global;
+    const target = i?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
     await conf.update(key, value, target);
   }
 
@@ -61,7 +59,7 @@ export class ViewOptions {
    * Share my edits, set from View options: for one project, which is asked for when the window has
    * several; set on its workspace folder, so another paper's agents don't see this one's drafts. The project's own config follows (`applyShareMode`).
    */
-  private async setShareOption(value: unknown): Promise<void> {
+  private async setShareOption(value: Settings["shareEdits"]): Promise<void> {
     const p = await this.ext.setupWizard.pickProject();
     if (!p) return;
     const uri = vscode.Uri.file(p.mainPath);

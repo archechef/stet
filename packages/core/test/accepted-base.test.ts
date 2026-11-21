@@ -83,7 +83,7 @@ describe("accepted changes the user edits afterwards", () => {
     const it = await store.getItem(item.id);
     delete it.resolution.headBlob; // as recorded by Stet 0.6.0 and older
     it.history.at(-1).at = new Date(Date.now() - 3_600_000).toISOString();
-    await store.putItem(it);
+    await store.withLock(() => store.putItem(it));
     edit(repo, "main.tex", "The review is incremental.", "Reviews are incremental.");
     git(repo, "commit", "-qam", "edit the remark");
     await stet.sync("a");
@@ -97,7 +97,7 @@ describe("accepted changes the user edits afterwards", () => {
     // Accepted in the same second as the last commit (CI is that fast): that commit came before.
     const committedAt = Number(git(b.repo, "log", "-1", "--format=%ct").trim());
     it2.history.at(-1).at = new Date(committedAt * 1000 + 500).toISOString();
-    await store2.putItem(it2);
+    await store2.withLock(() => store2.putItem(it2));
     await b.stet.sync("a");
     expect(read(b.wt, "main.tex")).toBe(read(b.repo, "main.tex"));
     expect((await store2.getItem(b.item.id)).resolution.headBlob).toMatch(/^[0-9a-f]{40}$/);

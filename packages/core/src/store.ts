@@ -115,7 +115,7 @@ export class Store {
   }
 
   async saveConfig(cfg: StetConfig): Promise<void> {
-    await this.fence();
+    await this.fence("saving the config");
     await writeJsonAtomic(join(this.root, "config.json"), configDelta(cfg));
   }
 
@@ -125,7 +125,7 @@ export class Store {
     return s;
   }
   async saveState(s: StoreState) {
-    await this.fence();
+    await this.fence("saving the state");
     return writeJsonAtomic(join(this.root, "state.json"), s);
   }
 
@@ -234,19 +234,33 @@ export class Store {
   /** Token of the lock this process holds (null when not holding it). */
   private token: string | null = null;
 
+  /** Whether the running operation holds this store's lock (is inside `withLock`). */
+  get locked(): boolean {
+    return lockContext.getStore() === this && !!this.token;
+  }
+
+  /**
+   * Throw unless the running operation holds the lock: a write outside it could interleave with
+   * another process's operation, and nothing else would notice. A mistake in Stet, not the user's.
+   */
+  assertLocked(what: string): void {
+    if (!this.locked) throw new Error(`Internal error: ${what} outside the Stet lock (run it inside withLock).`);
+  }
+
   /**
    * Fencing: before writing, make sure this process still holds the lock. A process whose lock was
    * taken over (after hanging for long) must not keep writing next to the new owner.
    */
-  async fence(): Promise<void> {
-    if (lockContext.getStore() !== this || !this.token) return;
+  async fence(what = "a write"): Promise<void> {
+    this.assertLocked(what);
     const cur = await readJson<{ token?: string }>(this.lockPath).catch(() => null);
     if (cur?.token !== this.token)
       throw new StetError("Stet lost its lock to another process (this one was unresponsive for too long); nothing more was written. Please try again.");
   }
 
-  /** Allocate sequential ids. Call while holding the lock. */
+  /** Allocate sequential ids. */
   async allocate(kind: "changeset" | "group" | "note", n = 1): Promise<string[]> {
+    this.assertLocked("allocating ids");
     const s = await this.state();
     const key = kind === "changeset" ? "nextChangeset" : kind === "group" ? "nextGroup" : "nextNote";
     const prefix = kind === "changeset" ? "C" : kind === "group" ? "G" : "N";
@@ -306,13 +320,13 @@ export class Store {
 
   private async put(kind: Kind, v: { id: string }) {
     if (!SAFE_ID.test(v.id)) throw new Error(`Invalid id '${v.id}'.`);
-    await this.fence();
+    await this.fence(`writing ${kind}`);
     // Stores made before a kind existed (notes) get its folder on first write.
     if (kind === "notes") await mkdir(this.dir(kind), { recursive: true });
     await writeJsonAtomic(join(this.dir(kind), `${v.id}.json`), v);
     this.cached(kind)?.set(v.id, structuredClone(v));
     if (kind === "items") this.itemsView = null;
-    await this.changedRecords();
+    this.wrote = true;
   }
 
   private itemsView: { records: Map<string, unknown>; list: readonly Item[] } | null = null;
@@ -337,12 +351,8 @@ export class Store {
     return this.itemsView.list;
   }
 
-  /** Whether the operation holding the lock wrote a record (see `signalChange`). */
+  /** Whether the operation holding the lock wrote a record: `withLock` then signals it once (see `signalChange`). */
   private wrote = false;
-  private async changedRecords() {
-    if (lockContext.getStore() === this) this.wrote = true;
-    else await this.signalChange();
-  }
 
   /**
    * Rewrite `changed` in the store's folder: a record (item, group, changeset, agent, note) was
@@ -370,14 +380,15 @@ export class Store {
   putChangeset = (v: Changeset) => this.put("changesets", v);
   putGroup = (v: Group) => this.put("groups", v);
   deleteGroup = async (id: string) => {
-    await this.fence();
+    await this.fence("removing a group");
     await rm(join(this.dir("groups"), `${id}.json`), { force: true });
     this.cached("groups")?.delete(id);
-    await this.changedRecords();
+    this.wrote = true;
   };
 
-  /** Append an event. Call while holding the lock. */
+  /** Append an event. */
   async appendEvent(e: NewEvent): Promise<StetEvent> {
+    this.assertLocked("appending an event");
     const s = await this.state();
     const ev: StetEvent = { seq: s.nextEvent, at: new Date().toISOString(), ...e };
     s.nextEvent++;

@@ -5,8 +5,9 @@ import * as vscode from "vscode";
 import { type Host, inlineMax, type Locator } from "./editor.js";
 import { fitsInline, itemDiff, LineIndex, proposalMarkdown, toLf } from "./model.js";
 import type { Project } from "./project.js";
+import { type Settings, setting } from "./settings.js";
 
-export type LongMode = "expanded" | "collapsed" | "hover";
+export type LongMode = Settings["longChanges"];
 
 class StetComment implements vscode.Comment {
   mode = vscode.CommentMode.Preview;
@@ -56,7 +57,7 @@ export class Threads implements vscode.Disposable {
 
   /** How proposals too long for ghost text are shown (setting stet.longChanges). */
   private longMode(): LongMode {
-    return vscode.workspace.getConfiguration("stet").get<LongMode>("longChanges", "collapsed");
+    return setting("longChanges");
   }
 
   /** Whether the item's full new text goes into its thread (ghost text can't show it). */

@@ -37,6 +37,7 @@ import {
   type TreeMode,
 } from "./model.js";
 import type { Project } from "./project.js";
+import { setting } from "./settings.js";
 
 /** Stable id of a tree element (VS Code uses it to keep selection and to reveal elements). */
 function elId(el: El): string {
@@ -202,7 +203,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
     if (i < 0) return;
     let next = rows[i]!;
     // Or by file and line, if you'd rather go through the document (stet.navigationOrder).
-    if (vscode.workspace.getConfiguration("stet").get<string>("navigationOrder", "panel") === "document" && cur?.node?.type === "item") {
+    if (setting("navigationOrder") === "document" && cur?.node?.type === "item") {
       const items = rows.filter((e) => e.node?.type === "item");
       // Projects in the panel's order, not by path: they were crossed the other way round.
       const rank = [...new Set(rows.map((e) => e.project.mainPath))];
@@ -239,7 +240,7 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
       .map(idOf);
     const status = this.ext.model(p).item(anchor)?.status;
     await action();
-    if (!vscode.workspace.getConfiguration("stet").get<boolean>("autoAdvance", true)) return;
+    if (!setting("autoAdvance")) return;
     if (this.ext.model(p).item(anchor)?.status === status) return;
     const live = new Map(
       this.itemsInOrder()

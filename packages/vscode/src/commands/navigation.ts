@@ -9,6 +9,7 @@ import { projectOfQuery, projectQuery, toLf } from "../model.js";
 import { previewPlace } from "../preview.js";
 import type { Project } from "../project.js";
 import { ReviewFiles } from "../review.js";
+import { setting } from "../settings.js";
 
 export class Navigation {
   constructor(private readonly ext: StetExtension) {}
@@ -94,7 +95,7 @@ export class Navigation {
    * red; or, with `stet.diffShowsProposals`, your file itself (editable, with the proposals shown in it).
    */
   diffLeft(p: Project, file: string): vscode.Uri {
-    if (vscode.workspace.getConfiguration("stet").get<boolean>("diffShowsProposals", false)) return p.fileUri(file);
+    if (setting("diffShowsProposals")) return p.fileUri(file);
     return vscode.Uri.from({ scheme: "stet-diff", path: `/${file}`, query: `${projectQuery(p.mainPath)}&side=current` });
   }
 

@@ -22,8 +22,9 @@ export const acceptedAt = (it: Item) => [...it.history].reverse().find((h) => h.
 export class ReviewBase {
   constructor(private readonly stet: Stet) {}
 
-  /** Make sure refs/stet/base = main HEAD + accepted-but-uncommitted items. Call under lock. */
+  /** Make sure refs/stet/base = main HEAD + accepted-but-uncommitted items. */
   async ensureBase(): Promise<string> {
+    this.stet.store.assertLocked("updating the base");
     await this.stet.recoverInterrupted();
     const cfg = await this.stet.config();
     const head = await this.stet.mainHead(cfg);

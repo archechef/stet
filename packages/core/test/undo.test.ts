@@ -133,7 +133,9 @@ describe("accepted changes missing from the base", () => {
     // An accepted change the base can't locate (as with the bug in 0.8.0).
     await stet.accept([items[0]!.id]);
     const lost = (await stet.getItem(items[0]!.id))!;
-    await stet.store.putItem({ ...lost, oldText: "text that is nowhere", context: { before: "nowhere before", after: "nowhere after" } });
+    await stet.store.withLock(() =>
+      stet.store.putItem({ ...lost, oldText: "text that is nowhere", context: { before: "nowhere before", after: "nowhere after" } }),
+    );
     const m = await stet.missingFromBase();
     expect(m.map((x) => x.item.id)).toEqual([lost.id]);
     expect(m[0]!.reason).toMatch(/can't be located/);

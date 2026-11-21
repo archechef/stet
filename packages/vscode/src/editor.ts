@@ -23,6 +23,7 @@ import {
 export { esc, linkTitle };
 
 import type { Project } from "./project.js";
+import { setting } from "./settings.js";
 
 export interface Located {
   item: Item;
@@ -143,7 +144,7 @@ const wraps = (uri: vscode.Uri) => vscode.workspace.getConfiguration("editor", u
  * (made green by Stet: Highlight proposed text). "auto" picks by the word wrap setting.
  */
 export function usesHints(uri: vscode.Uri): boolean {
-  const style = vscode.workspace.getConfiguration("stet").get<string>("newTextStyle", "auto");
+  const style = setting("newTextStyle");
   return style === "wrapping" || (style === "auto" && wraps(uri));
 }
 
@@ -187,7 +188,7 @@ function distance(range: vscode.Range, pos: vscode.Position): number {
   return edge.line === pos.line ? Math.abs(edge.character - pos.character) : 1e6 * Math.abs(edge.line - pos.line);
 }
 
-const previewsOn = () => vscode.workspace.getConfiguration("stet").get<string>("pdfPreviews", "both") !== "off";
+const previewsOn = () => setting("pdfPreviews") !== "off";
 
 export class EditorIntegration
   implements vscode.CodeLensProvider, vscode.HoverProvider, vscode.InlayHintsProvider, vscode.CodeActionProvider, vscode.Disposable
@@ -252,7 +253,7 @@ export class EditorIntegration
   }
 
   private async decorate(ed: vscode.TextEditor): Promise<void> {
-    const on = vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true);
+    const on = setting("inlineChanges");
     const located = on ? await this.locator.locate(ed.document) : [];
     // The moved-in half of a move shows a note instead of its text (see moveNote).
     const all = located.map(({ item, range }) => {
@@ -297,7 +298,7 @@ export class EditorIntegration
 
   /** The proposed new text, each part right where it goes (after the struck-through text it replaces). */
   async provideInlayHints(doc: vscode.TextDocument, range: vscode.Range): Promise<vscode.InlayHint[]> {
-    if (!vscode.workspace.getConfiguration("stet").get<boolean>("inlineChanges", true) || !usesHints(doc.uri)) return [];
+    if (!setting("inlineChanges") || !usesHints(doc.uri)) return [];
     const max = inlineMax(doc.uri);
     const hints: vscode.InlayHint[] = [];
     for (const { item, range: span } of await this.locator.locate(doc)) {
@@ -315,7 +316,7 @@ export class EditorIntegration
   }
 
   async provideCodeLenses(doc: vscode.TextDocument): Promise<vscode.CodeLens[]> {
-    if (!vscode.workspace.getConfiguration("stet").get<boolean>("codeLens", true)) return [];
+    if (!setting("codeLens")) return [];
     const p = this.host.projectFor(doc.uri);
     if (!p) return [];
     const model = this.host.model(p);

@@ -8,8 +8,9 @@ import { copyFile, mkdir, readFile, rename, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { CliCommand } from "@stet/core";
 import { nodeMajor } from "./model.js";
+import type { Settings } from "./settings.js";
 
-export type RuntimeMode = "auto" | "node" | "vscode";
+export type RuntimeMode = Settings["runtime"];
 
 function run(cmd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
