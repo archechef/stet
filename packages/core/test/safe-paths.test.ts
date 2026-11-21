@@ -4,9 +4,10 @@ import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { INBOX_FILE, InboxWriter } from "../src/inbox.js";
+import type { Item } from "../src/model.js";
 import { readInside } from "../src/safefs.js";
 import { isSafeRepoPath } from "../src/text.js";
-import { dirLink, edit, outsideDir, PAPER, read, setup, write } from "./helpers.js";
+import { dirLink, edit, git, outsideDir, PAPER, read, setup, write } from "./helpers.js";
 
 describe("accept through links in the project (Codex review 2026-09, F3)", () => {
   it("refuses to write through a linked folder, wherever it points", async () => {
@@ -93,13 +94,19 @@ describe("special files in place of Stet's (security review 2026-11-19)", () => 
 });
 
 describe("a path git won't take (test report v0.14, B7)", () => {
-  it("is refused with a message, not a git error", async () => {
+  it("is refused with a message, not a git error; never proposed", async () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");
     write(wt, "sub/.GIT/config", "[core]\n");
     edit(wt, "main.tex", "the problem", "the task");
-    const e = await stet.submit("a", { title: "t" }).catch((x) => x);
-    expect(e?.constructor?.name).toBe("StetError");
-    expect(String(e.message)).toMatch(/sub\/\.GIT/);
+    const r = await stet.submit("a", { title: "t" }).catch((x) => x);
+    // Where file names ignore case (macOS, Windows), git takes `.GIT` for a `.git` folder and
+    // skips it: the rest is submitted, the folder isn't. Elsewhere git refuses the path.
+    if (git(wt, "config", "--bool", "--default", "false", "core.ignorecase") === "true") {
+      expect(r.items.map((i: Item) => i.file)).toEqual(["main.tex"]);
+    } else {
+      expect(r?.constructor?.name).toBe("StetError");
+      expect(String(r.message)).toMatch(/sub\/\.GIT/);
+    }
   });
 });

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **New releases go to the VS Code Marketplace by themselves**, from the release workflow with the Marketplace's Trusted Publishing (no stored token).
+- **`stet doctor` no longer counts an identity git guessed as set** (an email made from your account and the computer's name, as git does on macOS); it says to set `user.name` and `user.email`. Identities from `GIT_AUTHOR_*` and `GIT_COMMITTER_*` still count.
+- Tests: two tests assumed Linux's git. Where file names ignore case (macOS, Windows), git skips a folder named `.GIT` like `.git` (it is never proposed) instead of refusing it, and guesses an identity where the computer's name has a domain.
+
 ## 0.17.0 — 2026-11-21
 
 **Typst projects.** Stet reviews Typst as it does LaTeX: changes are split by words and sentences, with maths, labels and references (`<a>`, `@a`, `#ref(<a>)`) kept whole; a renamed label or citation key is linked with its uses, a `#let` with the code that uses it, a new chapter or figure with the `#include` or `#image` that reads it in; moved paragraphs and blocks are moves. `@key` is a citation when the bibliography (a .bib file) has the key, else a reference. `stet init` and *Set up project* tell a Typst project by its files, and agents get Typst examples. In Typst a reference to a missing label or citation is an error, not LaTeX's `??`: a label or citation key and its references are never in separately acceptable parts, and a new label is linked with new references to it. No PDF previews for Typst yet; their entries are hidden for Typst changes. Also for LaTeX: a .bib entry whose key alone changed is one change, linked with the renamed `\cite`s.

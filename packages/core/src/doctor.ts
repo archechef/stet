@@ -64,9 +64,11 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
   const probe = new Repo(cwd);
   const name = await probe.tryRun(["config", "user.name"]);
   const email = await probe.tryRun(["config", "user.email"]);
-  // What git commits with, also when set by GIT_AUTHOR_* / GIT_COMMITTER_*.
-  const ident = name && email ? null : await probe.tryRun(["var", "GIT_AUTHOR_IDENT"]);
-  const fromEnv = ident && (await probe.tryRun(["var", "GIT_COMMITTER_IDENT"])) ? ident.replace(/\s+\d+\s+[+-]\d{4}$/, "") : null;
+  // What git commits with, also when set by GIT_AUTHOR_* / GIT_COMMITTER_*. Not what it would guess
+  // from the account and the computer's name (it does where that name has a domain, as on macOS).
+  const strict = { config: ["user.useConfigOnly=true"] };
+  const ident = name && email ? null : await probe.tryRun(["var", "GIT_AUTHOR_IDENT"], strict);
+  const fromEnv = ident && (await probe.tryRun(["var", "GIT_COMMITTER_IDENT"], strict)) ? ident.replace(/\s+\d+\s+[+-]\d{4}$/, "") : null;
   add(
     fromEnv
       ? { name: "git identity", status: "ok", message: `${fromEnv} (from the environment)` }
@@ -75,7 +77,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
         : {
             name: "git identity",
             status: "warn",
-            message: "user.name / user.email not set; Stet can't commit accepted changes for you",
+            message: "user.name / user.email not set: committing accepted changes fails, or uses a name and email git guesses from your account and computer",
             fix: 'git config --global user.name "Your Name" && git config --global user.email you@example.com',
           },
   );
