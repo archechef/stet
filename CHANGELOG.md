@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.1 — 2026-11-21
 
 - **New releases go to the VS Code Marketplace by themselves**, from the release workflow with the Marketplace's Trusted Publishing (no stored token).
 - **`stet doctor` no longer counts an identity git guessed as set** (an email made from your account and the computer's name, as git does on macOS); it says to set `user.name` and `user.email`. Identities from `GIT_AUTHOR_*` and `GIT_COMMITTER_*` still count.
