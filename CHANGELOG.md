@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+**Lean projects.** Stet reviews Lean 4 projects: a `.lean` file's changes are split by declaration, so the changed lines of one theorem and its proof (with its doc comment and attributes) are one change, and changes to different declarations stay separate. `stet init` and *Set up project* recognise a Lean project by its `.lean` files (`--language lean`), agents get Lean examples, and VS Code starts in folders with `.lean` files. Lake's `.lake/` build folder is offered for `.gitignore` at setup; `lakefile.lean`, `lakefile.toml`, `lean-toolchain` and `lake-manifest.json` are flagged as files that take effect (Lake runs the lakefile and fetches packages, elan runs the toolchain) and need a confirmation to accept. Not yet: linking a renamed declaration with its uses, or a new file with its `import`; no previews.
+
 ## 0.17.1 — 2026-11-21
 
 - **New releases go to the VS Code Marketplace by themselves**, from the release workflow with the Marketplace's Trusted Publishing (no stored token).

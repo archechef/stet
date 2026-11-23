@@ -13,6 +13,9 @@ const EFFECTS: [RegExp, string][] = [
   [/(^|\/)\.envrc$/i, "direnv runs it when you enter the folder"],
   [/^\.devcontainer\//i, "dev containers are built and run from it"],
   [/(^|\/)(GNUmakefile|[Mm]akefile)$/, "make runs its commands"],
+  [/(^|\/)lakefile\.(lean|toml)$/, "Lake runs it when the Lean project is built, and fetches the packages it names"],
+  [/(^|\/)lean-toolchain$/, "elan downloads and runs the Lean version it names"],
+  [/(^|\/)lake-manifest\.json$/, "Lake fetches the package versions it lists"],
 ];
 
 /** What accepting a change to `path` sets off, or null for an ordinary file. */

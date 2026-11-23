@@ -1,18 +1,19 @@
 /**
  * The language profiles Stet knows, and which one a file gets: the first whose config patterns
- * (`files.tex`, `files.bib`, `files.typ`) match it, else plain text.
+ * (`files.tex`, `files.bib`, `files.typ`, `files.lean`) match it, else plain text.
  */
 import { BIBTEX } from "./bibtex.js";
 import { LATEX } from "./latex.js";
+import { LEAN } from "./lean.js";
 import { PLAIN } from "./plain.js";
 import type { FilesKey, LanguageProfile } from "./profile.js";
 import { TYPST } from "./typst.js";
 
 export type { LanguageProfile } from "./profile.js";
-export { BIBTEX, LATEX, PLAIN, TYPST };
+export { BIBTEX, LATEX, LEAN, PLAIN, TYPST };
 
 /** Every profile with files of its own, in the order they are tried. */
-export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX, TYPST];
+export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX, TYPST, LEAN];
 
 /** File patterns per profile (the config's `files`). */
 export type FilePatterns = Record<FilesKey, string[]>;
@@ -91,7 +92,11 @@ export function buildIgnores(paths: string[]): string[] {
   const out: string[] = [];
   for (const prof of PROFILES) {
     const patterns = prof.buildFiles ?? [];
-    if (paths.some((p) => matchesAny(p, patterns))) out.push(...patterns.filter((pat) => paths.some((p) => matchesAny(p, [pat]))));
+    const folders = patterns.filter((pat) => pat.endsWith("/"));
+    const names = patterns.filter((pat) => !pat.endsWith("/"));
+    // A build folder: offered as soon as the language's files are there (before the first build).
+    if (folders.length && paths.some((p) => matchesAny(p, prof.defaultFiles ?? []))) out.push(...folders);
+    out.push(...names.filter((pat) => paths.some((p) => matchesAny(p, [pat]))));
     for (const p of paths) {
       const o = prof.outputOf?.(p);
       if (o && have.has(o.toLowerCase())) out.push("/" + paths.find((x) => x.toLowerCase() === o.toLowerCase())!);

@@ -54,11 +54,11 @@ export class SetupWizard {
         identity = await this.askIdentity();
         if (!identity) return;
       }
-      const files = (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*"), "**/{.git,node_modules}/**", 5000)).map((u) =>
+      const files = (await vscode.workspace.findFiles(new vscode.RelativePattern(folder, "**/*"), "**/{.git,node_modules,.lake}/**", 5000)).map((u) =>
         vscode.workspace.asRelativePath(u, false),
       );
       // A folder without any document file is likely the wrong one.
-      const names = DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ");
+      const names = new Intl.ListFormat("en", { type: "disjunction" }).format(DOCUMENT_LANGUAGES.map((p) => p.name));
       if (!files.some((f) => DOCUMENT_LANGUAGES.some((p) => matchesAny(f, p.defaultFiles ?? [])))) {
         const go = await vscode.window.showWarningMessage(
           `${folder.name} has no ${names} files.`,
@@ -108,7 +108,7 @@ export class SetupWizard {
       const bundled = await this.ext.bundledCli(current, join(loc.commonDir, "stet"));
       const opts: Parameters<typeof Stet.init>[1] = bundled ? { cli: bundled.cli } : {};
       const { setUp: already, languages: counts } = await Stet.inspectSetup(dir, loc);
-      // Files of both languages: asked, not guessed (a Typst thesis with one old .tex file was
+      // Files of several languages: asked, not guessed (a Typst thesis with one old .tex file was
       // set up as LaTeX without a word).
       if (!already) {
         if (counts.length > 1) {

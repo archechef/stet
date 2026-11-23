@@ -54,10 +54,10 @@ export interface StetConfig {
   shareEdits: ShareMode;
   split: SplitConfig;
   grouping: GroupingConfig;
-  /** Which files each language profile is for: `tex`, `bib`, `typ` (spec §6.1). */
+  /** Which files each language profile is for: `tex`, `bib`, `typ`, `lean` (spec §6.1). */
   files: FilePatterns;
   /**
-   * The language the project is written in ("latex", "typst"): detected from its files at setup.
+   * The language the project is written in ("latex", "typst", "lean"): detected from its files at setup.
    * Agents' examples and PDF previews follow it (spec §6.0).
    */
   language: string;

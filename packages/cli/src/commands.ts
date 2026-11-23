@@ -264,14 +264,14 @@ export const COMMANDS: Command[] = [
   {
     name: "init",
     section: "project",
-    usage: ["stet init [--main <branch>] [--language <latex|typst>]           set up Stet in this repository"],
+    usage: ["stet init [--main <branch>] [--language <latex|typst|lean>]      set up Stet in this repository"],
     options: ["main", "language"],
     async run({ opt, cwd, self, out }) {
       // A second run only refreshes the setup: say so, instead of the first-time message.
       const { setUp: already, languages } = await Stet.inspectSetup(cwd);
       const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), ...(opt.language ? { language: opt.language } : {}), cli: self });
       const cfg = await stet.config();
-      // Files of both languages: which has more, and how to choose the other.
+      // Files of several languages: which has the most, and how to choose another.
       const mixed = !opt.language && !already && languages.length > 1;
       const hooks = await stet.hookStatus();
       // Agents start from the last commit: edits not committed yet are not theirs to see.
@@ -285,9 +285,9 @@ export const COMMANDS: Command[] = [
           `Language: ${documentProfile(cfg).name} (agents' instructions follow it; set "language" in .git/stet/config.json to change it).\n` +
           (mixed
             ? yellow(
-                `! The project has files of both languages (${languages
+                `! The project has files of several languages (${languages
                   .map(([id, n]) => `${n} ${DOCUMENT_LANGUAGES.find((p) => p.id === id)?.name ?? id}`)
-                  .join(", ")}); Stet took the one with more. \`stet init --language <${DOCUMENT_LANGUAGES.map((p) => p.id).join("|")}>\` chooses.`,
+                  .join(", ")}); Stet took the one with the most. \`stet init --language <${DOCUMENT_LANGUAGES.map((p) => p.id).join("|")}>\` chooses.`,
               ) + "\n"
             : "") +
           (hooks.missing.length

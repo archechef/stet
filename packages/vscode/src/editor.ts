@@ -95,7 +95,7 @@ export function inlineMax(uri: vscode.Uri): number {
 /**
  * VS Code settings that break inline proposals with word wrap, for a document: they are inlay
  * hints, which VS Code cuts after `editor.inlayHints.maximumLength` characters per line (Stet's
- * default for LaTeX and Typst files is no limit, but the user's own value wins) or hides unless a key is held.
+ * default for LaTeX, Typst and Lean files is no limit, but the user's own value wins) or hides unless a key is held.
  */
 export function inlineProblems(doc: vscode.TextDocument): { key: string; message: string; setting: string; value: unknown }[] {
   if (!usesHints(doc.uri)) return [];

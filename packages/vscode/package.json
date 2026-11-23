@@ -1,7 +1,7 @@
 {
   "name": "stet-vscode",
   "displayName": "Stet",
-  "description": "Review AI-proposed changes to LaTeX and Typst projects: accept, reject, edit or comment on each change.",
+  "description": "Review AI-proposed changes to LaTeX, Typst and Lean projects: accept, reject, edit or comment on each change.",
   "version": "0.17.1",
   "publisher": "archechef",
   "license": "MIT",
@@ -41,7 +41,8 @@
   },
   "activationEvents": [
     "workspaceContains:**/*.tex",
-    "workspaceContains:**/*.typ"
+    "workspaceContains:**/*.typ",
+    "workspaceContains:**/*.lean"
   ],
   "scripts": {
     "build": "tsc -b ../core && tsc -p . && tsc -p tsconfig.webview.json && node esbuild.mjs",
@@ -94,7 +95,7 @@
       },
       {
         "view": "stet.review",
-        "contents": "Open the folder of your LaTeX or Typst project to use Stet.\n[Open Folder](command:vscode.openFolder)",
+        "contents": "Open the folder of your LaTeX, Typst or Lean project to use Stet.\n[Open Folder](command:vscode.openFolder)",
         "when": "workspaceFolderCount == 0"
       },
       {
@@ -1138,7 +1139,7 @@
             "Only in the Preview panel.",
             "Not at all: nothing is compiled."
           ],
-          "description": "Where PDF previews of changes are shown (LaTeX projects; Typst has none yet). They are built in the background; the change itself shows at once."
+          "description": "Where PDF previews of changes are shown (LaTeX projects only). They are built in the background; the change itself shows at once."
         }
       }
     },
@@ -1153,6 +1154,9 @@
         "editor.inlayHints.maximumLength": 0
       },
       "[typst]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[lean4]": {
         "editor.inlayHints.maximumLength": 0
       }
     },

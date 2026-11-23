@@ -14,7 +14,7 @@ import type { Edit } from "../split.js";
 import type { Token } from "../tokenizer.js";
 
 /** Which files a profile is for: patterns of the config's `files.<key>`. */
-export type FilesKey = "tex" | "bib" | "typ";
+export type FilesKey = "tex" | "bib" | "typ" | "lean";
 
 export interface LanguageProfile {
   /** "latex", "bibtex", "plain". */
@@ -31,7 +31,10 @@ export interface LanguageProfile {
   fence: string;
   /** A file of the document itself: new ones are part of the user's tree when Stet snapshots it. */
   document: boolean;
-  /** What a build leaves next to the sources, as .gitignore patterns (`*.aux`), offered at setup. */
+  /**
+   * What a build leaves next to the sources, as .gitignore patterns offered at setup: file names
+   * (`*.aux`), offered when such files are there, or folders (`.lake/`), offered with the language's files.
+   */
   buildFiles?: string[];
   /** The output a build makes of a source file (main.tex → main.pdf), offered at setup too. */
   outputOf?: (source: string) => string | null;

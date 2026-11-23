@@ -43,7 +43,7 @@ Colours are switched off when the output is not a terminal, or when `NO_COLOR` i
 
 ## 2. Setting up a project
 
-Run these in your LaTeX or Typst project, which must be a git repository with at least one commit.
+Run these in your LaTeX, Typst or Lean project, which must be a git repository with at least one commit.
 
 | Command | What it does |
 |---|---|

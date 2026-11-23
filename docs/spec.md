@@ -4,7 +4,7 @@
 
 Status: **v0.6** (M1 done; M2 live-tested with the Claude desktop app, CLI/Codex runs pending; M3 implemented; security audit and code review fixes; see §16 notes) · 2026-09-26
 
-Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX or Typst project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
+Stet lets AI agents (Claude Code, Codex, …) propose changes to a LaTeX, Typst or Lean project while a human reviews and accepts or rejects each change. Agents never write to the real files. Everything is git-native and runs on Windows, macOS and Linux.
 
 ---
 
@@ -213,7 +213,7 @@ A group is `resolved` once all its members are in final states, and `broken` whe
 Input: the tree diff `refs/stet/base..stet/<agent>` for the newly submitted commits.
 
 ### 6.0 Language profiles
-Everything Stet knows about a document language is in its **profile** (`packages/core/src/lang/`): `latex.ts` and `latex-preview.ts`, `typst.ts`, `bibtex.ts`, and `plain.ts` for any other text. The rest of Stet works on text, paragraphs, sentences and changes, and asks the file's profile for the rest. A profile has optional sections, and without one Stet falls back to what works for any text:
+Everything Stet knows about a document language is in its **profile** (`packages/core/src/lang/`): `latex.ts` and `latex-preview.ts`, `typst.ts`, `bibtex.ts`, `lean.ts`, and `plain.ts` for any other text. The rest of Stet works on text, paragraphs, sentences and changes, and asks the file's profile for the rest. A profile has optional sections, and without one Stet falls back to what works for any text:
 
 | Section | What it holds (LaTeX) | Used by | Without it |
 |---|---|---|---|
@@ -239,6 +239,13 @@ A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`, `
 - **Project language:** detected at setup from the files (`.typ` and no `.tex` → Typst, otherwise LaTeX) and kept in the config as `language`. `documentProfile(cfg)` follows it, and so do the agents' instructions ("for a Typst project", with Typst examples).
 - **No PDF previews yet:** Typst has no SyncTeX to find a change on the page. The preview status is *unavailable* with a message saying so; VS Code shows no preview entries for Typst changes and projects.
 - **Moves:** a whole block (`#figure(…)[…] <a>`, `#block[…]`, a display formula) moved is named by what it is: "(figure, unchanged)".
+
+#### Lean
+`lang/lean.ts`, specified by `packages/core/test/lean.test.ts`. A first, small profile: Lean 4 source is code, not prose, so it has no `syntax` and is split by declaration.
+- **Files:** `files.lean` (default `*.lean`); code blocks fenced as `lean`; project language `lean`.
+- **Splitting (`splitUnits`):** the changed lines, joined per declaration. A declaration starts at the beginning of a line, outside comments, with a declaration keyword or command (`theorem`, `lemma`, `def`, `instance`, `structure`, `namespace`, `end`, `open`, `#eval`, …, after modifiers such as `private` or `noncomputable`); a doc comment (`/-- … -/`) or a line of attributes (`@[simp]`) starts the declaration below it. Two changed hunks are one change when they touch the same declaration in the old or the new text; a new declaration, a deleted one and changes to different declarations stay apart. Accepting half of a proof's changes would leave it broken.
+- **Not yet:** references (a renamed declaration and its uses: Lean's names depend on `namespace` and `open`), includes (`import A.B` → `A/B.lean`), parts, previews. Agents are told that a use of a missing declaration is an error; a linked group needs a `reason`, since Stet sees no dependencies between Lean declarations.
+- **Lake:** `.lake/` (the build folder, with dependencies such as Mathlib) is offered for `.gitignore` at setup as soon as there are `.lean` files. `lakefile.lean`, `lakefile.toml`, `lean-toolchain` and `lake-manifest.json` take effect, so they are flagged in review and accepted only with a confirmation: Lake runs the lakefile when building and fetches the packages listed, and elan runs the toolchain named.
 
 ### 6.1 Per file
 - **Files of `files.tex`** (default `*.tex`, `*.sty`, `*.cls`, `*.ltx`, `*.dtx`): the LaTeX profile's splitting (§6.2).
