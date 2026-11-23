@@ -25,7 +25,7 @@ Next: stet show <id> · stet accept <id> · stet reject <id> -m <why>
 ## Features
 
 - **Reviewable changes:**
-  - Agent edits are split into word- and sentence-level changes that understand LaTeX and Typst: math, labels and citations stay intact, and re-wrapped lines are ignored. Lean files are reviewed by declaration: a theorem's changed proof is one change. (PDF previews of changes are LaTeX only for now.)
+  - Agent edits are split into word- and sentence-level changes that understand LaTeX and Typst: math, labels and citations stay intact, and re-wrapped lines are ignored. Lean files are reviewed by declaration: a theorem's changed proof is one change, and a renamed lemma comes with the proofs that use it. (PDF previews of changes are LaTeX only for now.)
   - Changes that belong together are grouped. *Linked* groups, such as a macro and its uses, are all-or-nothing; large ones come in parts you can accept one at a time, as long as each part alone still compiles.
 - **A real conversation:**
   - Rejections with a reason, revision requests, comments and edited wording all go back to the agent automatically, through MCP tools. No copy-paste.

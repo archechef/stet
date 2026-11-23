@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { effectOf } from "../src/effects.js";
 import { agentInstructions } from "../src/instructions.js";
 import { buildIgnores, detectLanguage, documentProfile, LEAN, profileByName, profileFor } from "../src/lang/index.js";
-import { declarationStarts, splitLean } from "../src/lang/lean.js";
-import { edit, read, setup } from "./helpers.js";
+import { codeOf, declarationStarts, splitLean } from "../src/lang/lean.js";
+import { edit, read, setup, write } from "./helpers.js";
 
 const BASIC = `import Mathlib.Tactic
 
@@ -129,5 +129,94 @@ describe("a Lean project, end to end", () => {
     const text = read(repo, "MyProject/Basic.lean");
     expect(text).toContain("  have := h\n  omega\n  -- mono");
     expect(text).toContain("  unfold double\n  omega\n\n/- A comment"); // the other proof as it was
+  });
+});
+
+const USES = `import MyProject.Basic
+
+namespace MyProject
+
+theorem double_two : double 2 = 4 := by
+  rw [double_eq]
+`;
+
+describe("declarations and imports (Lean profile)", () => {
+  const defs = LEAN.definitions!;
+  const inc = LEAN.includes!;
+
+  it("find declared names, and uses by their last component, not in comments or strings", () => {
+    expect([...defs.definedIn(BASIC).decl!]).toEqual(["double", "double_eq", "double_zero", "double_mono"]);
+    expect([...defs.definedIn("private theorem Nat.foo' : True := trivial\ninstance : Inhabited Foo := ⟨⟩").decl!]).toEqual(["Nat.foo'"]);
+    expect(defs.usesIn("  rw [double_eq]", "double_eq", "decl")).toBe(true);
+    expect(defs.usesIn("  exact MyProject.double_eq n", "double_eq", "decl")).toBe(true);
+    expect(defs.usesIn("  exact h.double_eq", "MyProject.double_eq", "decl")).toBe(true);
+    expect(defs.usesIn("  exact (@double_eq n)", "double_eq", "decl")).toBe(true);
+    expect(defs.usesIn("theorem double_eq (n : Nat) : double n = n + n := by", "double_eq", "decl")).toBe(false);
+    expect(defs.usesIn("  rw [double_eq'] -- not double_eq", "double_eq", "decl")).toBe(false);
+    expect(defs.usesIn('  #eval "double_eq"', "double_eq", "decl")).toBe(false);
+    expect(defs.usesIn("/- double_eq /- nested -/ double_eq -/ trivial", "double_eq", "decl")).toBe(false);
+    expect(codeOf('a "open\nb')).toBe("a      \nb");
+  });
+
+  it("read imports as files", () => {
+    expect([...inc.filesIn("import Mathlib.Tactic\npublic import MyProject.Basic\n-- import Not.This\n").keys()]).toEqual([
+      "Mathlib.Tactic",
+      "MyProject.Basic",
+    ]);
+    expect(inc.names("MyProject.Basic", "MyProject/Basic.lean")).toBe(true);
+    expect(inc.names("MyProject.Basic", "src/MyProject/Basic.lean")).toBe(true);
+    expect(inc.names("MyProject.Basic", "MyProject/BasicX.lean")).toBe(false);
+  });
+});
+
+describe("linked changes in a Lean project", () => {
+  const project = () =>
+    setup({ "MyProject/Basic.lean": BASIC, "MyProject/Uses.lean": USES, "MyProject.lean": "import MyProject.Basic\nimport MyProject.Uses\n" });
+
+  it("link a renamed lemma with the proofs that use the new name", async () => {
+    const { stet } = await project();
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "MyProject/Basic.lean", "theorem double_eq (n", "theorem double_eq_add (n");
+    edit(wt, "MyProject/Uses.lean", "rw [double_eq]", "rw [double_eq_add]");
+    edit(wt, "MyProject/Basic.lean", "lemma double_zero : double 0 = 0 := by\n  simp [double]", "lemma double_zero : double 0 = 0 := by\n  rfl");
+    const r = await stet.submit("a", { title: "Rename" });
+    expect(r.items).toHaveLength(3);
+    const g = r.groups.find((x) => x.kind === "linked")!;
+    expect(g.title).toBe("Rename declaration double_eq → double_eq_add");
+    const zero = r.items.find((i) => i.newText.includes("rfl"))!;
+    expect(g.items).toHaveLength(2);
+    expect(g.items).not.toContain(zero.id);
+  });
+
+  it("link a new lemma with the proof that starts using it", async () => {
+    const { stet } = await project();
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "MyProject/Basic.lean", "\nend MyProject", "\ntheorem double_one : double 1 = 2 := rfl\n\nend MyProject");
+    edit(wt, "MyProject/Uses.lean", "  rw [double_eq]", "  rw [double_eq, ← double_one]");
+    const r = await stet.submit("a", { title: "New lemma" });
+    const g = r.groups.find((x) => x.kind === "linked")!;
+    expect(g.title).toBe("Define double_one and use it");
+    expect(g.items).toHaveLength(2);
+  });
+
+  it("link a new module with the import that reads it", async () => {
+    const { stet } = await project();
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "MyProject/Extra.lean", "import MyProject.Basic\n\ntheorem extra : True := trivial\n");
+    edit(wt, "MyProject.lean", "import MyProject.Uses\n", "import MyProject.Uses\nimport MyProject.Extra\n");
+    const r = await stet.submit("a", { title: "New module" });
+    const g = r.groups.find((x) => x.kind === "linked")!;
+    expect(g.title).toBe("Add MyProject/Extra.lean and read it in");
+    expect(g.items).toHaveLength(2);
+  });
+
+  it("leave unrelated proofs unlinked", async () => {
+    const { stet } = await project();
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "MyProject/Basic.lean", "lemma double_zero : double 0 = 0 := by\n  simp [double]", "lemma double_zero : double 0 = 0 := by\n  rfl");
+    edit(wt, "MyProject/Uses.lean", "  rw [double_eq]", "  simp [double_eq]");
+    const r = await stet.submit("a", { title: "Proofs" });
+    expect(r.items).toHaveLength(2);
+    expect(r.groups.filter((x) => x.kind === "linked")).toEqual([]);
   });
 });

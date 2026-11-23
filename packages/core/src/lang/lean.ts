@@ -2,11 +2,16 @@
  * The Lean 4 profile: Lean source is reviewed by declaration. A proof is code, and accepting half
  * of the changes to one leaves it broken, so the changed lines of one declaration (a theorem with
  * its proof, a definition, with its doc comment and attributes) are one change. Changes to
- * different declarations stay separate. No PDF previews; no rename groups yet (Lean's names
- * depend on `namespace` and `open`, which a profile can't resolve from the text alone).
+ * different declarations stay separate.
+ *
+ * A declaration renamed, added or removed is linked with the changes that start or stop using
+ * it, and a new or deleted module with the `import` that reads it: in Lean either alone is an
+ * error. Names are matched by their last component (`foo` in `MyProject.foo`, `h.foo`), since
+ * `namespace`, `open` and dot notation decide the rest, which the text alone doesn't tell. No PDF
+ * previews.
  */
 import { type Edit, makeEdit, splitLineHunks } from "../split.js";
-import type { LanguageProfile } from "./profile.js";
+import type { DefinitionRules, IncludeRules, LanguageProfile } from "./profile.js";
 
 /** Modifiers before a declaration keyword. */
 const MODIFIERS = "(?:(?:private|protected|noncomputable|partial|unsafe|nonrec|scoped|local)\\s+)*";
@@ -161,6 +166,97 @@ export function splitLean(oldText: string, newText: string): Edit[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Declarations and their uses; modules and their imports
+
+/** A Lean name: letters (any script), digits, `_`, `'`, `!`, `?`, subscripts, with `.` between components. */
+const NAME = String.raw`[\p{L}_][\p{L}\p{N}_'!?\u2080-\u209c\u1d62-\u1d6a]*(?:\.[\p{L}_][\p{L}\p{N}_'!?\u2080-\u209c\u1d62-\u1d6a]*)*`;
+/** The name a declaration defines (`theorem foo`, `private def Nat.bar`); not `instance : …` or `example`. */
+const DECLARED = new RegExp(
+  `^[ \\t]*(?:@\\[[^\\]\\n]*\\]\\s*)*${MODIFIERS}(?:theorem|lemma|def|abbrev|instance|structure|class|inductive|coinductive|axiom|opaque)\\s+(${NAME})`,
+  "gmu",
+);
+/** A name in code (`foo`, `MyProject.foo`, `h.foo`, `@foo`, `.foo`), not the end of another one. */
+const USED = new RegExp(`(?<![\\p{L}\\p{N}_'!?])${NAME}`, "gu");
+/** An import of a module (`import Mathlib.Tactic`, `public import A.B`). */
+const IMPORT = new RegExp(`^[ \\t]*(?:(?:public|private|meta)\\s+)*import\\s+(?:all\\s+)?(${NAME})`, "gmu");
+
+/** Code without comments and strings: names in them are neither declared nor used. */
+export function codeOf(text: string): string {
+  let out = "";
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    const next = text[i + 1];
+    if (c === "/" && next === "-") {
+      depth++;
+      i++;
+      out += "  ";
+      continue;
+    }
+    if (depth > 0) {
+      if (c === "-" && next === "/") {
+        depth--;
+        i++;
+        out += "  ";
+      } else out += c === "\n" ? "\n" : " ";
+      continue;
+    }
+    if (c === "-" && next === "-") {
+      const end = text.indexOf("\n", i);
+      const stop = end === -1 ? text.length : end;
+      out += " ".repeat(stop - i);
+      i = stop - 1;
+      continue;
+    }
+    if (c === "'" && next === '"' && text[i + 2] === "'") {
+      out += "   "; // the character '"'
+      i += 2;
+      continue;
+    }
+    if (c === '"') {
+      // To the closing quote; an unclosed string stops at the end of its line, which stays.
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"' && text[j] !== "\n") j += text[j] === "\\" ? 2 : 1;
+      const end = Math.min(text[j] === '"' ? j + 1 : j, text.length);
+      out += " ".repeat(end - i);
+      i = end - 1;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+const lastPart = (name: string) => name.slice(name.lastIndexOf(".") + 1);
+
+const definitions: DefinitionRules = {
+  kinds: ["decl"],
+  definedIn: (text) => ({ decl: new Set([...codeOf(text).matchAll(DECLARED)].map((m) => m[1]!)) }),
+  usesIn: (text, name) => {
+    const code = codeOf(text);
+    const want = lastPart(name);
+    const heads = new Set([...code.matchAll(DECLARED)].map((m) => m.index! + m[0].length - m[1]!.length));
+    return [...code.matchAll(USED)].some((m) => !heads.has(m.index!) && lastPart(m[0]) === want);
+  },
+  noun: () => "declaration",
+  written: (name) => name,
+  described: (name) => `the declaration ${name}`,
+};
+
+const includes: IncludeRules = {
+  filesIn: (text) => {
+    const out = new Map<string, number>();
+    for (const m of codeOf(text).matchAll(IMPORT)) out.set(m[1]!, (out.get(m[1]!) ?? 0) + 1);
+    return out;
+  },
+  // `import A.B` reads `A/B.lean`, below the project or one of its source folders.
+  names: (ref, file) => {
+    const path = `${ref.replace(/\./g, "/")}.lean`;
+    return file === path || file.endsWith(`/${path}`);
+  },
+};
+
 export const LEAN: LanguageProfile = {
   id: "lean",
   name: "Lean",
@@ -176,7 +272,9 @@ export const LEAN: LanguageProfile = {
     linked: "a definition or lemma and the proofs that start using it, a declaration renamed and its uses",
     compiles: "in Lean every use of a missing or renamed declaration is an error, and every proof must still check",
     reference: "a new lemma with the proofs that use it",
-    dependencies: "changes to one declaration, which Stet keeps in one change",
+    dependencies: "a declaration and the changes that start or stop using it, a new module and its `import`, changes to one declaration",
   },
   splitUnits: splitLean,
+  definitions,
+  includes,
 };
