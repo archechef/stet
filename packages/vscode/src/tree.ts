@@ -19,6 +19,8 @@ function elId(el: El): string {
       return `${p}|agent|${n.agent.id}`;
     case "note":
       return `${p}|note|${n.note.id}`;
+    case "notes":
+      return `${p}|notes|${n.agent.id}`;
     case "changeset":
       return `${p}|cs|${n.changeset.id}`;
     case "group":
@@ -86,8 +88,11 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
         return this.ext.allProjects().length > 1 ? { project: p } : undefined;
       case "note": {
         const agent = snap.agents.find((a) => a.id === n.note.agent);
-        return agent && { project: p, node: { type: "agent", agent } };
+        // Resolved notes are in History, under their agent's notes.
+        return agent && { project: p, node: n.note.state === "resolved" ? { type: "notes", agent } : { type: "agent", agent } };
       }
+      case "notes":
+        return { project: p, node: { type: "agent", agent: n.agent } };
       case "changeset": {
         const agent = snap.agents.find((a) => a.id === n.changeset.agent);
         return agent && { project: p, node: { type: "agent", agent } };

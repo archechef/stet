@@ -110,9 +110,19 @@ describe("resolved notes in History (test report v0.16)", () => {
       unshared: false,
       missing: [],
     } as unknown as Snapshot;
-    const ids = (m: TreeModel) => m.children(m.children()[0]).map((n) => (n.type === "note" ? n.note.id : n.type));
+    const ids = (m: TreeModel, under = m.children()[0]) => m.children(under).map((n) => (n.type === "note" ? n.note.id : n.type));
     expect(ids(new TreeModel(s, "review"))).toEqual(["N1"]);
-    expect(ids(new TreeModel(s, "history"))).toEqual(["N2"]);
+    // In History, in a row of their own that folds away (it couldn't be collapsed).
+    const h = new TreeModel(s, "history");
+    expect(ids(h)).toEqual(["notes"]);
+    const notes = h.children(h.children()[0])[0]!;
+    expect(ids(h, notes)).toEqual(["N2"]);
+    expect(rowView(notes, h, { history: true, unread: 0 })).toMatchObject({
+      label: "Notes",
+      description: "1 resolved note",
+      expand: "collapsed",
+      contextValue: "notes",
+    });
   });
 });
 
@@ -172,6 +182,7 @@ describe("the menus' when clauses and the rows' contextValue (code quality repor
     for (const notify of ["now", "batched", "off"] as const) out.add(contextValueOf({ type: "agent", agent: { ...agent, notify } }, model({})));
     out.add(contextValueOf({ type: "agent", agent: { ...agent, state: "archived" } }, model({})));
     for (const state of ["open", "resolved"] as const) out.add(contextValueOf({ type: "note", note: { state } as Note }, model({})));
+    out.add(contextValueOf({ type: "notes", agent }, model({})));
     for (const status of ["pending", "accepted"] as const) {
       const items = ["1.1", "1.2"].map((i) => item(i, { status, groups: ["G1"] }));
       for (const kind of ["linked", "related", "atomic"] as const) {
@@ -196,7 +207,7 @@ describe("the menus' when clauses and the rows' contextValue (code quality repor
 
   it("makes values of the documented form", () => {
     const form =
-      /^(agent\.active\.notify-(now|batched|off)|agent\.archived|note\.(open|resolved)|changeset\.(live|done)|group\.(live|done)\.(linked|related|atomic)|part\.(live|done)|item\.live\.[a-z-]+(\.pdf)?|item\.done\.[a-z-]+(\.pdf)?(\.undo)?)$/;
+      /^(agent\.active\.notify-(now|batched|off)|agent\.archived|note\.(open|resolved)|notes|changeset\.(live|done)|group\.(live|done)\.(linked|related|atomic)|part\.(live|done)|item\.live\.[a-z-]+(\.pdf)?|item\.done\.[a-z-]+(\.pdf)?(\.undo)?)$/;
     for (const v of values) expect(v).toMatch(form);
     expect(values).toContain("item.done.modify.pdf.undo");
     expect(values).toContain("item.live.modify");

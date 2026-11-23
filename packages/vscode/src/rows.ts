@@ -237,6 +237,8 @@ export function contextValueOf(node: Node, model: TreeModel): string {
       return node.agent.state === "active" ? `agent.active.notify-${notifyMode(node.agent)}` : "agent.archived";
     case "note":
       return node.note.state === "resolved" ? "note.resolved" : "note.open";
+    case "notes":
+      return "notes";
     case "changeset":
       return model.liveCount((i) => i.changeset === node.changeset.id) ? "changeset.live" : "changeset.done";
     case "group":
@@ -327,6 +329,17 @@ export function rowView(node: Node, model: TreeModel, f: { history: boolean; unr
         icon: f.unread ? { id: "comment-unresolved", color: "notificationsInfoIcon.foreground" } : { id: "note" },
         contextValue,
         expand: "none",
+      };
+    }
+    case "notes": {
+      const notes = model.children(node).length;
+      return {
+        label: "Notes",
+        description: `${plural(notes, "resolved note")}`,
+        tooltip: `Your resolved notes to **${esc(node.agent.id)}**, with the agent's replies.`,
+        icon: { id: "note" },
+        contextValue,
+        expand: "collapsed",
       };
     }
     case "changeset": {

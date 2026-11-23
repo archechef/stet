@@ -143,9 +143,9 @@ The **History** view (under Review in the Stet sidebar; click its title to open 
 - Clicking a change shows its diff: the old text against the text that was accepted (your edited version, if you edited it), in its original context.
 - Right-click for **Comment…** (the agent can still reply), **Diff**, **PDF preview** and **Go to change**, with the same names as everywhere (4.3). `d` shows the diff, `u` undoes.
 - **Where changes open:** going to a change (or a note, or a diff) uses the editor group that already has its file open, even when another one has the focus. Otherwise it opens in the active group, unless that shows the PDF preview: then in a group showing text, or beside it.
-- **Undo** (the ↶ button): the change is pending again, and the agent is told. Undoing an accept takes the change out of your file again, and changes the accept had made stale are pending again too. A change decided together with others (a linked group, a move) is undone with them. A revision request the agent hasn't answered yet can be taken back too. You can undo an accept until you **Finish review**; after that it is in git's history, and its diff still shows here.
+- **Undo** (the ↶ button): the change is pending again, and the agent is told. Undoing an accept takes the change out of your file again, and changes the accept had made stale are pending again too. A change decided together with others (a linked group, a move) is undone with them. A revision request the agent hasn't answered yet can be taken back too. A rejection is undone only while the change can still be applied: if your file changed where it was, or the agent has proposed something else for the same text since (reject or withdraw that first), Stet says so and nothing is undone. You can undo an accept until you **Finish review**; after that it is in git's history, and its diff still shows here.
 - A round that is partly decided appears in both views: its open changes under Review, the decided ones under History.
-- **Resolved notes** are listed under their agent, with their replies in the tooltip. **Reopen note** opens one again; the agent is told.
+- **Resolved notes** are listed under their agent in a **Notes** row, collapsed until you open it, with their replies in the tooltip. **Reopen note** opens one again; the agent is told.
 
 ### 4.2 In the editor
 

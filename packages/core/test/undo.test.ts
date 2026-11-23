@@ -65,6 +65,43 @@ describe("undo", () => {
     expect((await stet.submit("a", { title: "again" })).repeats).toEqual([]);
   });
 
+  it("reopens a rejection only while it can still be applied", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", { title: "t" });
+    const [task, sum] = [items.find((i) => i.newText.includes("task"))!, items.find((i) => i.newText.includes("d$"))!];
+    await stet.reject([task.id, sum.id]);
+    // You rewrote the sentence meanwhile: the change has nothing to apply to any more.
+    edit(repo, "main.tex", "the problem of reviewing", "the difficulty of reviewing");
+    await expect(stet.undo(task.id)).rejects.toThrow(/can no longer be applied \(1\.\d: .*Nothing was undone/);
+    // Undone together with one that still applies: neither is.
+    await expect(stet.undoMany([sum.id, task.id])).rejects.toThrow(/Nothing was undone/);
+    expect((await stet.getItem(sum.id))!.status).toBe("rejected");
+    await stet.undo(sum.id);
+    expect((await stet.getItem(sum.id))!.status).toBe("pending");
+    await stet.accept([sum.id], { commit: false });
+    expect(read(repo, "main.tex")).toContain("$a+b=d$");
+  });
+
+  it("doesn't reopen a rejection the agent has revised since", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    const [old] = (await stet.submit("a", { title: "t" })).items;
+    await stet.reject([old!.id], { reason: "say question" });
+    await stet.sync("a");
+    edit(wt, "main.tex", "the problem", "the question");
+    const [revision] = (await stet.submit("a", { title: "t2" })).items;
+    await expect(stet.undo(old!.id)).rejects.toThrow(new RegExp(`a proposes ${revision!.id.replace(".", "\\.")} for the same text`));
+    // With the revision rejected too, the first one can come back.
+    await stet.reject([revision!.id]);
+    await stet.undo(old!.id);
+    expect((await stet.getItem(old!.id))!.status).toBe("pending");
+    expect((await stet.sync("a")).stale).toEqual([]);
+  });
+
   it("undoes a linked group as a whole (a part of one on its own)", async () => {
     const { stet, repo } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");

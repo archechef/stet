@@ -511,11 +511,18 @@ export class Decisions {
         await this.reopen(item, "revision request taken back", "needs_revision");
         reopened.set(item.id, item);
       }
+      const rejected: { unit: Item[]; revised: Item[] }[] = [];
       for (const item of items.filter((i) => i.status === "rejected")) {
         // The revision requests this rejection sent to the rest of its linked group (reject
         // --revise-rest) are taken back too, unless the agent has answered them meanwhile.
-        const unit = await this.decidedWith(item);
+        const unit = (await this.decidedWith(item)).filter((i) => i.status === "rejected");
         const revised = (await this.sameDecision(item)).filter((i) => i.status === "needs_revision");
+        rejected.push({ unit, revised });
+      }
+      // A rejected change comes back only if it can still be applied: checked for all of them
+      // first, so nothing is undone when one can't.
+      await this.requireReopenable(rejected.flatMap((r) => r.unit));
+      for (const { unit, revised } of rejected) {
         for (const it of unit) if (it.status === "rejected") await this.reopen(it, "rejection undone", "rejected");
         for (const it of revised) if (it.status === "needs_revision") await this.reopen(it, "rejection of a linked change undone", "needs_revision");
         for (const it of [...unit, ...revised]) reopened.set(it.id, it);
@@ -651,6 +658,36 @@ export class Decisions {
       }
     }
     return [...out.values()];
+  }
+
+  /**
+   * Rejected changes made pending again must still apply to your files as they are now, and must
+   * not compete with a pending change of their agent for the same text (its revision, made after
+   * the rejection): the agent's workspace holds one text. Throws, saying why, when one doesn't.
+   */
+  private async requireReopenable(items: Item[]): Promise<void> {
+    if (!items.length) return;
+    const ids = new Set(items.map((i) => i.id));
+    const agents = new Set(items.map((i) => i.agent));
+    const live = (await this.stet.store.items()).filter((o) => agents.has(o.agent) && isLive(o.status) && !ids.has(o.id));
+    const opts = { refText: this.stet.refText, neighbours: this.stet.neighbours };
+    const { located, failed } = await locate([...items, ...live], this.stet.workingView(), opts);
+    const why: string[] = [];
+    for (const f of failed) if (ids.has(f.item.id)) why.push(`${f.item.id}: ${f.reason}`);
+    const spans = new Map(located.map((l) => [l.item.id, l]));
+    for (const it of items) {
+      const mine = spans.get(it.id);
+      if (!mine) continue;
+      if (it.kind !== "modify") {
+        // A whole file: it must still be as the change expects.
+        const res = await applyItems([it], this.stet.workingView(), opts);
+        for (const f of res.failed) why.push(`${it.id}: ${f.reason}`);
+        continue;
+      }
+      const clash = located.find((l) => !ids.has(l.item.id) && l.item.kind === "modify" && l.item.file === it.file && conflicts(l.span, mine.span));
+      if (clash) why.push(`${it.id}: ${it.agent} proposes ${clash.item.id} for the same text now; reject or withdraw it first`);
+    }
+    if (why.length) throw new StetError(`Can't undo the rejection, because the change can no longer be applied (${why.join("; ")}). Nothing was undone.`);
   }
 
   async reopen(it: Item, note: string, was: ItemStatus): Promise<void> {

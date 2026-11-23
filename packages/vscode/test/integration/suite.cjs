@@ -578,6 +578,30 @@ exports.run = async function run() {
       },
     ],
     [
+      "undo a rejection",
+      async () => {
+        // A change rejected (here from the command line), then Undo in History: pending again.
+        const id = fx.items.find((i) => statusOf(i) === "pending");
+        const cli = (...a) => {
+          try {
+            return execFileSync(cfg.cli.command, [...cfg.cli.args, ...a], {
+              cwd: fx.repo,
+              env: { ...process.env, ...(cfg.cli.env || {}) },
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+          } catch (e) {
+            throw new Error(`stet ${a.join(" ")}: ${e.stderr || e.stdout || e.message}`);
+          }
+        };
+        cli("reject", id, "-m", "not this one");
+        await sleep(1500); // the panel sees the rejection
+        await vscode.commands.executeCommand("stet.undo", id);
+        const back = await until("undo of a rejection", async () => statusOf(id) === "pending", 5000).catch(() => false);
+        check("undo of a rejection makes the change pending again", back, JSON.stringify({ status: statusOf(id) }));
+      },
+    ],
+    [
       "PDF preview",
       async () => {
         // PDF preview: opens at once, and the compiled region arrives afterwards (when TeX and the

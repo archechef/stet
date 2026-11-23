@@ -39,8 +39,10 @@ export interface Snapshot {
 
 export type Node =
   | { type: "agent"; agent: Agent }
-  /** An open reviewer note, under its agent (Review panel only). */
+  /** A reviewer note: an open one under its agent (Review panel), a resolved one under its agent's notes (History). */
   | { type: "note"; note: Note }
+  /** An agent's resolved notes, folded into one row (History only). */
+  | { type: "notes"; agent: Agent }
   | { type: "changeset"; changeset: Changeset }
   | { type: "group"; group: Group }
   /** A part of a linked group (spec §6.4.6), accepted or rejected on its own. */
@@ -245,8 +247,9 @@ export class TreeModel {
       case "agent":
         return [
           ...this.openNotes(node.agent.id).map((note): Node => ({ type: "note", note })),
-          // Resolved notes, with their replies, in History (they vanished from VS Code).
-          ...this.resolvedNotes(node.agent.id).map((note): Node => ({ type: "note", note })),
+          // Resolved notes, with their replies, in History (they vanished from VS Code): in one row
+          // of their own, which folds away like a round.
+          ...(this.resolvedNotes(node.agent.id).length ? [{ type: "notes", agent: node.agent } as Node] : []),
           ...this.snap.changesets
             .filter((c) => c.agent === node.agent.id && this.csVisible(c))
             .sort((a, b) => num(b.id) - num(a.id))
@@ -254,6 +257,8 @@ export class TreeModel {
         ];
       case "note":
         return [];
+      case "notes":
+        return this.resolvedNotes(node.agent.id).map((note): Node => ({ type: "note", note }));
       case "changeset":
         return [
           ...this.groupsOf(node.changeset).map((group): Node => ({ type: "group", group })),

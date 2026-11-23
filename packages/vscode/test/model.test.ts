@@ -76,7 +76,9 @@ const ids = (nodes: Node[]) =>
             ? `${n.group.id}.${n.index + 1}`
             : n.type === "note"
               ? n.note.id
-              : n.item.id,
+              : n.type === "notes"
+                ? `notes:${n.agent.id}`
+                : n.item.id,
   );
 
 describe("tree model", () => {
@@ -172,7 +174,9 @@ describe("tree model", () => {
     const m = new TreeModel(s, "review");
     expect(ids(m.children(m.children()[0]))).toEqual(["N2", "N10", "C1"]);
     const h = new TreeModel(s, "history");
-    expect(ids(h.children(h.children()[0])).filter((x) => x.startsWith("N"))).toEqual(["N1"]);
+    // History folds them into one Notes row.
+    const folded = h.children(h.children()[0]).find((n) => n.type === "notes")!;
+    expect(ids(h.children(folded))).toEqual(["N1"]);
   });
 
   it("hides atomic groups (their members are merged)", () => {
