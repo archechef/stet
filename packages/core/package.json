@@ -1,6 +1,6 @@
 {
   "name": "@stet/core",
-  "version": "0.17.1",
+  "version": "0.18.0",
   "private": true,
   "description": "Stet core: review AI-proposed changes to LaTeX and Typst projects (internal to Stet's packages)",
   "type": "module",

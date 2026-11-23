@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.0 — 2026-11-23
 
 **Lean projects.** Stet reviews Lean 4 projects: a `.lean` file's changes are split by declaration, so the changed lines of one theorem and its proof (with its doc comment and attributes) are one change, and changes to different declarations stay separate. `stet init` and *Set up project* recognise a Lean project by its `.lean` files (`--language lean`), agents get Lean examples, and VS Code starts in folders with `.lean` files. Lake's `.lake/` build folder is offered for `.gitignore` at setup; `lakefile.lean`, `lakefile.toml`, `lean-toolchain` and `lake-manifest.json` are flagged as files that take effect (Lake runs the lakefile and fetches packages, elan runs the toolchain) and need a confirmation to accept. A declaration renamed, added or removed is linked with the changes that start or stop using it ("Rename declaration double_eq → double_eq_add"), and a new or deleted module with the `import` that reads it: in Lean either alone is an error. Names are compared by their last component (`foo` in `MyProject.foo` or `h.foo`), since `namespace` and `open` decide the rest. No previews.
 
