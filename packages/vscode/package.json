@@ -1093,6 +1093,12 @@
           ],
           "description": "How proposed changes are shown whose new text is too long to show on one line in the editor."
         },
+        "stet.inlineTextLength": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "Characters of proposed text shown in the editor per change; longer text is shortened and shown in full as `#stet.longChanges#` says. `0`: no limit when the text wraps with the line (word wrap on), 80 characters when it doesn't. VS Code's own limit for inline text (`#editor.inlayHints.maximumLength#`, set per file language) is kept too: Stet sets it to no limit for the files you review, and where it holds, the rest of the text is shown in full the same way."
+        },
         "stet.newTextStyle": {
           "type": "string",
           "enum": [
@@ -1168,10 +1174,40 @@
       "[bibtex]": {
         "editor.inlayHints.maximumLength": 0
       },
+      "[biblatex]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[bibtex-style]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[latex-class]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[latex-package]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[latex-expl3]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[doctex]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[context]": {
+        "editor.inlayHints.maximumLength": 0
+      },
       "[typst]": {
         "editor.inlayHints.maximumLength": 0
       },
       "[lean4]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[lean]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[markdown]": {
+        "editor.inlayHints.maximumLength": 0
+      },
+      "[plaintext]": {
         "editor.inlayHints.maximumLength": 0
       }
     },

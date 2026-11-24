@@ -45,7 +45,13 @@ export class Threads implements vscode.Disposable {
       this.controller,
       host.onDidChange(() => void this.sync()),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("stet.longChanges") || e.affectsConfiguration("stet.newTextStyle") || e.affectsConfiguration("editor.wordWrap"))
+        if (
+          e.affectsConfiguration("stet.longChanges") ||
+          e.affectsConfiguration("stet.newTextStyle") ||
+          e.affectsConfiguration("stet.inlineTextLength") ||
+          e.affectsConfiguration("editor.wordWrap") ||
+          e.affectsConfiguration("editor.inlayHints")
+        )
           void this.rebuild();
       }),
     );

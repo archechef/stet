@@ -41,7 +41,13 @@ export default {
   await stet.importProfile(profile, { use: true });
   const agent = await stet.newAgent("claude-1", { kind: "claude-code" });
   const f = join(agent.worktree, "main.prf");
-  writeFileSync(f, readFileSync(f, "utf8").replace("lemma two: b = b\n  by refl", "lemma two: b = b\n  by rfl"));
+  writeFileSync(
+    f,
+    readFileSync(f, "utf8")
+      .replace("lemma two: b = b\n  by refl", "lemma two: b = b\n  by rfl")
+      // A proposal longer than VS Code's 43 characters of inline text.
+      .replace("lemma one: a = a\n  by refl", "lemma one: a = a\n  by simp only [first_long_lemma_name, second_long_lemma_name, third_one]"),
+  );
   const r = await stet.submit("claude-1", { title: "Tidy proofs" });
   console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id), file: "main.prf", language: "proofs" }));
   process.exit(0);

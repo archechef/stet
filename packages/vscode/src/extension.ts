@@ -270,7 +270,7 @@ export class StetExtension implements Host, vscode.Disposable {
     await this.onProjectChanged();
   }
 
-  /** Settings that cut or hide inline proposals in a project file: say so once, with a fix for that language. */
+  /** Settings that hide inline proposals in a project file: say so once, with a fix for that language. */
   private async checkInline(doc: vscode.TextDocument): Promise<void> {
     const project = this.projectFor(doc.uri);
     if (!project || !setting("inlineChanges")) return;
@@ -278,15 +278,6 @@ export class StetExtension implements Host, vscode.Disposable {
       const memo = `stet.inlineNotice:${p.key}:${doc.languageId}`;
       if (this.ctx.globalState.get<boolean>(memo)) continue;
       await this.ctx.globalState.update(memo, true);
-      // A document file VS Code knows no language for (a .typ file without a Typst extension) is
-      // "plaintext": a fix there would change every plain-text file.
-      const lang = project.profile(project.relPath(doc.uri)!);
-      if (doc.languageId === "plaintext" && lang.document) {
-        void vscode.window.showInformationMessage(
-          `Stet: ${p.message} VS Code opens ${lang.name} files as plain text here; with a ${lang.name} extension installed, Stet's own default for ${lang.name} files fixes this.`,
-        );
-        continue;
-      }
       const fix = `Fix for ${doc.languageId} files`;
       const pick = await vscode.window.showInformationMessage(`Stet: ${p.message}`, fix, "Leave it");
       if (pick === fix) {

@@ -30,6 +30,8 @@ export type Settings = {
   diffShowsProposals: boolean;
   inlineChanges: boolean;
   longChanges: Choice<"longChanges">;
+  /** Characters of proposed text shown inline per change; 0: no limit of Stet's own. */
+  inlineTextLength: number;
   newTextStyle: Choice<"newTextStyle">;
   runtime: Choice<"runtime">;
   shareEdits: Choice<"shareEdits">;
@@ -43,6 +45,7 @@ export const DEFAULTS: Readonly<Settings> = {
   diffShowsProposals: false,
   inlineChanges: true,
   longChanges: "collapsed",
+  inlineTextLength: 0,
   newTextStyle: "auto",
   runtime: "auto",
   shareEdits: "manual",
@@ -63,5 +66,8 @@ export function setting<K extends keyof Settings>(key: K, scope?: vscode.Uri): S
 
 function valid<K extends keyof Settings>(key: K, v: unknown): v is Settings[K] {
   const choices: readonly unknown[] | undefined = key in CHOICES ? CHOICES[key as keyof typeof CHOICES] : undefined;
-  return choices ? choices.includes(v) : typeof v === typeof DEFAULTS[key];
+  if (choices) return choices.includes(v);
+  // Numbers are counts: whole and not negative.
+  if (typeof DEFAULTS[key] === "number") return typeof v === "number" && Number.isInteger(v) && v >= 0;
+  return typeof v === typeof DEFAULTS[key];
 }

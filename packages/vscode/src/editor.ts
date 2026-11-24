@@ -85,31 +85,33 @@ export function insertedTextStyle(): vscode.DecorationRenderOptions {
 }
 
 /**
- * How much new text is shown inline after a change. With word wrap on, inline text wraps with the
- * line, so a longer single-line proposal fits; without it, long text would run off the screen.
+ * How much new text is shown inline after a change: `stet.inlineTextLength`, 0 for no limit of
+ * Stet's own. Longer text is shortened, and shown in full as `stet.longChanges` says.
+ *
+ * Without word wrap, long text would run off the screen: 80 characters unless set. With it, the
+ * text wraps with the line as VS Code's inlay hints, which VS Code cuts after
+ * `editor.inlayHints.maximumLength` characters per line (43 unless set; Stet sets no limit for the
+ * file languages of documents, `configurationDefaults` in package.json). Where that limit holds,
+ * Stet shortens the text to it itself, so the rest is shown in full instead of cut without a word.
  */
 export function inlineMax(uri: vscode.Uri): number {
-  return wraps(uri) && usesHints(uri) ? 2000 : 80;
+  const own = setting("inlineTextLength");
+  if (!(wraps(uri) && usesHints(uri))) return own > 0 ? own : 80;
+  // The document's language decides VS Code's limit: it is set per language.
+  const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+  const vsLimit = vscode.workspace.getConfiguration("editor", doc ?? uri).get<number>("inlayHints.maximumLength", 43);
+  return Math.min(own > 0 ? own : 2000, vsLimit > 0 ? vsLimit : Number.POSITIVE_INFINITY);
 }
 
 /**
  * VS Code settings that break inline proposals with word wrap, for a document: they are inlay
- * hints, which VS Code cuts after `editor.inlayHints.maximumLength` characters per line (Stet's
- * default for LaTeX, Typst and Lean files is no limit, but the user's own value wins) or hides unless a key is held.
+ * hints, which VS Code hides unless a key is held. (VS Code's length limit for them is handled by
+ * `inlineMax`: text beyond it is shown in full elsewhere.)
  */
 export function inlineProblems(doc: vscode.TextDocument): { key: string; message: string; setting: string; value: unknown }[] {
   if (!usesHints(doc.uri)) return [];
   const ed = vscode.workspace.getConfiguration("editor", { uri: doc.uri, languageId: doc.languageId });
   const out: { key: string; message: string; setting: string; value: unknown }[] = [];
-  const max = ed.get<number>("inlayHints.maximumLength", 43);
-  if (max > 0) {
-    out.push({
-      key: "maximumLength",
-      message: `VS Code shows at most ${max} characters of inline text per line in ${doc.languageId} files (editor.inlayHints.maximumLength), so longer proposals are cut off instead of wrapping.`,
-      setting: "inlayHints.maximumLength",
-      value: 0,
-    });
-  }
   const enabled = ed.get<string>("inlayHints.enabled", "on");
   if (enabled !== "on") {
     out.push({
@@ -232,7 +234,7 @@ export class EditorIntegration
         if (e.contentChanges.length) this.update(300);
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration("stet") || e.affectsConfiguration("editor.wordWrap")) this.update();
+        if (e.affectsConfiguration("stet") || e.affectsConfiguration("editor.wordWrap") || e.affectsConfiguration("editor.inlayHints")) this.update();
       }),
     );
   }

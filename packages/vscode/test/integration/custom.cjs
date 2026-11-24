@@ -53,6 +53,40 @@ exports.run = async function run() {
       },
     ],
   ];
+  if (fx.kind === "proofs")
+    steps.push([
+      "long proposals in a plain-text file",
+      async () => {
+        // VS Code opens .prf files as plain text (no extension knows them). With word wrap, proposed
+        // text is an inline hint: shown in full, as Stet sets no limit for plain text; where VS Code's
+        // limit holds, or stet.inlineTextLength is set, Stet shortens it itself (the rest is shown elsewhere).
+        const doc = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(doc);
+        const G = vscode.ConfigurationTarget.Global;
+        await vscode.workspace.getConfiguration("editor").update("wordWrap", "on", G);
+        await vscode.workspace.getConfiguration("stet").update("newTextStyle", "wrapping", G);
+        const longest = async () => {
+          const h = (await vscode.commands.executeCommand("vscode.executeInlayHintProvider", uri, new vscode.Range(0, 0, doc.lineCount, 0))) || [];
+          return h.map((x) => (typeof x.label === "string" ? x.label : x.label.map((p) => p.value).join(""))).sort((a, b) => b.length - a.length)[0] ?? "";
+        };
+        const settle = (what, ok) => until(what, async () => ((await ok(await longest())) ? true : null), 10000).catch(() => false);
+        const full = await settle("full hint", (l) => l.includes("third_one"));
+        check(
+          `a long proposal is shown in full in a ${doc.languageId} file`,
+          full && doc.languageId === "plaintext",
+          JSON.stringify({ lang: doc.languageId, label: await longest() }),
+        );
+        const plain = vscode.workspace.getConfiguration("editor", { languageId: "plaintext" });
+        await plain.update("inlayHints.maximumLength", 43, G, true);
+        const cut = await settle("hint within VS Code's limit", (l) => l.length <= 43 && l.endsWith("…"));
+        check("where VS Code's limit holds, Stet shortens the text to it", cut, JSON.stringify({ label: await longest() }));
+        await plain.update("inlayHints.maximumLength", undefined, G, true);
+        await vscode.workspace.getConfiguration("stet").update("inlineTextLength", 20, G);
+        const own = await settle("hint within stet.inlineTextLength", (l) => l.length <= 20 && l.endsWith("…"));
+        check("stet.inlineTextLength shortens it", own, JSON.stringify({ label: await longest() }));
+        await vscode.workspace.getConfiguration("stet").update("inlineTextLength", undefined, G);
+      },
+    ]);
   if (fx.kind === "latex-profile")
     steps.push([
       "PDF preview with the imported profile",
