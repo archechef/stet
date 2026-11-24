@@ -13,13 +13,13 @@ import {
   archivedMessage,
   type CliCommand,
   checkToolUse,
-  DOCUMENT_LANGUAGES,
   describeItem,
   describeNote,
   doctor,
   documentProfile,
   findInbox,
   followInbox,
+  forgetLibraryProfile,
   GROUP_KINDS,
   type GroupHint,
   type GroupKind,
@@ -31,6 +31,7 @@ import {
   isLive,
   isNoteId,
   itemEffect,
+  libraryDirectory,
   moveOthers,
   NOTIFY_TRIGGER_TEXT,
   NOTIFY_TRIGGERS,
@@ -270,25 +271,53 @@ export const COMMANDS: Command[] = [
       "stet profile import <file.mjs> [--use] [--ignore-build-files]",
       "                                      install a trusted local language profile; --use makes it the project's",
       "                                      language, --ignore-build-files adds its build files to .gitignore",
+      "stet profile use <id> [--ignore-build-files]",
+      "                                      install a profile from your profile library (imported in another project)",
+      "stet profile list                     your profile library, and which profiles this project has",
+      "stet profile forget <id>              take a profile out of your library (projects keep their copy)",
     ],
     options: ["use", "ignore-build-files"],
     project: true,
     reviewer: true,
     async run({ args, opt, cwd, stet, out }) {
-      const [action, file] = args;
-      if (action !== "import" || !file || args.length !== 2) throw usageError("Usage: stet profile import <file.mjs> [--use] [--ignore-build-files]");
-      const r = await stet.importProfile(resolve(cwd, file), { use: !!opt.use });
+      const [action, arg] = args;
+      const usage = () => usageError("Usage: stet profile import <file.mjs> [--use] | use <id> | list | forget <id>");
+      if (action === "list") {
+        if (args.length !== 1) throw usage();
+        const library = await stet.profileLibrary();
+        return out(
+          () =>
+            library.length
+              ? [
+                  `Your profile library (${libraryDirectory()}):`,
+                  ...library.map(
+                    (e) =>
+                      `  ${bold(e.id)} ${e.name} (${e.defaultFiles.join(", ")})${e.current ? " — in this project" : e.installed ? " — another version in this project" : ""}`,
+                  ),
+                ].join("\n")
+              : `Your profile library is empty (${libraryDirectory()}). \`stet profile import <file.mjs>\` adds a profile to it.`,
+          library,
+        );
+      }
+      if (action === "forget") {
+        if (!arg || args.length !== 2) throw usage();
+        if (!(await forgetLibraryProfile(arg))) throw new StetError(`Your profile library has no profile '${arg}'.`);
+        return out(() => `Took '${arg}' out of your profile library. Projects that use it keep their copy.`, { id: arg });
+      }
+      if ((action !== "import" && action !== "use") || !arg || args.length !== 2) throw usage();
+      const r = action === "import" ? await stet.importProfile(resolve(cwd, arg), { use: !!opt.use }) : await stet.useProfile(arg);
       const ignored = opt["ignore-build-files"] ? await stet.ignoreBuildFiles(r.id) : [];
       const toIgnore = opt["ignore-build-files"] ? [] : r.buildFiles;
       return out(
         () =>
           [
-            `Installed the language profile '${r.id}' (${r.name}).`,
+            `Installed the language profile '${r.id}' (${r.name})${action === "use" ? " from your profile library" : ""}.`,
             r.language === r.id
               ? `It is the project's language: agents' instructions and examples, and PDF previews, follow it.`
               : r.selectable
-                ? `To make it the project's language: stet profile import ${file} --use`
+                ? `To make it the project's language: stet profile import ${arg} --use`
                 : `It has no examples for agents (agentTerms), so it can't be the project's language; it splits and links its files.`,
+            ...(action === "import" && r.library ? [`It is in your profile library too: \`stet profile use ${r.id}\` installs it in another project.`] : []),
             ...(ignored.length ? [`Added to .gitignore: ${ignored.join(", ")}`] : []),
             ...(toIgnore.length ? [`Its build files git doesn't ignore yet: ${toIgnore.join(", ")} (add them with --ignore-build-files)`] : []),
           ].join("\n"),
@@ -303,7 +332,7 @@ export const COMMANDS: Command[] = [
     options: ["main", "language"],
     async run({ opt, cwd, self, out }) {
       // A second run only refreshes the setup: say so, instead of the first-time message.
-      const { setUp: already, languages } = await Stet.inspectSetup(cwd);
+      const { setUp: already, languages, names } = await Stet.inspectSetup(cwd);
       const stet = await Stet.init(cwd, { ...(opt.main ? { mainBranch: opt.main } : {}), ...(opt.language ? { language: opt.language } : {}), cli: self });
       const cfg = await stet.config();
       // Files of several languages: which has the most, and how to choose another.
@@ -321,8 +350,8 @@ export const COMMANDS: Command[] = [
           (mixed
             ? yellow(
                 `! The project has files of several languages (${languages
-                  .map(([id, n]) => `${n} ${DOCUMENT_LANGUAGES.find((p) => p.id === id)?.name ?? id}`)
-                  .join(", ")}); Stet took the one with the most. \`stet init --language <${DOCUMENT_LANGUAGES.map((p) => p.id).join("|")}>\` chooses.`,
+                  .map(([id, n]) => `${n} ${names[id] ?? id}`)
+                  .join(", ")}); Stet took the one with the most. \`stet init --language <${languages.map(([id]) => id).join("|")}>\` chooses.`,
               ) + "\n"
             : "") +
           (hooks.missing.length

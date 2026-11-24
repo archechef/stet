@@ -25,6 +25,7 @@ export {
   profileByName,
   profileHasPreview,
 } from "./lang/index.js";
+export { forgetLibraryProfile, type LibraryProfile, libraryDirectory, readLibrary } from "./lang/library.js";
 export type { SpokenRules, SyntaxRules, Typesetter } from "./lang/profile.js";
 export { describeFeedback, StetMcpServer, serveStdio } from "./mcp.js";
 export * from "./model.js";

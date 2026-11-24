@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { afterEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
 import { PROFILES } from "../src/lang/index.js";
 import type { Item } from "../src/model.js";
 import { Stet } from "../src/service.js";
@@ -12,6 +12,12 @@ import { Stet } from "../src/service.js";
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5 });
+});
+// Each test has a profile library of its own, never the user's (lang/library.ts).
+beforeEach(() => {
+  const d = mkdtempSync(join(tmpdir(), "stet-library-"));
+  dirs.push(d);
+  process.env.STET_PROFILE_LIBRARY = d;
 });
 
 /** A new folder outside every test project, removed after the test: for links that point out of the project. */

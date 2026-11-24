@@ -122,6 +122,14 @@ export async function readProfile(source: Buffer, name: string): Promise<Install
       ))
   )
     throw invalid("fileEffects must contain path regexes without global or sticky flags and nonempty, single-line reasons");
+  // Its own settings: defaults and a check, for grouping and for its typesetter's previews.
+  for (const [what, s] of [
+    ["groupingSettings", profile.groupingSettings],
+    ["typesetter.settings", profile.typesetter?.settings],
+  ] as const) {
+    if (s !== undefined && (!s || typeof s.defaults !== "object" || s.defaults === null || Array.isArray(s.defaults) || typeof s.check !== "function"))
+      throw invalid(`${what} must have a defaults object and a check function`);
+  }
   return profile as InstalledProfile;
 }
 

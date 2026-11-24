@@ -7,7 +7,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { configDelta, defaultConfig, mergeConfig, type StetConfig, validateConfig } from "./config.js";
 import { StetError } from "./errors.js";
-import { PROFILES, previewDefaults, profilesFor, projectProfiles } from "./lang/index.js";
+import { groupingDefaults, PROFILES, previewDefaults, profilesFor, projectProfiles } from "./lang/index.js";
 import { addProfile, loadProjectProfiles, profileDirectory, profileModuleName, readProfile } from "./lang/load.js";
 import {
   type Agent,
@@ -97,6 +97,13 @@ const damaged = (file: string, why: string) =>
 /** Item, group, changeset and agent ids: a name, never a path. */
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+/** An imported profile's own settings (grouping, its typesetter's previews), where the config has none. */
+function withProfileDefaults(cfg: StetConfig): StetConfig {
+  cfg.preview = { ...previewDefaults(profilesFor(cfg)), ...cfg.preview };
+  cfg.grouping = { ...groupingDefaults(profilesFor(cfg)), ...cfg.grouping };
+  return cfg;
+}
+
 export class Store {
   constructor(
     readonly root: string,
@@ -131,18 +138,14 @@ export class Store {
     const raw = await readJson<Partial<StetConfig>>(join(this.root, "config.json"));
     const cfg = mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {});
     await loadProjectProfiles(cfg, this.root);
-    // An imported typesetter's own preview settings, where the config has none.
-    cfg.preview = { ...previewDefaults(profilesFor(cfg)), ...cfg.preview };
-    return validateConfig(cfg);
+    return validateConfig(withProfileDefaults(cfg));
   }
 
   /**
    * Install a trusted profile module; `use`: make it the project's language too, in the same
    * step. Returns its id and whether the project's language changed.
    */
-  async importProfile(path: string, opts: { use?: boolean } = {}): Promise<{ id: string; languageChanged: boolean }> {
-    if (!path.endsWith(".mjs")) throw new StetError("Pass a self-contained .mjs profile.");
-    const source = await readFile(path);
+  async installProfile(source: Buffer, label: string, opts: { use?: boolean } = {}): Promise<{ id: string; languageChanged: boolean }> {
     const name = profileModuleName(source);
     return this.withLock(async () => {
       const raw = await readJson<Partial<StetConfig>>(join(this.root, "config.json"));
@@ -151,7 +154,7 @@ export class Store {
       const same = Array.isArray(existing) ? existing.indexOf(name) : -1;
       if (same >= 0) cfg.profileModules = existing.filter((entry) => entry !== name);
       await loadProjectProfiles(cfg, this.root);
-      const profile = await readProfile(source, path);
+      const profile = await readProfile(source, label);
       const profiles = [...profilesFor(cfg)];
       const old = profiles.findIndex((entry, index) => index >= PROFILES.length && entry.id === profile.id);
       if (old >= 0) {
@@ -160,6 +163,7 @@ export class Store {
       }
       addProfile(cfg, profiles, profile);
       cfg[projectProfiles] = profiles;
+      withProfileDefaults(cfg);
       const languageChanged = !!opts.use && cfg.language !== profile.id;
       if (opts.use) {
         // Only a profile with examples for agents can be the project's language.

@@ -134,7 +134,7 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
   - how long changes are shown, which of your edits agents see, and where PDF previews appear.
   
   They are the settings of §9, so the Settings editor shows the same values. Settings you choose once (such as `stet.runtime`) are only there.
-- `…` menu: **New agent workspace**, **Refresh** (reloads the panel and rewrites the active agents' instructions, tool configuration and guardrails, e.g. after you updated Stet; agent sessions read them when they start, so restart running ones), **Set up PDF previews**, **Check setup**, **Set up project**, **Import language profile…** (a trusted local profile for another language: it warns that the profile is code, asks whether it is the project's language, and offers its build files for `.gitignore`; Stet then starts by itself in that project).
+- `…` menu: **New agent workspace**, **Refresh** (reloads the panel and rewrites the active agents' instructions, tool configuration and guardrails, e.g. after you updated Stet; agent sessions read them when they start, so restart running ones), **Set up PDF previews**, **Check setup**, **Set up project**, **Import language profile…** (a trusted local profile for another language, from your profile library or a file; for a file it warns that the profile is code, asks whether it is the project's language, and offers its build files for `.gitignore`; Stet then starts by itself in that project).
 
 #### The History view
 

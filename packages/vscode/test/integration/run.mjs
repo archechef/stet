@@ -44,11 +44,20 @@ function runOnce(runtime, kind = "paper", suite = "suite.cjs") {
     // The bundled fixture (from `npm run build`) runs without node_modules.
     const fixtureScript = existsSync(join(extDir, "dist", "it-fixture.mjs")) ? join(extDir, "dist", "it-fixture.mjs") : join(here, "fixture.mjs");
     const profile = join(extDir, "dist", "it-latex-profile.mjs");
-    const fixture = execFileSync(process.execPath, [fixtureScript, tmp, kind, profile], { cwd: extDir, encoding: "utf8" }).trim().split("\n").pop();
+    // A profile library of the test's own, never the user's.
+    const library = join(tmp, "profile-library");
+    const fixture = execFileSync(process.execPath, [fixtureScript, tmp, kind, profile], {
+      cwd: extDir,
+      encoding: "utf8",
+      env: { ...process.env, STET_PROFILE_LIBRARY: library },
+    })
+      .trim()
+      .split("\n")
+      .pop();
     const { repo } = JSON.parse(fixture);
     const out = join(tmp, "results.json");
     // When started from another Electron app, this variable would make VS Code run as plain Node.
-    const env = { ...process.env, STET_IT_OUT: out, STET_IT_FIXTURE: fixture, STET_IT_RUNTIME: runtime };
+    const env = { ...process.env, STET_IT_OUT: out, STET_IT_FIXTURE: fixture, STET_IT_RUNTIME: runtime, STET_PROFILE_LIBRARY: library };
     mkdirSync(join(tmp, "user", "User"), { recursive: true });
     writeFileSync(join(tmp, "user", "User", "settings.json"), JSON.stringify({ "stet.runtime": runtime }));
     delete env.ELECTRON_RUN_AS_NODE;

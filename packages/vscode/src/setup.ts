@@ -1,7 +1,7 @@
 /** *Set up project*: a folder made a Stet project, with git and an identity for commits if it has none. */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { buildIgnores, DOCUMENT_LANGUAGES, documentProfile, gitIdentity, matchesAny, plural, Repo, Stet } from "@stet/core";
+import { buildIgnores, DOCUMENT_LANGUAGES, documentProfile, gitIdentity, matchesAny, plural, Repo, readLibrary, Stet } from "@stet/core";
 import * as vscode from "vscode";
 import type { StetExtension } from "./extension.js";
 import type { Project } from "./project.js";
@@ -58,8 +58,11 @@ export class SetupWizard {
         vscode.workspace.asRelativePath(u, false),
       );
       // A folder without any document file is likely the wrong one.
-      const names = new Intl.ListFormat("en", { type: "disjunction" }).format(DOCUMENT_LANGUAGES.map((p) => p.name));
-      if (!files.some((f) => DOCUMENT_LANGUAGES.some((p) => matchesAny(f, p.defaultFiles ?? [])))) {
+      // The built-in languages and those of your profile library.
+      const library = (await readLibrary()).filter((e) => e.selectable);
+      const known = [...DOCUMENT_LANGUAGES, ...library];
+      const names = new Intl.ListFormat("en", { type: "disjunction" }).format(known.map((p) => p.name));
+      if (!files.some((f) => known.some((p) => matchesAny(f, p.defaultFiles ?? [])))) {
         const go = await vscode.window.showWarningMessage(
           `${folder.name} has no ${names} files.`,
           {
@@ -110,14 +113,18 @@ export class SetupWizard {
         .catch(() => undefined); // first setup
       const bundled = await this.ext.bundledCli(current, join(loc.commonDir, "stet"));
       const opts: Parameters<typeof Stet.init>[1] = bundled ? { cli: bundled.cli } : {};
-      const { setUp: already, languages: counts } = await Stet.inspectSetup(dir, loc);
+      const { setUp: already, languages: counts, names: languageNames, fromLibrary } = await Stet.inspectSetup(dir, loc);
       // Files of several languages: asked, not guessed (a Typst thesis with one old .tex file was
       // set up as LaTeX without a word).
       if (!already) {
         if (counts.length > 1) {
-          const name = (id: string) => DOCUMENT_LANGUAGES.find((l) => l.id === id)?.name ?? id;
+          const name = (id: string) => languageNames[id] ?? id;
           const pick = await vscode.window.showQuickPick(
-            counts.map(([id, n], k) => ({ label: name(id), description: `${plural(n, "file")}${k === 0 ? " (most)" : ""}`, id })),
+            counts.map(([id, n], k) => ({
+              label: name(id),
+              description: `${plural(n, "file")}${k === 0 ? " (most)" : ""}${fromLibrary.includes(id) ? " · from your profile library" : ""}`,
+              id,
+            })),
             {
               title: `${folder.name} has ${counts.map(([id, n]) => `${n} ${name(id)}`).join(" and ")} files: which language is the project written in?`,
               placeHolder: "Agents' instructions and examples follow it",
@@ -148,13 +155,41 @@ export class SetupWizard {
   }
 
   /**
-   * *Import language profile*: a trusted profile module (`stet profile import`), after a warning
-   * that it runs as code; then whether it is the project's language, and its build files for
-   * .gitignore.
+   * *Import language profile*: one of your profile library (imported in another project, trusted
+   * then), or a trusted profile module from a file (`stet profile import`), after a warning that
+   * it runs as code; then whether it is the project's language, and its build files for .gitignore.
    */
   async importProfile(): Promise<void> {
     const p = await this.pickProject();
     if (!p) return void vscode.window.showInformationMessage("Set up the project first (Stet: Set up project), then import a language profile.");
+    const library = (await p.stet.profileLibrary().catch(() => [])).filter((e) => !e.current);
+    let r: Awaited<ReturnType<typeof p.stet.importProfile>> | undefined;
+    if (library.length) {
+      const fromFile = { label: "$(folder-opened) Import from a file…", id: "" };
+      const pick = await vscode.window.showQuickPick(
+        [
+          ...library.map((e) => ({
+            label: e.name,
+            description: `${e.id} · ${e.defaultFiles.join(", ")}`,
+            detail: `From your profile library, imported ${new Date(e.importedAt).toLocaleDateString()}${e.installed ? "; replaces the version this project has" : ""}`,
+            id: e.id,
+          })),
+          fromFile,
+        ],
+        { title: "Which language profile?", placeHolder: "Profiles you imported in other projects, or a file" },
+      );
+      if (!pick) return;
+      if (pick.id) {
+        r = await this.ext.run(p, () => p.stet.useProfile(pick.id, { use: false }));
+        if (!r) return;
+      }
+    }
+    if (!r) r = await this.importFromFile(p);
+    if (!r) return;
+    await this.afterImport(p, r);
+  }
+
+  private async importFromFile(p: Project): Promise<Awaited<ReturnType<Project["stet"]["importProfile"]>> | undefined> {
     const [file] =
       (await vscode.window.showOpenDialog({
         title: "Import a language profile",
@@ -173,8 +208,11 @@ export class SetupWizard {
       "Import",
     );
     if (trust !== "Import") return;
-    const r = await this.ext.run(p, () => p.stet.importProfile(file.fsPath));
-    if (!r) return;
+    return this.ext.run(p, () => p.stet.importProfile(file.fsPath));
+  }
+
+  /** After an import: whether it is the project's language, and its build files for .gitignore. */
+  private async afterImport(p: Project, r: Awaited<ReturnType<Project["stet"]["importProfile"]>>): Promise<void> {
     const said = [`Installed the language profile ${r.name}.`];
     if (r.selectable && r.language !== r.id) {
       const current = documentProfile(await p.stet.config()).name;

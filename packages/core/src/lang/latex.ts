@@ -277,8 +277,22 @@ const references: ReferenceRules = {
     const { removed, added } = keyChange(before + it.oldText + after, before + it.newText + after, ["label"]);
     return [{ kind: LABEL, removed, added, fresh: false }];
   },
-  uses: (kind, oldWin, newWin, cfg) => keyChange(oldWin, newWin, kind === "label" ? cfg.refCommands : cfg.citeCommands),
+  uses: (kind, oldWin, newWin, cfg) => keyChange(oldWin, newWin, (kind === "label" ? cfg.refCommands : cfg.citeCommands) as string[]),
 };
+
+/** LaTeX's own grouping settings: the commands that refer to a label, and that cite a key. */
+const GROUPING_SETTINGS = {
+  refCommands: ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref", "vref", "Vref"],
+  citeCommands: ["cite", "citep", "citet", "citealp", "citeauthor", "citeyear", "parencite", "textcite", "autocite", "footcite"],
+};
+
+const checkGrouping = (g: Record<string, unknown>): string[] =>
+  (["refCommands", "citeCommands"] as const).flatMap((k) => {
+    const v = g[k];
+    return Array.isArray(v) && v.every((c) => typeof c === "string" && /^[A-Za-z@]+$/.test(c))
+      ? []
+      : [`grouping.${k} (a list of command names without the backslash)`];
+  });
 
 // ---------------------------------------------------------------------------
 // Macros, environments and TikZ styles: defined once, used elsewhere
@@ -398,6 +412,7 @@ export const LATEX: LanguageProfile = {
   includes,
   parts: LATEX_PARTS,
   typesetter: LATEX_TYPESETTER,
+  groupingSettings: { defaults: GROUPING_SETTINGS, check: checkGrouping },
   spoken: {
     maths: /\$/,
     keys: /\\(?:ref|label|eqref|cref|autoref)\{/,

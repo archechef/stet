@@ -8,7 +8,8 @@ import { defaultConfig, type StetConfig } from "./config.js";
 import { notFound, StetError } from "./errors.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import { type HookStatus, hookStatus, installHooks, uninstallHooks } from "./hooks.js";
-import { buildIgnores, detectLanguage, documentLanguages, type LanguageProfile, languageCounts, profileFor, profilesFor } from "./lang/index.js";
+import { buildIgnores, detectLanguage, documentLanguages, type LanguageProfile, languageCounts, matchesAny, profileFor, profilesFor } from "./lang/index.js";
+import { addToLibrary, type LibraryProfile, libraryModule, readLibrary } from "./lang/library.js";
 import {
   type Accepted,
   type Agent,
@@ -131,6 +132,22 @@ function neighboursIn(all: readonly Item[], item: Item): Neighbour[] {
  * opens the project and holds the helpers its parts share; the operations live in the parts
  * (service/: review base, agents, submit, groups, decisions, previews, drafts, notes).
  */
+/** The selectable languages of your profile library that `cfg` doesn't have yet. */
+async function libraryLanguages(cfg: StetConfig): Promise<LibraryProfile[]> {
+  const known = new Set(profilesFor(cfg).map((p) => p.id));
+  return (await readLibrary()).filter((e) => e.selectable && !known.has(e.id));
+}
+
+/** How many of `paths` each library language has, by its default patterns; those without files left out. */
+function libraryCounts(paths: string[], library: LibraryProfile[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const e of library) {
+    const n = paths.filter((f) => matchesAny(f, e.defaultFiles)).length;
+    if (n) out[e.id] = n;
+  }
+  return out;
+}
+
 /** What `importProfile` installed. */
 export interface ProfileImport {
   id: string;
@@ -141,6 +158,8 @@ export interface ProfileImport {
   selectable: boolean;
   /** Its build files git doesn't ignore yet (`ignoreBuildFiles` adds them to .gitignore). */
   buildFiles: string[];
+  /** Whether it is in your profile library, for your other projects. */
+  library: boolean;
 }
 
 export class Stet {
@@ -208,13 +227,24 @@ export class Stet {
   static async inspectSetup(
     dir: string,
     located?: Awaited<ReturnType<typeof Stet.locate>>,
-  ): Promise<{ setUp: boolean; languages: [id: string, files: number][]; located: Awaited<ReturnType<typeof Stet.locate>> }> {
+  ): Promise<{
+    setUp: boolean;
+    languages: [id: string, files: number][];
+    /** The languages' names, by id. */
+    names: Record<string, string>;
+    /** Which of `languages` come from your profile library (setup installs the one picked). */
+    fromLibrary: string[];
+    located: Awaited<ReturnType<typeof Stet.locate>>;
+  }> {
     const loc = located ?? (await Stet.locate(dir));
     const stet = await Stet.open(dir, loc).catch(() => null);
     const cfg = stet ? await stet.config() : defaultConfig("main");
     const tracked = ((await loc.repo.tryRun(["ls-files", "-z"])) ?? "").split("\0").filter(Boolean);
-    const languages = Object.entries(languageCounts(tracked, cfg.files, cfg)).sort((a, b) => b[1] - a[1]);
-    return { setUp: !!stet, languages, located: loc };
+    const library = await libraryLanguages(cfg);
+    const counts = { ...languageCounts(tracked, cfg.files, cfg), ...libraryCounts(tracked, library) };
+    const languages = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const names = Object.fromEntries([...documentLanguages(cfg), ...library].map((p) => [p.id, p.name]));
+    return { setUp: !!stet, languages, names, fromLibrary: library.map((e) => e.id).filter((id) => id in counts), located: loc };
   }
 
   /** Edits to tracked files not committed yet: agents start from the last commit and don't see them. */
@@ -242,27 +272,40 @@ export class Stet {
     const fresh = !(await pathExists(join(store.root, "config.json")));
     await store.init(branch);
     const stet = new Stet(mainPath, repo, store);
+    // A language of your profile library: installed from there once the store is set up.
+    let fromLibrary: string | null = null;
     await store.withLock(async () => {
       let cfg = await store.config();
+      const library = await libraryLanguages(cfg);
       // The project's language, from its files: once, when Stet is first set up here.
-      if (opts.language !== undefined && !documentLanguages(cfg).some((p) => p.id === opts.language))
-        throw new StetError(
-          `Unknown language '${opts.language}' (${documentLanguages(cfg)
-            .map((p) => p.id)
-            .join(" or ")}).`,
-        );
+      if (opts.language !== undefined && !documentLanguages(cfg).some((p) => p.id === opts.language)) {
+        if (!library.some((e) => e.id === opts.language))
+          throw new StetError(
+            `Unknown language '${opts.language}' (${[...documentLanguages(cfg), ...library]
+              .map((p) => p.id)
+              .join(" or ")}). For another language, import its profile: stet profile import <file.mjs>.`,
+          );
+        fromLibrary = opts.language;
+      }
       if (fresh || opts.language) {
         const paths =
           fresh && !opts.language
             ? ((await repo.tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${branch}`])) ?? "").split("\0").filter(Boolean)
             : [];
         const language = opts.language ?? detectLanguage(paths, cfg.files, cfg);
-        if (language !== cfg.language) await store.saveConfig((cfg = { ...cfg, language }));
+        if (!opts.language) {
+          // A library language with more files than the built-in one found.
+          const builtIn = languageCounts(paths, cfg.files, cfg)[language] ?? 0;
+          const [best] = Object.entries(libraryCounts(paths, library)).sort((a, b) => b[1] - a[1]);
+          if (best && best[1] > builtIn) fromLibrary = best[0];
+        }
+        if (!fromLibrary && language !== cfg.language) await store.saveConfig((cfg = { ...cfg, language }));
       }
       if (opts.cli) await store.saveConfig({ ...cfg, cli: opts.cli });
       if (cfg.guardHooks) await installHooks(repo, commonDir, cfg);
       await stet.ensureBase();
     });
+    if (fromLibrary) await stet.useProfile(fromLibrary, { use: true });
     return stet;
   }
 
@@ -272,7 +315,33 @@ export class Stet {
    * project's build files it would leave out of git (`ignoreBuildFiles`).
    */
   async importProfile(path: string, opts: { use?: boolean } = {}): Promise<ProfileImport> {
-    const { id, languageChanged } = await this.store.importProfile(path, opts);
+    if (!path.endsWith(".mjs")) throw new StetError("Pass a self-contained .mjs profile.");
+    const source = await readFile(path);
+    const r = await this.installProfile(source, path, opts);
+    // Kept for your other projects too (`useProfile`).
+    const library = await addToLibrary(source, this.installedProfile(await this.config(), r.id));
+    return { ...r, library };
+  }
+
+  /**
+   * Install a profile from your profile library (one you imported in another project): this
+   * project gets its own copy, pinned by hash. `use` (default: when it can be): make it the
+   * project's language.
+   */
+  async useProfile(id: string, opts: { use?: boolean } = {}): Promise<ProfileImport> {
+    const { entry, source } = await libraryModule(id);
+    return { ...(await this.installProfile(source, `${id} (from your profile library)`, { use: opts.use ?? entry.selectable })), library: true };
+  }
+
+  /** Your profile library, and which of its profiles this project has (`current`: the same version). */
+  async profileLibrary(): Promise<(LibraryProfile & { installed: boolean; current: boolean })[]> {
+    const cfg = await this.config();
+    const ids = new Set(profilesFor(cfg).map((p) => p.id));
+    return (await readLibrary()).map((e) => ({ ...e, installed: ids.has(e.id), current: (cfg.profileModules ?? []).includes(e.module) }));
+  }
+
+  private async installProfile(source: Buffer, label: string, opts: { use?: boolean }): Promise<Omit<ProfileImport, "library">> {
+    const { id, languageChanged } = await this.store.installProfile(source, label, opts);
     if (languageChanged) await this.agentOps.refreshWorkspaces();
     const cfg = await this.config();
     const profile = this.installedProfile(cfg, id);

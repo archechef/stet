@@ -81,6 +81,7 @@ export default {
 `,
     );
     const { repo } = await setup({ "main.prf": "a\n" });
+    const other = (await setup({ "notes.prf": "b\n" })).repo; // set up before the import: not Proofs yet
     const first = await stet(repo, "profile", "import", join(dir, "proofs.mjs"));
     expect(first.err).toBe("");
     expect(first.out).toContain("Installed the language profile 'proofs' (Proofs).");
@@ -95,7 +96,15 @@ export default {
       language: "proofs",
       buildFiles: [],
     });
-    expect((await stet(repo, "profile", "list")).code).toBe(EXIT.usage);
+    // Your profile library: another project uses it without the file.
+    expect((await stet(other, "profile", "list")).out).toMatch(/proofs Proofs \(\*\.prf\)$/m);
+    const use = await stet(other, "profile", "use", "proofs");
+    expect(use.out).toContain("Installed the language profile 'proofs' (Proofs) from your profile library.");
+    expect(use.out).toContain("It is the project's language");
+    expect((await stet(other, "profile", "list")).out).toContain("proofs Proofs (*.prf) — in this project");
+    expect((await stet(other, "profile", "forget", "proofs")).out).toContain("Projects that use it keep their copy.");
+    expect((await stet(other, "profile", "list")).out).toContain("Your profile library is empty");
+    expect((await stet(repo, "profile", "nope")).code).toBe(EXIT.usage);
   });
 });
 

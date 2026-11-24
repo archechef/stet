@@ -5,6 +5,7 @@ import {
   documentLanguages,
   documentProfile,
   type FilePatterns,
+  groupingDefaults,
   type LanguageProfile,
   PROFILES,
   previewDefaults,
@@ -25,8 +26,6 @@ export interface SplitConfig {
 export interface GroupingConfig {
   autoRepeatMin: number;
   autoDetect: ("repeat" | "label" | "cite" | "macro" | "input")[];
-  refCommands: string[];
-  citeCommands: string[];
   /**
    * Moves (spec §6.4.7): a passage deleted in one place and inserted in another is shown as one
    * move if it has at least `minWords` words and is a sentence or more, or a whole paragraph or
@@ -35,6 +34,8 @@ export interface GroupingConfig {
    * that is a deletion and an insertion, linked.
    */
   moves: { enabled: boolean; minWords: number; maxChangedWords: number | null };
+  /** A profile's own settings (LaTeX's `refCommands`, `citeCommands`): it gives their defaults and checks them (`LanguageProfile.groupingSettings`). */
+  [setting: string]: unknown;
 }
 
 export const SHARE_MODES = ["manual", "saved", "committed"] as const;
@@ -115,9 +116,9 @@ export function defaultConfig(mainBranch: string): StetConfig {
     grouping: {
       autoRepeatMin: 3,
       autoDetect: ["repeat", "label", "cite", "macro", "input"],
-      refCommands: ["ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref", "vref", "Vref"],
-      citeCommands: ["cite", "citep", "citet", "citealp", "citeauthor", "citeyear", "parencite", "textcite", "autocite", "footcite"],
       moves: { enabled: true, minWords: 7, maxChangedWords: null },
+      // With each profile's own settings (LaTeX's `refCommands`, `citeCommands`).
+      ...groupingDefaults(PROFILES),
     },
     // Which files each language profile is for (spec §6.1).
     files: Object.fromEntries(PROFILES.flatMap((p) => (p.files ? [[p.files, [...(p.defaultFiles ?? [])]]] : []))) as FilePatterns,
@@ -159,6 +160,7 @@ export function configDelta(cfg: StetConfig): Partial<StetConfig> & { mainBranch
   // The defaults with the imported typesetters' own preview settings: not saved unless changed.
   const base = defaultConfig(cfg.mainBranch);
   base.preview = { ...base.preview, ...previewDefaults(profilesFor(cfg)) };
+  base.grouping = { ...base.grouping, ...groupingDefaults(profilesFor(cfg)) };
   return { ...((delta(cfg, base) as object | undefined) ?? {}), mainBranch: cfg.mainBranch };
 }
 
@@ -197,7 +199,11 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (!engines.includes(pv.engine)) bad(`preview.engine '${pv.engine}' (${engines.join(", ")})`);
   if (!PREVIEW_ISOLATIONS.includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (${PREVIEW_ISOLATIONS.join(", ")})`);
   if (typeof pv.image !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.image)) bad(`preview.image '${pv.image}'`);
-  // Each typesetter checks its own settings.
+  // Each profile checks its own grouping settings, and each typesetter its preview settings.
+  for (const p of profilesFor(cfg)) {
+    const [why] = p.groupingSettings?.check(cfg.grouping) ?? [];
+    if (why) bad(why);
+  }
   for (const t of new Set(profilesFor(cfg).map((p) => p.typesetter))) {
     const [why] = t?.settings?.check(pv) ?? [];
     if (why) bad(why);

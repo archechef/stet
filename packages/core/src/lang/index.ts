@@ -26,6 +26,11 @@ export function previewDefaults(profiles: readonly LanguageProfile[]): Record<st
   return Object.assign({}, ...profiles.map((p) => p.typesetter?.settings?.defaults ?? {}));
 }
 
+/** The profiles' own grouping settings, with their defaults (LaTeX's `refCommands`, `citeCommands`). */
+export function groupingDefaults(profiles: readonly LanguageProfile[]): Record<string, unknown> {
+  return Object.assign({}, ...profiles.map((p) => p.groupingSettings?.defaults ?? {}));
+}
+
 export const projectProfiles = Symbol("projectProfiles");
 type ProfileScope = { [projectProfiles]?: readonly LanguageProfile[] };
 

@@ -69,6 +69,12 @@ export interface LanguageProfile {
   includes?: IncludeRules;
   parts?: PartRules;
   typesetter?: Typesetter;
+  /**
+   * Its own `grouping.*` settings (LaTeX: `refCommands` and `citeCommands`, the commands that
+   * refer to a label or cite a key, which its `references.uses` reads): their defaults, and what
+   * is wrong with their values (one message per setting; none when all are fine).
+   */
+  groupingSettings?: { defaults: Record<string, unknown>; check(grouping: GroupingConfig): string[] };
   /** How its labels and references read aloud (screen readers), for `spokenChange`. */
   spoken?: SpokenRules;
 }
