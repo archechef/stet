@@ -7,7 +7,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { configDelta, defaultConfig, mergeConfig, type StetConfig, validateConfig } from "./config.js";
 import { StetError } from "./errors.js";
-import { PROFILES, profilesFor, projectProfiles } from "./lang/index.js";
+import { PROFILES, previewDefaults, profilesFor, projectProfiles } from "./lang/index.js";
 import { addProfile, loadProjectProfiles, profileDirectory, profileModuleName, readProfile } from "./lang/load.js";
 import {
   type Agent,
@@ -131,6 +131,8 @@ export class Store {
     const raw = await readJson<Partial<StetConfig>>(join(this.root, "config.json"));
     const cfg = mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {});
     await loadProjectProfiles(cfg, this.root);
+    // An imported typesetter's own preview settings, where the config has none.
+    cfg.preview = { ...previewDefaults(profilesFor(cfg)), ...cfg.preview };
     return validateConfig(cfg);
   }
 

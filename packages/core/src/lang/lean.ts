@@ -10,8 +10,8 @@
  * `namespace`, `open` and dot notation decide the rest, which the text alone doesn't tell. No PDF
  * previews.
  */
-import { type Edit, makeEdit, splitLineHunks } from "../split.js";
-import type { DefinitionRules, IncludeRules, LanguageProfile } from "./profile.js";
+import { makeEdit, splitLineHunks } from "./kit.js";
+import type { DefinitionRules, Edit, IncludeRules, LanguageProfile } from "./profile.js";
 
 /** Modifiers before a declaration keyword. */
 const MODIFIERS = "(?:(?:private|protected|noncomputable|partial|unsafe|nonrec|scoped|local)\\s+)*";

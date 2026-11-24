@@ -1,7 +1,17 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
-import { documentLanguages, documentProfile, type FilePatterns, type LanguageProfile, PROFILES, projectProfiles } from "./lang/index.js";
-import { DEFAULT_PREVIEW, PREVIEW_ISOLATIONS, PREVIEW_TEX, type PreviewConfig } from "./preview/env.js";
+import {
+  DEFAULT_LANGUAGE,
+  documentLanguages,
+  documentProfile,
+  type FilePatterns,
+  type LanguageProfile,
+  PROFILES,
+  previewDefaults,
+  profilesFor,
+  projectProfiles,
+} from "./lang/index.js";
+import { DEFAULT_PREVIEW, PREVIEW_ISOLATIONS, type PreviewConfig } from "./preview/env.js";
 
 export { matchesAny } from "./lang/index.js";
 
@@ -111,8 +121,9 @@ export function defaultConfig(mainBranch: string): StetConfig {
     },
     // Which files each language profile is for (spec §6.1).
     files: Object.fromEntries(PROFILES.flatMap((p) => (p.files ? [[p.files, [...(p.defaultFiles ?? [])]]] : []))) as FilePatterns,
-    language: "latex",
-    preview: { ...DEFAULT_PREVIEW },
+    language: DEFAULT_LANGUAGE,
+    // With each typesetter's own settings (LaTeX's `tex`, `texImage`, …).
+    preview: { ...DEFAULT_PREVIEW, ...previewDefaults(PROFILES) },
     maxFileMB: 20,
   };
 }
@@ -143,9 +154,12 @@ export function configDelta(cfg: StetConfig): Partial<StetConfig> & { mainBranch
       const d = delta(a[k], b[k]);
       if (d !== undefined) out[k] = d;
     }
-    return out;
+    return Object.keys(out).length ? out : undefined;
   };
-  return { ...(delta(cfg, defaultConfig(cfg.mainBranch)) as object), mainBranch: cfg.mainBranch };
+  // The defaults with the imported typesetters' own preview settings: not saved unless changed.
+  const base = defaultConfig(cfg.mainBranch);
+  base.preview = { ...base.preview, ...previewDefaults(profilesFor(cfg)) };
+  return { ...((delta(cfg, base) as object | undefined) ?? {}), mainBranch: cfg.mainBranch };
 }
 
 /** Branch-like names from the config end up in git commands and hook scripts: allow only plain names. */
@@ -183,10 +197,11 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (!engines.includes(pv.engine)) bad(`preview.engine '${pv.engine}' (${engines.join(", ")})`);
   if (!PREVIEW_ISOLATIONS.includes(pv.isolation)) bad(`preview.isolation '${pv.isolation}' (${PREVIEW_ISOLATIONS.join(", ")})`);
   if (typeof pv.image !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.image)) bad(`preview.image '${pv.image}'`);
-  if (typeof pv.texImage !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.texImage)) bad(`preview.texImage '${pv.texImage}'`);
-  if (!PREVIEW_TEX.includes(pv.tex)) bad(`preview.tex '${pv.tex}' (${PREVIEW_TEX.join(", ")})`);
-  if (typeof pv.texExtras !== "boolean") bad("preview.texExtras (true or false)");
-  if (typeof pv.texExtrasImage !== "string" || !/^[a-z0-9][a-z0-9._/:@-]*$/i.test(pv.texExtrasImage)) bad(`preview.texExtrasImage '${pv.texExtrasImage}'`);
+  // Each typesetter checks its own settings.
+  for (const t of new Set(profilesFor(cfg).map((p) => p.typesetter))) {
+    const [why] = t?.settings?.check(pv) ?? [];
+    if (why) bad(why);
+  }
   if (typeof pv.timeout !== "number" || !(pv.timeout >= 5 && pv.timeout <= 3600)) bad("preview.timeout (seconds, 5 to 3600)");
   return cfg;
 }

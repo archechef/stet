@@ -13,6 +13,15 @@ import type { PreviewConfig, PreviewEnv } from "../preview/env.js";
 import type { Edit } from "../split.js";
 import type { Token } from "../tokenizer.js";
 
+// The types of Stet's own that profiles use: a profile imports types from here only, and values
+// from the kit (`kit.ts`).
+export type { GroupingConfig } from "../config.js";
+export type { DoctorCheck } from "../doctor.js";
+export type { Item } from "../model.js";
+export type { PreviewConfig, PreviewEnv } from "../preview/env.js";
+export type { Edit } from "../split.js";
+export type { Token, TokenType } from "../tokenizer.js";
+
 /** Which files a profile is for: patterns of the config's `files.<key>`. */
 export type FilesKey = string;
 
@@ -210,12 +219,17 @@ export interface Typesetter {
   sourceName: string;
   /** An example root file, for the message when Stet can't tell which one it is. */
   rootHint: string;
+  /**
+   * Its own `preview.*` settings (LaTeX: `tex`, `texImage`, `texExtras`, `texExtrasImage`): their
+   * defaults, and what is wrong with their values (one message per setting; none when all are fine).
+   */
+  settings?: { defaults: Record<string, unknown>; check(preview: PreviewConfig): string[] };
   /** The engines `preview.engine` may name besides "auto" ("pdflatex", …). */
   engines: readonly string[];
   /** The tool chain: installed, or the container with it. Never installs anything. */
   detect(cfg: PreviewConfig, opts: { podman?: string | null }): Promise<PreviewEnv>;
   /** Build the previews' container image (downloads: only on the user's request). */
-  setupImage(cfg: PreviewConfig, opts: { extras?: boolean }): Promise<{ ok: boolean; log: string }>;
+  setupImage(cfg: PreviewConfig, opts: { extras?: boolean }): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }>;
   /** Checks for `stet doctor`; `which` gives a program's version output, or null. */
   doctor(which: (cmd: string, args: string[]) => Promise<string | null>): Promise<DoctorCheck[]>;
   /** Environment variables of every build, with the build's home folder (in a container, or a process). */

@@ -18,6 +18,14 @@ export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX, TYPST, LEAN]
 /** File patterns per profile (the config's `files`). */
 export type FilePatterns = Record<"tex" | "bib" | "typ" | "lean", string[]> & Partial<Record<FilesKey, string[]>>;
 
+/** The language of a project that names none, and the fallback for one Stet doesn't know. */
+export const DEFAULT_LANGUAGE = LATEX.id;
+
+/** The typesetters' own preview settings, with their defaults (LaTeX's `tex`, `texImage`, …). */
+export function previewDefaults(profiles: readonly LanguageProfile[]): Record<string, unknown> {
+  return Object.assign({}, ...profiles.map((p) => p.typesetter?.settings?.defaults ?? {}));
+}
+
 export const projectProfiles = Symbol("projectProfiles");
 type ProfileScope = { [projectProfiles]?: readonly LanguageProfile[] };
 
@@ -59,7 +67,8 @@ export const DOCUMENT_LANGUAGES = documentLanguages();
  * when it names none. Agents' examples and PDF previews follow it.
  */
 export function documentProfile(cfg?: ProfileScope & { language?: string }): LanguageProfile {
-  return documentLanguages(cfg).find((p) => p.id === (cfg?.language ?? LATEX.id)) ?? LATEX;
+  const languages = documentLanguages(cfg);
+  return languages.find((p) => p.id === (cfg?.language ?? DEFAULT_LANGUAGE)) ?? languages.find((p) => p.id === DEFAULT_LANGUAGE)!;
 }
 
 /** How many files of each document language a project has (relative paths), by language id; languages without files left out. */
@@ -79,7 +88,7 @@ export function languageCounts(paths: string[], files: FilePatterns, scope?: Pro
  */
 export function detectLanguage(paths: string[], files: FilePatterns, scope?: ProfileScope): string {
   const counts = Object.entries(languageCounts(paths, files, scope)).sort((a, b) => b[1] - a[1]);
-  if (!counts.length || (counts.length > 1 && counts[0]![1] === counts[1]![1] && counts.some(([id]) => id === LATEX.id))) return LATEX.id;
+  if (!counts.length || (counts.length > 1 && counts[0]![1] === counts[1]![1] && counts.some(([id]) => id === DEFAULT_LANGUAGE))) return DEFAULT_LANGUAGE;
   return counts[0]![0];
 }
 

@@ -33,8 +33,6 @@ import type { Typesetter } from "../lang/profile.js";
 
 export const PREVIEW_ISOLATIONS = ["auto", "container", "process"] as const;
 
-export const PREVIEW_TEX = ["auto", "host", "image"] as const;
-
 export interface PreviewConfig {
   enabled: boolean;
   /** The document to compile, relative to the project; null: detected (`main.tex`, else the one top-level document). */
@@ -49,32 +47,21 @@ export interface PreviewConfig {
    * where TeX can read every file you can; only on your explicit choice.
    */
   isolation: (typeof PREVIEW_ISOLATIONS)[number];
-  /** The container image with Perl and the PDF tools, for the user's own TeX (`stet preview setup` builds it). */
+  /** The container image with the typesetter's tools (LaTeX: Perl and the PDF tools, for the user's own TeX; `stet preview setup` builds it). */
   image: string;
-  /** Where TeX comes from: `auto` (the user's standalone TeX Live on Linux, else the image's), `host` or `image`. */
-  tex: (typeof PREVIEW_TEX)[number];
-  /** The container image with its own TeX Live, for macOS and Linux without a standalone TeX Live. */
-  texImage: string;
-  /**
-   * Use the image with its own TeX plus Debian's extra fonts (dsfont, bbm, bbold, …), about 2 GB
-   * more. Off by default; switched on when the user agrees to install them after a missing file.
-   */
-  texExtras: boolean;
-  texExtrasImage: string;
   /** Seconds a build may take before it is stopped. */
   timeout: number;
+  /** A typesetter's own settings (LaTeX's `tex`, `texImage`, …): it gives their defaults and checks them (`Typesetter.settings`). */
+  [setting: string]: unknown;
 }
 
+/** The settings every typesetter has; each adds its own (`Typesetter.settings`, merged in `defaultConfig`). */
 export const DEFAULT_PREVIEW: PreviewConfig = {
   enabled: true,
   rootFile: null,
   engine: "auto",
   isolation: "auto",
   image: "localhost/stet-preview:1",
-  tex: "auto",
-  texImage: "localhost/stet-preview-tex:1",
-  texExtras: false,
-  texExtrasImage: "localhost/stet-preview-tex-extra:1",
   timeout: 120,
 };
 
@@ -178,7 +165,11 @@ export async function detectPreviewEnv(
 }
 
 /** Build the image previews need here (the typesetter's). Downloads packages: only on the user's explicit request. */
-export function setupPreviewImage(cfg: PreviewConfig, typesetter: Typesetter, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string }> {
+export function setupPreviewImage(
+  cfg: PreviewConfig,
+  typesetter: Typesetter,
+  opts: { extras?: boolean } = {},
+): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }> {
   return typesetter.setupImage(cfg, opts);
 }
 

@@ -18,6 +18,9 @@ import { containerArgs, DEFAULT_PREVIEW, detectPreviewEnv } from "../src/preview
 import { changeMarks, findWords, findWordsIn, markRuns, parseWords, wordDiff } from "../src/preview/words.js";
 import { edit, PAPER, setup, write } from "./helpers.js";
 
+/** The preview settings with LaTeX's own (`tex`, `texImage`, …), as a project has them. */
+const PV = defaultConfig("main").preview;
+
 describe("preview: the document", () => {
   it("finds the document to compile", () => {
     const doc = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
@@ -161,30 +164,30 @@ describe("preview: isolation", () => {
     try {
       // A container needs Podman first: the image can bring its own TeX. (No Podman here even if
       // the machine has one: CI runners often do.)
-      const env = await detectPreviewEnv(DEFAULT_PREVIEW, LATEX_TYPESETTER, { podman: null });
+      const env = await detectPreviewEnv(PV, LATEX_TYPESETTER, { podman: null });
       expect(env.status).toBe("unavailable");
       // Each platform says what it needs: Podman, or (Windows, not supported yet) WSL2.
       expect(env.message).toMatch(process.platform === "win32" ? /Windows/ : /Podman/);
       expect(env.fix).toMatch(process.platform === "win32" ? /WSL2/ : /Install Podman/);
       // Without a container (the user's choice), their own TeX is needed.
-      const proc = await detectPreviewEnv({ ...DEFAULT_PREVIEW, isolation: "process" }, LATEX_TYPESETTER);
+      const proc = await detectPreviewEnv({ ...PV, isolation: "process" }, LATEX_TYPESETTER);
       expect(proc.message).toMatch(/latexmk/);
       expect(proc.fix).toMatch(/TeX Live/);
     } finally {
       process.env.PATH = path;
     }
-    expect((await detectPreviewEnv({ ...DEFAULT_PREVIEW, enabled: false }, LATEX_TYPESETTER)).message).toMatch(/switched off/);
+    expect((await detectPreviewEnv({ ...PV, enabled: false }, LATEX_TYPESETTER)).message).toMatch(/switched off/);
   });
 
   it("accepts only safe settings", () => {
-    const cfg = (pv: object) => validateConfig({ ...defaultConfig("main"), preview: { ...DEFAULT_PREVIEW, ...pv } });
+    const cfg = (pv: object) => validateConfig({ ...defaultConfig("main"), preview: { ...PV, ...pv } });
     expect(cfg({ rootFile: "paper/main.tex" }).preview.rootFile).toBe("paper/main.tex");
     for (const rootFile of ["../outside.tex", "/etc/main.tex", "-shell-escape.tex", "main.pdf", "a;b.tex"])
       expect(() => cfg({ rootFile })).toThrow(/preview.rootFile/);
     expect(() => cfg({ engine: "pdflatex -shell-escape" })).toThrow(/preview.engine/);
     expect(cfg({ engine: "lualatex" }).preview.engine).toBe("lualatex");
     // The engines are the language's (code quality report 6a517ae, language leaks): Typst has none of LaTeX's.
-    const typst = (pv: object) => validateConfig({ ...defaultConfig("main"), language: "typst", preview: { ...DEFAULT_PREVIEW, ...pv } });
+    const typst = (pv: object) => validateConfig({ ...defaultConfig("main"), language: "typst", preview: { ...PV, ...pv } });
     expect(typst({ engine: "auto" }).preview.engine).toBe("auto");
     expect(() => typst({ engine: "lualatex" })).toThrow(/preview.engine 'lualatex' \(auto\)/);
     expect(() => cfg({ isolation: "none" })).toThrow(/preview.isolation/);
@@ -194,6 +197,14 @@ describe("preview: isolation", () => {
     expect(() => cfg({ texImage: "a b" })).toThrow(/preview.texImage/);
     expect(() => cfg({ texExtras: "yes" })).toThrow(/preview.texExtras/);
     expect(() => cfg({ texExtrasImage: "x;y" })).toThrow(/preview.texExtrasImage/);
+    // Those four are LaTeX's own: its typesetter gives their defaults and checks them.
+    expect(DEFAULT_PREVIEW).not.toHaveProperty("tex");
+    expect(LATEX_TYPESETTER.settings?.defaults).toEqual({
+      tex: "auto",
+      texImage: "localhost/stet-preview-tex:1",
+      texExtras: false,
+      texExtrasImage: "localhost/stet-preview-tex-extra:1",
+    });
   });
 });
 
@@ -255,7 +266,7 @@ describe("preview: missing packages", () => {
     const f = previewExtrasContainerfile("localhost/stet-preview-tex:1");
     expect(f).toMatch(/^FROM localhost\/stet-preview-tex:1$/m);
     expect(f).toMatch(/texlive-fonts-extra/);
-    expect(DEFAULT_PREVIEW.texExtras).toBe(false); // the small image unless the user agrees
+    expect(PV.texExtras).toBe(false); // the small image unless the user agrees
   });
 });
 
@@ -436,7 +447,7 @@ describe("isolation and the image cache (security review 2026-11-19)", () => {
     expect(insideDir("/c/abc/items/1.1-x/../../x.png", "/c/abc/items/1.1-x")).toBe(false);
     const { stet } = await setup({ "main.tex": PAPER });
     const ready = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][] };
-    const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), DEFAULT_PREVIEW, ready, LATEX);
+    const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), PV, ready, LATEX);
     const req = {
       base: "../../../../tmp",
       key: "1.1-abc",

@@ -7,10 +7,8 @@
  * makes it a reference, an entry in a bibliography a citation key. So `@key` counts as a use of
  * both kinds, and a group forms only with the definition of the kind it is (spec §6.0).
  */
-import type { Item } from "../model.js";
-import { type Token, type TokenType, tokenizeWords } from "../tokenizer.js";
-import { LABEL } from "./latex.js";
-import type { DefinitionRules, IncludeRules, LanguageProfile, PartRules, ReferenceRules, SyntaxRules } from "./profile.js";
+import { LABEL, tokenizeWords } from "./kit.js";
+import type { DefinitionRules, IncludeRules, Item, LanguageProfile, PartRules, ReferenceRules, SyntaxRules, Token, TokenType } from "./profile.js";
 
 // ---------------------------------------------------------------------------
 // Tokens

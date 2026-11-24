@@ -2,10 +2,9 @@
  * The BibTeX profile: a .bib file is reviewed entry by entry, and its keys are the citation keys
  * of the documents that cite them.
  */
-import type { Item } from "../model.js";
-import { type Edit, makeEdit } from "../split.js";
-import { CITATION, LATEX_PARTS } from "./latex.js";
-import type { LanguageProfile } from "./profile.js";
+import { CITATION, makeEdit } from "./kit.js";
+import { LATEX_PARTS } from "./latex.js";
+import type { Edit, Item, LanguageProfile } from "./profile.js";
 
 // ---------------------------------------------------------------------------
 // One edit per changed entry

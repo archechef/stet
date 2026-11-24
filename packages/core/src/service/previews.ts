@@ -35,7 +35,7 @@ export function completing(item: Item, pool: Item[], profileOf: ProfileOf): Item
 
 /** Why a project in this language has no PDF previews. */
 export function noPreviews(doc: LanguageProfile): string {
-  return doc.id === "typst" ? "Stet has no PDF previews for Typst projects yet. Everything else works as usual." : `Stet has no PDF previews for ${doc.name}.`;
+  return `Stet has no PDF previews for ${doc.name} projects yet. Everything else works as usual.`;
 }
 
 export class Previews {
@@ -59,11 +59,12 @@ export class Previews {
   async setupPreview(opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string; status: PreviewEnv }> {
     const doc = documentProfile(await this.stet.config());
     const r = doc.typesetter ? await setupPreviewImage((await this.stet.config()).preview, doc.typesetter, opts) : { ok: false, log: noPreviews(doc) };
-    if (r.ok && opts.extras) {
-      // From now on the image with the extra fonts.
+    // Settings the typesetter changed with the image (LaTeX: the one with the extra fonts from now on).
+    const settings = "settings" in r ? r.settings : undefined;
+    if (r.ok && settings) {
       await this.stet.store.withLock(async () => {
         const cfg = await this.stet.config();
-        await this.stet.store.saveConfig(validateConfig({ ...cfg, preview: { ...cfg.preview, texExtras: true } }));
+        await this.stet.store.saveConfig(validateConfig({ ...cfg, preview: { ...cfg.preview, ...settings } }));
       });
     }
     // Previews built before (failed ones included) were made with the old image.

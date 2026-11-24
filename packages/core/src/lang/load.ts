@@ -5,9 +5,22 @@ import { basename, dirname, join } from "node:path";
 import type { StetConfig } from "../config.js";
 import { StetError } from "../errors.js";
 import { PROFILES, projectProfiles } from "./index.js";
+import * as kit from "./kit.js";
 import type { LanguageProfile } from "./profile.js";
 
 const modulePrefix = "data:text/javascript;stet-profile=1;base64,";
+/** What a profile module imports the kit as (`kit.ts`). */
+export const KIT_SPECIFIER = "@stet/profile-kit";
+const kitGlobal = Symbol.for("stet.profile-kit.1");
+/**
+ * The kit, as a module profile modules import: this Stet's own helpers, handed over through a
+ * global, so a bundled Stet (the CLI, the extension) needs no file of it.
+ */
+const kitModule = `data:text/javascript;stet-profile-kit=1;base64,${Buffer.from(
+  `const kit = globalThis[Symbol.for("stet.profile-kit.1")];\n${Object.keys(kit)
+    .map((name) => `export const ${name} = kit.${name};`)
+    .join("\n")}\n`,
+).toString("base64")}`;
 let hooksRegistered = false;
 type InstalledProfile = LanguageProfile & { files: string };
 
@@ -53,10 +66,14 @@ export async function readProfile(source: Buffer, name: string): Promise<Install
   if (!hooksRegistered) {
     if (typeof nodeModule.registerHooks !== "function")
       throw new StetError("Local profiles require a Node runtime with module hooks (Node 22.15 or later in the Node 22 series).");
+    (globalThis as Record<symbol, unknown>)[kitGlobal] = kit;
     nodeModule.registerHooks({
       resolve(specifier, context, nextResolve) {
-        if (context.parentURL?.startsWith(modulePrefix) && !specifier.startsWith("node:"))
-          throw new Error("Profile modules must bundle their dependencies. Only node: imports are allowed.");
+        if (context.parentURL?.startsWith(modulePrefix)) {
+          if (specifier === KIT_SPECIFIER) return { url: kitModule, shortCircuit: true };
+          if (!specifier.startsWith("node:"))
+            throw new Error(`Profile modules must bundle their dependencies. Only node: imports and ${KIT_SPECIFIER} are allowed.`);
+        }
         return nextResolve(specifier, context);
       },
     });

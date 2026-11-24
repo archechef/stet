@@ -6,10 +6,47 @@
 import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
-import type { DoctorCheck } from "../doctor.js";
-import { buildImage, containerRuntime, detectPreviewEnv, type PreviewConfig, type PreviewEnv, popplerMissing, runProgram, which } from "../preview/env.js";
-import { normWord } from "../preview/words.js";
-import type { RunIsolated, SourceBox, Typesetter } from "./profile.js";
+import { buildImage, containerRuntime, detectPreviewEnv, normWord, popplerMissing, runProgram, which } from "./kit.js";
+import type { DoctorCheck, PreviewConfig, PreviewEnv, RunIsolated, SourceBox, Typesetter } from "./profile.js";
+
+// ---------------------------------------------------------------------------
+// LaTeX's own preview settings (`preview.*` in the config)
+
+export const PREVIEW_TEX = ["auto", "host", "image"] as const;
+
+export interface TexPreviewSettings {
+  /** Where TeX comes from: `auto` (the user's standalone TeX Live on Linux, else the image's), `host` or `image`. */
+  tex: (typeof PREVIEW_TEX)[number];
+  /** The container image with its own TeX Live, for macOS and Linux without a standalone TeX Live. */
+  texImage: string;
+  /**
+   * Use the image with its own TeX plus Debian's extra fonts (dsfont, bbm, bbold, …), about 2 GB
+   * more. Off by default; switched on when the user agrees to install them after a missing file.
+   */
+  texExtras: boolean;
+  texExtrasImage: string;
+}
+
+/** The preview settings with LaTeX's own, which `settings.check` has checked. */
+type TexPreview = PreviewConfig & TexPreviewSettings;
+
+const TEX_SETTINGS: TexPreviewSettings = {
+  tex: "auto",
+  texImage: "localhost/stet-preview-tex:1",
+  texExtras: false,
+  texExtrasImage: "localhost/stet-preview-tex-extra:1",
+};
+
+const IMAGE_NAME = /^[a-z0-9][a-z0-9._/:@-]*$/i;
+
+function checkSettings(pv: PreviewConfig): string[] {
+  const out: string[] = [];
+  if (typeof pv.texImage !== "string" || !IMAGE_NAME.test(pv.texImage)) out.push(`preview.texImage '${pv.texImage}'`);
+  if (!PREVIEW_TEX.includes(pv.tex as TexPreviewSettings["tex"])) out.push(`preview.tex '${pv.tex}' (${PREVIEW_TEX.join(", ")})`);
+  if (typeof pv.texExtras !== "boolean") out.push("preview.texExtras (true or false)");
+  if (typeof pv.texExtrasImage !== "string" || !IMAGE_NAME.test(pv.texExtrasImage)) out.push(`preview.texExtrasImage '${pv.texExtrasImage}'`);
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // The tool chain
@@ -54,7 +91,8 @@ function userTexmf(): string | undefined {
  * What previews can use here. Never installs or downloads anything: when something is missing,
  * it says what and how to get it.
  */
-async function detect(cfg: PreviewConfig, opts: { podman?: string | null } = {}): Promise<PreviewEnv> {
+async function detect(preview: PreviewConfig, opts: { podman?: string | null } = {}): Promise<PreviewEnv> {
+  const cfg = preview as TexPreview;
   // The host's TeX, if any. A standalone TeX Live on Linux (<root>/bin/<arch>, texmf-dist) can be
   // mounted into the container; MacTeX's programs are macOS ones and can't run there.
   const latexmk = await which("latexmk");
@@ -153,7 +191,13 @@ async function detect(cfg: PreviewConfig, opts: { podman?: string | null } = {})
  * Build the image previews need here: with the user's TeX mounted (Debian, Perl and Poppler), or
  * with its own TeX Live. Downloads packages: only on the user's explicit request.
  */
-async function setupImage(cfg: PreviewConfig, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string }> {
+async function setupImage(preview: PreviewConfig, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }> {
+  const r = await buildImages(preview as TexPreview, opts);
+  // From now on the image with the extra fonts.
+  return r.ok && opts.extras ? { ...r, settings: { texExtras: true } } : r;
+}
+
+async function buildImages(cfg: TexPreview, opts: { extras?: boolean }): Promise<{ ok: boolean; log: string }> {
   const env = await detectPreviewEnv(opts.extras ? { ...cfg, texExtras: true } : cfg, LATEX_TYPESETTER);
   if (env.isolation !== "container" || !env.podman || !env.image) return { ok: false, log: `${env.message}${env.fix ? ` ${env.fix}` : ""}` };
   if (opts.extras && env.toolSource !== "image")
@@ -343,6 +387,7 @@ export const LATEX_TYPESETTER: Typesetter = {
   sourceName: ".tex files",
   rootHint: "main.tex",
   engines: ["pdflatex", "xelatex", "lualatex"],
+  settings: { defaults: { ...TEX_SETTINGS }, check: checkSettings },
   detect,
   setupImage,
   doctor: async (whichVersion) => {

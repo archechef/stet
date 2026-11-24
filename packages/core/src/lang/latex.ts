@@ -2,10 +2,9 @@
  * The LaTeX profile: what Stet knows about LaTeX source (tokens, structure, maths, labels,
  * citations, macros, included files). Its PDF previews are in `latex-preview.ts`.
  */
-import type { Item } from "../model.js";
-import type { Token, TokenType } from "../tokenizer.js";
+import { CITATION, LABEL } from "./kit.js";
 import { LATEX_TYPESETTER } from "./latex-preview.js";
-import type { DefinitionRules, IncludeRules, KeyKind, LanguageProfile, PartRules, ReferenceRules, SyntaxRules } from "./profile.js";
+import type { DefinitionRules, IncludeRules, Item, LanguageProfile, PartRules, ReferenceRules, SyntaxRules, Token, TokenType } from "./profile.js";
 
 // ---------------------------------------------------------------------------
 // Tokens (spec §6.2 step 2)
@@ -244,8 +243,7 @@ export const LATEX_SYNTAX: SyntaxRules = {
 // ---------------------------------------------------------------------------
 // Keys defined in one place and referred to in others
 
-export const LABEL: KeyKind = { id: "label", noun: "label" };
-export const CITATION: KeyKind = { id: "citation", noun: "citation key", addTitle: (key) => `Add reference ${key}` };
+export { CITATION, LABEL };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 

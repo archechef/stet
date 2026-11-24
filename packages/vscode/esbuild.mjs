@@ -11,4 +11,18 @@ await build({ ...common, entryPoints: ["src/webview/preview.ts"], outfile: "dist
 // where VS Code runs (.vscodeignore keeps it out of the .vsix).
 await build({ ...common, entryPoints: ["test/integration/fixture.mjs"], outfile: "dist/it-fixture.mjs", format: "esm", logLevel: "warning" });
 // A local language profile with LaTeX's preview backend, for the integration test's imported-profile run.
-await build({ ...common, entryPoints: ["test/integration/latex-profile.ts"], outfile: "dist/it-latex-profile.mjs", format: "esm", logLevel: "warning" });
+// Built as profile authors build theirs: the profile kit is left to the Stet that imports it.
+const profileKit = {
+  name: "profile-kit",
+  setup(b) {
+    b.onResolve({ filter: /^\.\/kit\.js$/ }, () => ({ path: "@stet/profile-kit", external: true }));
+  },
+};
+await build({
+  ...common,
+  entryPoints: ["test/integration/latex-profile.ts"],
+  outfile: "dist/it-latex-profile.mjs",
+  format: "esm",
+  logLevel: "warning",
+  plugins: [profileKit],
+});
