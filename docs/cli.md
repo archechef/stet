@@ -12,20 +12,20 @@ The extension manual ([vscode.md](vscode.md)) explains the concepts in more deta
 - Node.js 22 or newer
 - git 2.28 or newer (on Windows: *Git for Windows*)
 
-**From a release (the usual way):** every [release](https://github.com/archechef/stet/releases) has `stet-<version>.mjs`, the whole command in one file, and `SHA256SUMS.txt` to check it. Save it somewhere permanent (here `~/bin`, for version 0.18.0) and run it with Node.js:
+**From a release (the usual way):** every [release](https://github.com/archechef/stet/releases) has `stet-<version>.mjs`, the whole command in one file, and `SHA256SUMS.txt` to check it. Save it somewhere permanent (here `~/bin`, for version 0.19.0) and run it with Node.js:
 
 ```bash
-node ~/bin/stet-0.18.0.mjs --help
+node ~/bin/stet-0.19.0.mjs --help
 ```
 
 To type `stet` instead, put a small script on your PATH. On Linux and macOS, `~/bin/stet`, made executable with `chmod +x ~/bin/stet`:
 
 ```bash
 #!/bin/sh
-exec node "$HOME/bin/stet-0.18.0.mjs" "$@"
+exec node "$HOME/bin/stet-0.19.0.mjs" "$@"
 ```
 
-On Windows, `stet.cmd` in a folder on your PATH: `@node "%USERPROFILE%\bin\stet-0.18.0.mjs" %*`.
+On Windows, `stet.cmd` in a folder on your PATH: `@node "%USERPROFILE%\bin\stet-0.19.0.mjs" %*`.
 
 The VS Code extension brings its own copy for the agents and doesn't need this one.
 
