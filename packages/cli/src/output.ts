@@ -79,9 +79,8 @@ export const localTime = (iso: string) => {
 
 export const sizeOf = (n: number) => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
-export function itemSummary(it: Item, line?: number): string {
+export function itemSummary(it: Item, line?: number, effect = itemEffect(it)): string {
   // A file that takes effect (a latexmkrc, .gitattributes, AGENTS.md…): flagged.
-  const effect = itemEffect(it);
   return itemLine(it, line) + (effect ? yellow(` ⚠ takes effect: ${effect}`) : "");
 }
 
@@ -115,7 +114,7 @@ export function itemLine(it: Item, line?: number): string {
 export const indented = (t: string) => printable(t).replace(/\n/g, "\n    ");
 
 /** `full`: whole files, not their first lines. */
-export function itemDiff(it: Item, full = false): string {
+export function itemDiff(it: Item, full = false, profile = profileByName(it.file)): string {
   if (it.kind === "binary") {
     // Text with bytes that aren't UTF-8: shown, the bytes marked.
     if (!it.shownText) return dim("(binary file)");
@@ -151,7 +150,7 @@ export function itemDiff(it: Item, full = false): string {
         .replace(/\n[ \t]*\n\s*/g, "¶")
         .replace(/\n/g, "↵")
         .replace(/[ \t]/g, "␣");
-    const d = inlineDiff(it.oldText, it.newText, profileByName(it.file).syntax?.tokenize);
+    const d = inlineDiff(it.oldText, it.newText, profile.syntax?.tokenize);
     let out = "";
     let pos = 0;
     for (const { at, text } of d.inserted) {

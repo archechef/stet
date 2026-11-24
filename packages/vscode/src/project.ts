@@ -1,7 +1,7 @@
 /** One Stet-enabled repository open in VS Code: service access, snapshot and live updates. */
 import { type FSWatcher, watch } from "node:fs";
 import { relative, resolve } from "node:path";
-import { CHANGED_FILE, foldPath, isSafeRepoPath, isUncommitted, type Stet } from "@stet/core";
+import { CHANGED_FILE, foldPath, isSafeRepoPath, isUncommitted, itemEffect, profileByName, type Stet } from "@stet/core";
 import * as vscode from "vscode";
 import { warn } from "./log.js";
 import { type Snapshot, shownAgentText } from "./model.js";
@@ -18,7 +18,13 @@ export class Project implements vscode.Disposable {
   private loading: Promise<void> | undefined;
   private again = false;
 
+  private config: Awaited<ReturnType<Stet["config"]>> | undefined;
+
   constructor(readonly stet: Stet) {}
+
+  profile = (path: string) => (this.config ? this.stet.profile(this.config, path) : profileByName(path));
+
+  effect = (item: Parameters<typeof itemEffect>[0]) => itemEffect(item, this.config);
 
   get mainPath(): string {
     return this.stet.mainPath;
@@ -87,15 +93,20 @@ export class Project implements vscode.Disposable {
   }
 
   private async load(): Promise<void> {
-    const [agents, changesets, groups, items, notes] = await Promise.all([
+    const [agents, changesets, groups, items, notes, config] = await Promise.all([
       this.stet.listAgents(),
       this.stet.listChangesets(),
       this.stet.listGroups(),
       this.stet.listItems(),
       this.stet.listNotes(),
+      this.stet.config().catch((error) => {
+        warn(`Configuration of ${this.name}`, error);
+        return undefined;
+      }),
     ]);
     const shown = shownAgentText({ changesets, groups, items, notes });
     const uncommitted = shown.items.filter(isUncommitted);
+    this.config = config;
     this.snapshot = { ...this.snapshot, agents, ...shown, uncommitted };
     this.changed.fire();
     this.scheduleChecks();

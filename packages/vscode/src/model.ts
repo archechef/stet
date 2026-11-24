@@ -10,6 +10,7 @@ import {
   type Item,
   type ItemStatus,
   isLiveItem,
+  itemEffect,
   linkedRest,
   moveFrom,
   moveOthers,
@@ -17,6 +18,7 @@ import {
   type Note,
   partId,
   partIndexOf,
+  profileByName,
 } from "@stet/core";
 import { noLinks, STATUS_TEXT } from "./text.js";
 
@@ -157,6 +159,8 @@ export class TreeModel {
     readonly mode: TreeMode = "review",
     /** Shown changes only (what decisions act on is not filtered). */
     public filter: PanelFilter | null = null,
+    readonly profile = profileByName,
+    readonly effect: (item: Item) => string | null = itemEffect,
   ) {
     for (const i of snap.items) this.items.set(i.id, i);
     for (const g of snap.groups) this.groups.set(g.id, g);

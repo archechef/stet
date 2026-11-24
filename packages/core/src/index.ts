@@ -15,7 +15,16 @@ export type { HookStatus } from "./hooks.js";
 export { findInbox, followInbox, type InboxLine } from "./inbox.js";
 export { type InlineDiff, inlineDiff } from "./inline.js";
 export { archivedMessage } from "./instructions.js";
-export { buildIgnores, DOCUMENT_LANGUAGES, documentProfile, hasPreview, type LanguageProfile, matchesAny, profileByName } from "./lang/index.js";
+export {
+  buildIgnores,
+  DOCUMENT_LANGUAGES,
+  documentProfile,
+  hasPreview,
+  type LanguageProfile,
+  matchesAny,
+  profileByName,
+  profileHasPreview,
+} from "./lang/index.js";
 export type { SpokenRules, SyntaxRules, Typesetter } from "./lang/profile.js";
 export { describeFeedback, StetMcpServer, serveStdio } from "./mcp.js";
 export * from "./model.js";

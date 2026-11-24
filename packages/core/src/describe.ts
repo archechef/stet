@@ -41,7 +41,7 @@ export interface ItemDescription {
 }
 
 /** `get` finds other items (what this one revises, the rest of its move); missing ones are left out. */
-export function describeItem(item: Item, get: (id: string) => Item | undefined): ItemDescription {
+export function describeItem(item: Item, get: (id: string) => Item | undefined, effect = itemEffect(item)): ItemDescription {
   const prev = item.supersedes ? get(item.supersedes) : undefined;
   const asked = prev ? [...prev.thread].reverse().find((t) => t.author === "user") : undefined;
   const yours = isAccepted(item) && item.resolution.edited ? item.resolution.appliedText : item.draft;
@@ -65,7 +65,7 @@ export function describeItem(item: Item, get: (id: string) => Item | undefined):
   }
   const lines = (t: string) => (t ? t.split("\n") : []);
   return {
-    effect: itemEffect(item),
+    effect,
     revises: item.supersedes ? { id: item.supersedes, item: prev, asked: asked?.text ?? null } : null,
     yours: yours !== undefined && item.kind === "modify" ? { text: yours, accepted: item.status === "accepted" } : null,
     move,

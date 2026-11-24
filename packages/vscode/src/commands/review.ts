@@ -239,12 +239,26 @@ export class ReviewCommands {
   ): Promise<void> {
     // Files that take effect once accepted (a latexmkrc, .gitattributes, AGENTS.md…): asked
     // explicitly, with what they set off.
-    const effects = ids.map((id) => this.ext.model(p).item(id)).filter((it): it is Item => !!it && !!itemEffect(it));
+    const model = this.ext.model(p);
+    const cfg = await p.stet.config();
+    const affected = new Set(ids);
+    for (const id of ids) {
+      const item = model.item(id);
+      if (item) for (const partner of model.withMove(item)) affected.add(partner);
+    }
+    const effects = [...affected].flatMap((id) => {
+      const item = model.item(id);
+      const reason = item && itemEffect(item, cfg);
+      return item && reason ? [{ item, reason }] : [];
+    });
     if (effects.length) {
       const ok = `Accept ${effects.length > 1 ? "them" : "it"}`;
       const pick = await vscode.window.showWarningMessage(
-        `${effects.map((i) => i.id).join(", ")} ${effects.length > 1 ? "change files that take" : "changes a file that takes"} effect once accepted.`,
-        { modal: true, detail: effects.map((i) => `${i.id} ${i.file}: ${itemEffect(i)}.`).join("\n") + "\n\nLook at the content first (Diff, or the hover)." },
+        `${effects.map(({ item }) => item.id).join(", ")} ${effects.length > 1 ? "change files that take" : "changes a file that takes"} effect once accepted.`,
+        {
+          modal: true,
+          detail: effects.map(({ item, reason }) => `${item.id} ${item.file}: ${reason}.`).join("\n") + "\n\nLook at the content first (Diff, or the hover).",
+        },
         ok,
       );
       if (pick !== ok) return;

@@ -49,9 +49,8 @@ export function ghostText(s: string, max = 80): string {
 /** What changes inside an item (removed spans, inserted text), cached: computed on every redraw. */
 const diffs = new Map<string, InlineDiff>();
 
-export function itemDiff(item: Pick<Item, "oldText" | "newText" | "file">): InlineDiff {
+export function itemDiff(item: Pick<Item, "oldText" | "newText" | "file">, profile = profileByName(item.file)): InlineDiff {
   // Diffed by the tokens of the file's language (LaTeX: `\alpha` is one).
-  const profile = profileByName(item.file);
   const syntax = profile.syntax;
   const key = profile.id + "\0" + item.oldText + "\0" + item.newText;
   let d = diffs.get(key);

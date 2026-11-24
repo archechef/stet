@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { canUndo, hasPreview, type Item, isLiveItem, movesOut, oneLine, plural, profileByName } from "@stet/core";
+import { canUndo, type Item, isLiveItem, type LanguageProfile, movesOut, oneLine, plural, profileHasPreview } from "@stet/core";
 import type { Ref, TreeModel } from "./model.js";
 import { linkTitle } from "./text.js";
 
@@ -90,7 +90,9 @@ export function acceptQuestion(model: TreeModel, item: Item): { title: string; c
     label: breaks
       ? `Accept only ${own.join(" + ")} (breaks ${g?.id ?? "the move"})`
       : `Accept only ${own.join(" + ")}${part ? ` (${partPhrase(part).replace(/^Accept /, "")})` : ""}`,
-    detail: breaks ? onlyDetail(item) : `The other parts of ${g!.id} stay pending: the document is inconsistent until they are accepted too.`,
+    detail: breaks
+      ? onlyDetail(model.profile(item.file))
+      : `The other parts of ${g!.id} stay pending: the document is inconsistent until they are accepted too.`,
     ids: own,
     overrideLinked: breaks,
   });
@@ -107,8 +109,8 @@ function partPhrase(part: { group: { parts?: { title: string }[] | undefined }; 
 }
 
 /** What accepting only a linked change does: breaks its group, and in Typst the build. */
-function onlyDetail(item: Item): string {
-  const strict = !!profileByName(item.file).references?.strict;
+function onlyDetail(profile: LanguageProfile): string {
+  const strict = !!profile.references?.strict;
   return `Breaks the linked group; the agent is asked to repair the document${strict ? ". Until then it may not compile" : ""}.`;
 }
 
@@ -155,7 +157,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
         command: "stet.acceptOnly",
         args: r,
         tier: "decide",
-        detail: onlyDetail(item),
+        detail: onlyDetail(model.profile(item.file)),
       });
     }
     out.push({
@@ -215,7 +217,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
     tier: "view",
     detail: "Your file with and without this change, side by side; edit the proposed side to change its wording.",
   });
-  if (modify && hasPreview(item.file) && opts.previews !== false) {
+  if (modify && profileHasPreview(model.profile(item.file), item.file) && opts.previews !== false) {
     out.push({
       label: "PDF preview",
       icon: "file-pdf",

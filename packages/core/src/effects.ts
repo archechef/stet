@@ -2,6 +2,9 @@
  * Files that take effect once accepted: a build, git, an editor or an AI agent runs or reads them.
  * They are flagged in review, and accepting one needs an explicit confirmation.
  */
+import type { StetConfig } from "./config.js";
+import { profilesFor } from "./lang/index.js";
+
 const EFFECTS: [RegExp, string][] = [
   [/(^|\/)\.?latexmkrc$/i, "latexmk runs it as Perl code when the document is built"],
   [/(^|\/)\.gitattributes$/i, "git applies the filters and diff drivers it names"],
@@ -19,12 +22,18 @@ const EFFECTS: [RegExp, string][] = [
 ];
 
 /** What accepting a change to `path` sets off, or null for an ordinary file. */
-export function effectOf(path: string): string | null {
+export function effectOf(path: string, cfg?: StetConfig): string | null {
   const p = path.replace(/\\/g, "/");
-  return EFFECTS.find(([re]) => re.test(p))?.[1] ?? null;
+  const builtIn = EFFECTS.find(([re]) => re.test(p));
+  if (builtIn) return builtIn[1];
+  for (const profile of profilesFor(cfg)) {
+    const rule = profile.fileEffects?.find(({ path }) => path.test(p));
+    if (rule) return rule.reason;
+  }
+  return null;
 }
 
 /** The effect of an item (its file, or the file it renames), or null. */
-export function itemEffect(it: { file: string; oldFile?: string | undefined }): string | null {
-  return effectOf(it.file) ?? (it.oldFile ? effectOf(it.oldFile) : null);
+export function itemEffect(it: { file: string; oldFile?: string | undefined }, cfg?: StetConfig): string | null {
+  return effectOf(it.file, cfg) ?? (it.oldFile ? effectOf(it.oldFile, cfg) : null);
 }

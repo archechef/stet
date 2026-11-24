@@ -1,5 +1,5 @@
 /** PDF previews: setting them up, the extra fonts, and opening the preview panel. */
-import { documentProfile, foldPath, hasPreview, profileByName } from "@stet/core";
+import { documentProfile, foldPath, profileHasPreview } from "@stet/core";
 import * as vscode from "vscode";
 import type { StetExtension } from "./extension.js";
 import { previewNotice, previewPlace } from "./preview.js";
@@ -114,9 +114,9 @@ export class PreviewCommands {
     const t = await this.ext.targetItem(arg);
     if (!t) return;
     // `p` on a Typst change opened an empty preview panel.
-    if (t.item.kind !== "modify" || !hasPreview(t.item.file))
+    if (t.item.kind !== "modify" || !profileHasPreview(t.project.profile(t.item.file), t.item.file))
       return void vscode.window.showInformationMessage(
-        `Stet has no PDF preview for ${t.item.id}: ${t.item.kind !== "modify" ? "it is not a text change" : `there are no PDF previews for ${profileByName(t.item.file).name} files yet`}.`,
+        `Stet has no PDF preview for ${t.item.id}: ${t.item.kind !== "modify" ? "it is not a text change" : `there are no PDF previews for ${t.project.profile(t.item.file).name} files yet`}.`,
       );
     if (previewPlace() === "off")
       return void vscode.window.showInformationMessage("PDF previews are off (setting stet.pdfPreviews, or View options in the Stet panel).");

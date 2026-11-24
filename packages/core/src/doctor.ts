@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { compareVersions, gitVersion, Repo } from "./git.js";
 import { hookStatus } from "./hooks.js";
-import { PROFILES } from "./lang/index.js";
+import { PROFILES, profilesFor } from "./lang/index.js";
 import { isLive } from "./model.js";
 import { pathExists } from "./paths.js";
 import { BASE_REF, Stet } from "./service.js";
@@ -110,6 +110,7 @@ export async function doctor(cwd: string): Promise<DoctorCheck[]> {
     return checks;
   }
   const cfg = await stet.config();
+  for (const p of profilesFor(cfg).slice(PROFILES.length)) for (const c of (await p.typesetter?.doctor(which)) ?? []) add(c);
   add({ name: "stet setup", status: "ok", message: `store at ${stet.store.root}` });
 
   const head = await stet.repo.revParse(`refs/heads/${cfg.mainBranch}`);

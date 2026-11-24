@@ -14,7 +14,14 @@ import type { Edit } from "../split.js";
 import type { Token } from "../tokenizer.js";
 
 /** Which files a profile is for: patterns of the config's `files.<key>`. */
-export type FilesKey = "tex" | "bib" | "typ" | "lean";
+export type FilesKey = string;
+
+export interface FileEffect {
+  /** Matches a repository-relative path with forward slashes. */
+  path: RegExp;
+  /** What takes effect after accepting the change, shown to the reviewer. */
+  reason: string;
+}
 
 export interface LanguageProfile {
   /** "latex", "bibtex", "plain". */
@@ -36,6 +43,7 @@ export interface LanguageProfile {
    * (`*.aux`), offered when such files are there, or folders (`.lake/`), offered with the language's files.
    */
   buildFiles?: string[];
+  fileEffects?: readonly FileEffect[];
   /** The output a build makes of a source file (main.tex → main.pdf), offered at setup too. */
   outputOf?: (source: string) => string | null;
   /**

@@ -8,7 +8,7 @@ import { defaultConfig, type StetConfig } from "./config.js";
 import { notFound, StetError } from "./errors.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import { type HookStatus, hookStatus, installHooks, uninstallHooks } from "./hooks.js";
-import { DOCUMENT_LANGUAGES, detectLanguage, type LanguageProfile, languageCounts, profileFor } from "./lang/index.js";
+import { detectLanguage, documentLanguages, type LanguageProfile, languageCounts, profileFor } from "./lang/index.js";
 import {
   type Accepted,
   type Agent,
@@ -199,9 +199,9 @@ export class Stet {
   ): Promise<{ setUp: boolean; languages: [id: string, files: number][]; located: Awaited<ReturnType<typeof Stet.locate>> }> {
     const loc = located ?? (await Stet.locate(dir));
     const stet = await Stet.open(dir, loc).catch(() => null);
-    const files = stet ? (await stet.config()).files : defaultConfig("main").files;
+    const cfg = stet ? await stet.config() : defaultConfig("main");
     const tracked = ((await loc.repo.tryRun(["ls-files", "-z"])) ?? "").split("\0").filter(Boolean);
-    const languages = Object.entries(languageCounts(tracked, files)).sort((a, b) => b[1] - a[1]);
+    const languages = Object.entries(languageCounts(tracked, cfg.files, cfg)).sort((a, b) => b[1] - a[1]);
     return { setUp: !!stet, languages, located: loc };
   }
 
@@ -233,14 +233,18 @@ export class Stet {
     await store.withLock(async () => {
       let cfg = await store.config();
       // The project's language, from its files: once, when Stet is first set up here.
-      if (opts.language !== undefined && !DOCUMENT_LANGUAGES.some((p) => p.id === opts.language))
-        throw new StetError(`Unknown language '${opts.language}' (${DOCUMENT_LANGUAGES.map((p) => p.id).join(" or ")}).`);
+      if (opts.language !== undefined && !documentLanguages(cfg).some((p) => p.id === opts.language))
+        throw new StetError(
+          `Unknown language '${opts.language}' (${documentLanguages(cfg)
+            .map((p) => p.id)
+            .join(" or ")}).`,
+        );
       if (fresh || opts.language) {
         const paths =
           fresh && !opts.language
             ? ((await repo.tryRun(["ls-tree", "-r", "-z", "--name-only", `refs/heads/${branch}`])) ?? "").split("\0").filter(Boolean)
             : [];
-        const language = opts.language ?? detectLanguage(paths, cfg.files);
+        const language = opts.language ?? detectLanguage(paths, cfg.files, cfg);
         if (language !== cfg.language) await store.saveConfig((cfg = { ...cfg, language }));
       }
       if (opts.cli) await store.saveConfig({ ...cfg, cli: opts.cli });
@@ -248,6 +252,10 @@ export class Stet {
       await stet.ensureBase();
     });
     return stet;
+  }
+
+  importProfile(path: string): Promise<string> {
+    return this.store.importProfile(path);
   }
 
   config(): Promise<StetConfig> {
@@ -295,7 +303,7 @@ export class Stet {
 
   /** The language profile of a file (by the config's file patterns). */
   profile(cfg: StetConfig, path: string): LanguageProfile {
-    return profileFor(path, cfg.files);
+    return profileFor(path, cfg.files, cfg);
   }
 
   /** Is this change a whole key argument of its language (`\label{a}` → `\label{b}`)? */

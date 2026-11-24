@@ -4,14 +4,14 @@ import type { TreeModel } from "./model.js";
 import { esc, fence, STATUS_TEXT } from "./text.js";
 
 /** The full new text of a proposal, for the editor's inline widget. Agent text: fenced, never rendered. */
-export function proposalMarkdown(item: Item): string {
-  const lang = profileByName(item.file).fence;
+export function proposalMarkdown(item: Item, profile = profileByName(item.file)): string {
+  const lang = profile.fence;
   return `*Proposed text, replacing the struck-through text above:*\n\n${fence(item.newText, lang)}`;
 }
 
 /** The reviewer's wording of a change, for hovers: the code block on lines of its own. */
-export function draftMarkdown(item: Pick<Item, "draft" | "file">): string {
-  return `✎ **Your wording** (from the review of this file), which Accept uses:\n\n${fence(item.draft ?? "", profileByName(item.file).fence)}`;
+export function draftMarkdown(item: Pick<Item, "draft" | "file">, profile = profileByName(item.file)): string {
+  return `✎ **Your wording** (from the review of this file), which Accept uses:\n\n${fence(item.draft ?? "", profile.fence)}`;
 }
 
 /** A unified-style diff for hovers. */
@@ -36,8 +36,9 @@ export function diffBlock(oldText: string, newText: string): string {
 
 /** Markdown description of an item (hover, tooltips). */
 export function itemMarkdown(item: Item, model: TreeModel): string {
+  const profile = model.profile(item.file);
   const cs = model.snap.changesets.find((c) => c.id === item.changeset);
-  const d = describeItem(item, model.get);
+  const d = describeItem(item, model.get, model.effect(item));
   const lines = [`**${item.id}** · ${esc(item.agent)} · ${STATUS_TEXT[item.status]}`];
   // A file that takes effect once accepted: said first.
   if (d.effect) lines.push(`⚠ **Takes effect:** ${esc(d.effect)}. Accepting asks to confirm.`);
@@ -46,7 +47,7 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
   // A revision: what it revises, and what you asked for there.
   if (d.revises) lines.push(`↻ **Revision of ${d.revises.id}**${d.revises.asked ? `, where you asked: ${esc(d.revises.asked)}` : ""}`);
   if (d.yours?.accepted) lines.push(`✎ **Accepted with your wording:** ${diffBlock(item.oldText, d.yours.text)}\n\nThe agent proposed:`);
-  else if (d.yours) lines.push(draftMarkdown({ draft: d.yours.text, file: item.file }));
+  else if (d.yours) lines.push(draftMarkdown({ draft: d.yours.text, file: item.file }, profile));
   for (const gid of item.groups) {
     const g = model.group(gid);
     if (g && g.kind !== "atomic")
@@ -66,13 +67,13 @@ export function itemMarkdown(item: Item, model: TreeModel): string {
     if (changes.length) {
       lines.push(`⚠ **Changed on the way (${changed} word${changed > 1 ? "s" : ""}):** ${changes.map((c) => `“${esc(c.was)}” → “${esc(c.now)}”`).join(", ")}`);
     } else lines.push("Word for word: the text arrives unchanged (spacing and line breaks aside).");
-    lines.push(fence(out ? item.oldText : item.newText, profileByName(item.file).fence));
+    lines.push(fence(out ? item.oldText : item.newText, profile.fence));
   } else if (item.kind === "modify") lines.push(diffBlock(item.oldText, item.newText));
   else {
     lines.push(`${item.kind} ${esc(item.file)}${item.oldFile ? ` (from ${esc(item.oldFile)})` : ""}`);
     // A whole file's content (its first lines): new files showed only their name.
     const whole = d.whole && (item.kind === "delete-file" ? d.whole.old : d.whole.new);
-    if (whole?.length) lines.push(fence(shown(whole), profileByName(item.file).fence));
+    if (whole?.length) lines.push(fence(shown(whole), profile.fence));
     // Text with bytes that aren't UTF-8: its changed lines, the bytes marked.
     if (d.bytes)
       lines.push("Not UTF-8 text: bytes that aren't UTF-8 are shown as ⟨0x..⟩; accepting writes the file byte for byte.", fence(shown(d.bytes), "diff"));

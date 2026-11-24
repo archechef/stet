@@ -16,7 +16,14 @@ export { BIBTEX, LATEX, LEAN, PLAIN, TYPST };
 export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX, TYPST, LEAN];
 
 /** File patterns per profile (the config's `files`). */
-export type FilePatterns = Record<FilesKey, string[]>;
+export type FilePatterns = Record<"tex" | "bib" | "typ" | "lean", string[]> & Partial<Record<FilesKey, string[]>>;
+
+export const projectProfiles = Symbol("projectProfiles");
+type ProfileScope = { [projectProfiles]?: readonly LanguageProfile[] };
+
+export function profilesFor(scope?: ProfileScope): readonly LanguageProfile[] {
+  return scope?.[projectProfiles] ?? PROFILES;
+}
 
 /** Match a repo path's basename against simple `*.ext` patterns. */
 export function matchesAny(path: string, patterns: string[]): boolean {
@@ -36,25 +43,29 @@ export function matchesAny(path: string, patterns: string[]): boolean {
 }
 
 /** The profile of a file, by the config's patterns. */
-export function profileFor(path: string, files: FilePatterns): LanguageProfile {
-  return PROFILES.find((p) => p.files && matchesAny(path, files[p.files])) ?? PLAIN;
+export function profileFor(path: string, files: FilePatterns, scope?: ProfileScope): LanguageProfile {
+  return profilesFor(scope).find((p) => p.files && matchesAny(path, files[p.files] ?? p.defaultFiles ?? [])) ?? PLAIN;
 }
 
 /** Languages a project can be written in (the config's `language`): profiles with examples for agents. */
-export const DOCUMENT_LANGUAGES: readonly LanguageProfile[] = PROFILES.filter((p) => p.agentTerms);
+export function documentLanguages(scope?: ProfileScope): readonly LanguageProfile[] {
+  return profilesFor(scope).filter((p) => p.agentTerms);
+}
+
+export const DOCUMENT_LANGUAGES = documentLanguages();
 
 /**
  * The language the project is written in: the config's `language` (detected at setup), LaTeX
  * when it names none. Agents' examples and PDF previews follow it.
  */
-export function documentProfile(cfg?: { language?: string }): LanguageProfile {
-  return DOCUMENT_LANGUAGES.find((p) => p.id === (cfg?.language ?? LATEX.id)) ?? LATEX;
+export function documentProfile(cfg?: ProfileScope & { language?: string }): LanguageProfile {
+  return documentLanguages(cfg).find((p) => p.id === (cfg?.language ?? LATEX.id)) ?? LATEX;
 }
 
 /** How many files of each document language a project has (relative paths), by language id; languages without files left out. */
-export function languageCounts(paths: string[], files: FilePatterns): Record<string, number> {
+export function languageCounts(paths: string[], files: FilePatterns, scope?: ProfileScope): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const p of DOCUMENT_LANGUAGES) {
+  for (const p of documentLanguages(scope)) {
     if (!p.files) continue;
     const n = paths.filter((f) => matchesAny(f, files[p.files!] ?? p.defaultFiles ?? [])).length;
     if (n) out[p.id] = n;
@@ -66,15 +77,19 @@ export function languageCounts(paths: string[], files: FilePatterns): Record<str
  * The language of a project, by its files (relative paths): the one with the most files, LaTeX
  * on a tie or with none. A Typst thesis with one old .tex file was set up as LaTeX; a front end asks when there are both (`languageCounts`).
  */
-export function detectLanguage(paths: string[], files: FilePatterns): string {
-  const counts = Object.entries(languageCounts(paths, files)).sort((a, b) => b[1] - a[1]);
+export function detectLanguage(paths: string[], files: FilePatterns, scope?: ProfileScope): string {
+  const counts = Object.entries(languageCounts(paths, files, scope)).sort((a, b) => b[1] - a[1]);
   if (!counts.length || (counts.length > 1 && counts[0]![1] === counts[1]![1] && counts.some(([id]) => id === LATEX.id))) return LATEX.id;
   return counts[0]![0];
 }
 
 /** Does a change to this file have a PDF preview (by its name alone, for front ends)? */
 export function hasPreview(path: string): boolean {
-  return !!profileByName(path).typesetter?.source.test(path);
+  return profileHasPreview(profileByName(path), path);
+}
+
+export function profileHasPreview(profile: LanguageProfile, path: string): boolean {
+  return !!profile.typesetter?.source.test(path);
 }
 
 /** The profile of a file by its name alone (front ends, which don't read the config). */

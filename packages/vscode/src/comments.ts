@@ -68,7 +68,7 @@ export class Threads implements vscode.Disposable {
     if (this.longMode() === "hover" || item.kind !== "modify" || !item.newText || item.move) return false;
     // Only the changed parts are shown inline; the panel is for parts too long for that.
     const max = inlineMax(project.fileUri(item.file));
-    return itemDiff(item).inserted.some((i) => !fitsInline(i.text, max));
+    return itemDiff(item, project.profile(item.file)).inserted.some((i) => !fitsInline(i.text, max));
   }
 
   /**
@@ -222,7 +222,9 @@ export class Threads implements vscode.Disposable {
   }
 
   private comments(project: Project, item: Item): vscode.Comment[] {
-    const proposal = this.showsProposal(project, item) ? [new StetComment(new vscode.MarkdownString(proposalMarkdown(item)), { name: item.agent })] : [];
+    const proposal = this.showsProposal(project, item)
+      ? [new StetComment(new vscode.MarkdownString(proposalMarkdown(item, project.profile(item.file))), { name: item.agent })]
+      : [];
     return proposal.concat(
       item.thread.map(
         // Plain text: agent replies must not render links or remote images.

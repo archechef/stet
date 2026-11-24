@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
   type AcceptResult,
   AGENT_KINDS,
@@ -29,6 +30,7 @@ import {
   isGroupKind,
   isLive,
   isNoteId,
+  itemEffect,
   moveOthers,
   NOTIFY_TRIGGER_TEXT,
   NOTIFY_TRIGGERS,
@@ -262,9 +264,23 @@ export const SECTIONS: Record<Command["section"], string> = {
 
 export const COMMANDS: Command[] = [
   {
+    name: "profile",
+    section: "project",
+    usage: ["stet profile import <file.mjs>     install a trusted local language profile"],
+    options: [],
+    project: true,
+    reviewer: true,
+    async run({ args, cwd, stet, out }) {
+      const [action, file] = args;
+      if (action !== "import" || !file || args.length !== 2) throw usageError("Usage: stet profile import <file.mjs>");
+      const id = await stet.importProfile(resolve(cwd, file));
+      return out(() => `Installed language profile '${id}'. To select it, set language to '${id}' in the local Stet config.`, { id });
+    },
+  },
+  {
     name: "init",
     section: "project",
-    usage: ["stet init [--main <branch>] [--language <latex|typst|lean>]      set up Stet in this repository"],
+    usage: ["stet init [--main <branch>] [--language <id>]      set up Stet in this repository"],
     options: ["main", "language"],
     async run({ opt, cwd, self, out }) {
       // A second run only refreshes the setup: say so, instead of the first-time message.
@@ -521,6 +537,7 @@ export const COMMANDS: Command[] = [
         return print(forTerminal(["Nothing to review.", ...shareHint, ...(next ? [dim(next)] : [])].join("\n")));
       }
       const lines: string[] = [];
+      const cfg = await stet.config();
       const where = await stet.locateMany(items);
       // Changes no longer found in your file (you edited around them): accepting them fails.
       const lost = items.filter((i) => i.kind === "modify" && isLive(i.status) && !where.get(i.id)?.span);
@@ -546,14 +563,14 @@ export const COMMANDS: Command[] = [
             if (u.head) lines.push(`      ${u.head}`);
             for (const i of its) {
               const line = where.get(i.id)?.line;
-              lines.push(`${u.head ? "        " : "      "}${itemSummary(i, line)}`);
+              lines.push(`${u.head ? "        " : "      "}${itemSummary(i, line, itemEffect(i, cfg))}`);
               shown.add(i.id);
             }
           }
         }
         for (const i of csItems.filter((x) => !shown.has(x.id))) {
           const line = where.get(i.id)?.line;
-          lines.push(`    ${itemSummary(i, line)}`);
+          lines.push(`    ${itemSummary(i, line, itemEffect(i, cfg))}`);
         }
       }
       if (lost.length)
@@ -589,12 +606,14 @@ export const COMMANDS: Command[] = [
           n,
         );
       }
+      const cfg = await stet.config();
+      const summarize = (item: Item, line?: number) => itemSummary(item, line, itemEffect(item, cfg));
       if (ref.kind === "group" || ref.kind === "part") {
         const { group: g, part } = await stet.groupTarget(id);
         const items = (await Promise.all((part ?? g).items.map((i) => stet.getItem(i)))).filter((x): x is Item => !!x);
         if (part)
           return out(
-            () => [`${bold(id)} part of ${g.id} (${oneLine(g.title, 200)}): ${oneLine(part.title, 200)}`, ...items.map((i) => itemSummary(i))].join("\n"),
+            () => [`${bold(id)} part of ${g.id} (${oneLine(g.title, 200)}): ${oneLine(part.title, 200)}`, ...items.map((i) => summarize(i))].join("\n"),
             { group: g, part, items },
           );
         const lines = [
@@ -604,8 +623,8 @@ export const COMMANDS: Command[] = [
         ];
         if (g.parts) {
           for (const [k, p] of g.parts.entries())
-            lines.push(`${bold(partId(g.id, k))} ${oneLine(p.title, 200)}`, ...items.filter((i) => p.items.includes(i.id)).map((i) => "  " + itemSummary(i)));
-        } else lines.push(...items.map((i) => itemSummary(i)));
+            lines.push(`${bold(partId(g.id, k))} ${oneLine(p.title, 200)}`, ...items.filter((i) => p.items.includes(i.id)).map((i) => "  " + summarize(i)));
+        } else lines.push(...items.map((i) => summarize(i)));
         return out(() => lines.filter(Boolean).join("\n"), { group: g, items });
       }
       if (ref.kind === "round") {
@@ -614,7 +633,7 @@ export const COMMANDS: Command[] = [
         const items = await stet.listItems({ changeset: id });
         return out(
           () =>
-            [`${bold(cs.id)} ${oneLine(cs.title, 200)} (${cs.agent}, ${localTime(cs.submittedAt)})`, cs.rationale, ...items.map((i) => itemSummary(i))]
+            [`${bold(cs.id)} ${oneLine(cs.title, 200)} (${cs.agent}, ${localTime(cs.submittedAt)})`, cs.rationale, ...items.map((i) => summarize(i))]
               .filter(Boolean)
               .join("\n"),
           { changeset: cs, items },
@@ -625,23 +644,24 @@ export const COMMANDS: Command[] = [
       const { line } = await stet.locateInWorkingCopy(it);
       // What it revises and the rest of its move, for the description.
       const related = await Promise.all([...(it.supersedes ? [it.supersedes] : []), ...moveOthers(it)].map((r) => stet.getItem(r)));
+      const diff = (item: typeof it) => itemDiff(item, !!opt.full, stet.profile(cfg, item.file));
       const d = describeItem(it, (r) => related.find((x) => x?.id === r) ?? undefined);
       return out(
         () => {
-          const lines = [itemSummary(it, line)];
+          const lines = [summarize(it, line)];
           if (it.note) lines.push(`${dim("note:")} ${it.note}`);
           // A revision: what it revises, and what the reviewer asked for there.
           if (d.revises) {
             const prev = d.revises.item;
             lines.push(`${dim("revises:")} ${d.revises.id}${prev ? ` (${prev.status})` : ""}${d.revises.asked ? `, where you asked: ${d.revises.asked}` : ""}`);
-            if (prev?.kind === "modify") lines.push(`  ${dim("it proposed:")} ${itemDiff(prev, !!opt.full)}`);
+            if (prev?.kind === "modify") lines.push(`  ${dim("it proposed:")} ${diff(prev)}`);
           }
           // The text that went in (accepted with your wording) or would (your wording).
           if (d.yours) {
             lines.push(
-              `${dim(d.yours.accepted ? "accepted with your wording:" : "your wording (not accepted yet):")} ${itemDiff({ ...it, newText: d.yours.text }, !!opt.full)}`,
+              `${dim(d.yours.accepted ? "accepted with your wording:" : "your wording (not accepted yet):")} ${diff({ ...it, newText: d.yours.text })}`,
             );
-            lines.push(`${dim("the agent proposed:")} ${itemDiff(it, !!opt.full)}`);
+            lines.push(`${dim("the agent proposed:")} ${diff(it)}`);
           }
           if (d.move) {
             lines.push(
@@ -654,7 +674,7 @@ export const COMMANDS: Command[] = [
           }
           if (it.groups.length) lines.push(`${dim("groups:")} ${it.groups.join(", ")}`);
           if (it.conflictsWith.length) lines.push(`${yellow("conflicts with:")} ${it.conflictsWith.join(", ")}`);
-          if (!d.yours) lines.push("", itemDiff(it, !!opt.full));
+          if (!d.yours) lines.push("", diff(it));
           // Without colours, the markers need a word.
           if (!colored() && it.kind === "modify") lines.push(dim("([-…-] is removed, {+…+} is added)"));
           if (it.thread.length) lines.push("", ...it.thread.map((t) => `${dim(localTime(t.at))} ${bold(t.author)}: ${indented(t.text)}`));
@@ -1013,10 +1033,11 @@ export const COMMANDS: Command[] = [
         ...(groups ? { groups } : {}),
         ...(notes ? { notes } : {}),
       });
+      const cfg = opt.json ? undefined : await stet.config();
       return out(() => {
         const lines: string[] = [];
         if (r.changeset) lines.push(`Submitted ${bold(r.changeset.id)} "${r.changeset.title}" with ${r.items.length} item(s):`);
-        for (const i of r.items) lines.push(`  ${itemSummary(i)}${i.groups.length ? dim(` [${i.groups.join(",")}]`) : ""}`);
+        for (const i of r.items) lines.push(`  ${itemSummary(i, undefined, itemEffect(i, cfg))}${i.groups.length ? dim(` [${i.groups.join(",")}]`) : ""}`);
         for (const g of r.groups) {
           lines.push(`  group ${bold(g.id)} ${g.kind} "${g.title}"${g.source === "auto" ? dim(" (auto-detected)") : ""}: ${g.items.join(", ")}`);
           for (const [k, p] of (g.parts ?? []).entries()) lines.push(`    part ${bold(partId(g.id, k))} "${p.title}": ${p.items.join(", ")}`);
@@ -1069,7 +1090,8 @@ export const COMMANDS: Command[] = [
     async run({ opt, cwd, stet, out }) {
       const id = await agentId(stet, opt, cwd);
       const items = await stet.listItems({ agent: id, ...(opt.status ? { status: statusOption(opt.status) } : {}) });
-      return out(() => (items.length ? items.map((i) => itemSummary(i)).join("\n") : "No items."), items);
+      const cfg = opt.json ? undefined : await stet.config();
+      return out(() => (items.length ? items.map((i) => itemSummary(i, undefined, itemEffect(i, cfg))).join("\n") : "No items."), items);
     },
   },
   {

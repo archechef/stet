@@ -7,6 +7,8 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { configDelta, defaultConfig, mergeConfig, type StetConfig, validateConfig } from "./config.js";
 import { StetError } from "./errors.js";
+import { PROFILES, profilesFor, projectProfiles } from "./lang/index.js";
+import { addProfile, loadProjectProfiles, profileDirectory, profileModuleName, readProfile } from "./lang/load.js";
 import {
   type Agent,
   type Changeset,
@@ -127,7 +129,49 @@ export class Store {
 
   async config(): Promise<StetConfig> {
     const raw = await readJson<Partial<StetConfig>>(join(this.root, "config.json"));
-    return validateConfig(mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {}));
+    const cfg = mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {});
+    await loadProjectProfiles(cfg, this.root);
+    return validateConfig(cfg);
+  }
+
+  async importProfile(path: string): Promise<string> {
+    if (!path.endsWith(".mjs")) throw new StetError("Pass a self-contained .mjs profile.");
+    const source = await readFile(path);
+    const name = profileModuleName(source);
+    return this.withLock(async () => {
+      const raw = await readJson<Partial<StetConfig>>(join(this.root, "config.json"));
+      const cfg = mergeConfig(defaultConfig(raw?.mainBranch ?? "main"), raw ?? {});
+      const existing = cfg.profileModules ?? [];
+      const same = Array.isArray(existing) ? existing.indexOf(name) : -1;
+      if (same >= 0) cfg.profileModules = existing.filter((entry) => entry !== name);
+      await loadProjectProfiles(cfg, this.root);
+      const profile = await readProfile(source, path);
+      const profiles = [...profilesFor(cfg)];
+      const old = profiles.findIndex((entry, index) => index >= PROFILES.length && entry.id === profile.id);
+      if (old >= 0) {
+        profiles.splice(old, 1);
+        cfg.profileModules?.splice(old - PROFILES.length, 1);
+      }
+      addProfile(cfg, profiles, profile);
+      cfg[projectProfiles] = profiles;
+      const installed = [...(cfg.profileModules ?? [])];
+      installed.splice(same >= 0 ? same : old >= 0 ? old - PROFILES.length : installed.length, 0, name);
+      cfg.profileModules = installed;
+      validateConfig(cfg);
+
+      const directory = await profileDirectory(this.root, true);
+      const destination = join(directory, name);
+      const temporary = join(directory, `.${randomUUID()}.tmp`);
+      await this.fence("installing a profile");
+      try {
+        await writeFile(temporary, source, { flag: "wx" });
+        await rename(temporary, destination);
+      } finally {
+        await rm(temporary, { force: true });
+      }
+      await this.saveConfig(cfg);
+      return profile.id;
+    });
   }
 
   async saveConfig(cfg: StetConfig): Promise<void> {

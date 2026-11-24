@@ -138,14 +138,19 @@ export function usesHints(uri: vscode.Uri): boolean {
  * What to mark for a located item: only the parts that change. A whole formula may be one item,
  * but a changed exponent should not look like a rewritten equation.
  */
-function marks(doc: vscode.TextDocument, shownItem: Item, range: vscode.Range): { removed: vscode.Range[]; inserted: { at: vscode.Position; text: string }[] } {
+function marks(
+  doc: vscode.TextDocument,
+  shownItem: Item,
+  range: vscode.Range,
+  project?: Project,
+): { removed: vscode.Range[]; inserted: { at: vscode.Position; text: string }[] } {
   // The user's wording, if they have one: that's what accepting it will put here.
   const item = shownItem.draft !== undefined ? { ...shownItem, newText: shownItem.draft } : shownItem;
   const here = toLf(doc.getText(range));
   // The located text is the item's old text; if not (e.g. while typing), mark the whole span.
   const d =
     here === item.oldText
-      ? itemDiff(item)
+      ? itemDiff(item, project?.profile(item.file))
       : { removed: here ? [[0, here.length] as [number, number]] : [], inserted: item.newText ? [{ at: here.length, text: item.newText }] : [] };
   const pos = (offset: number) => {
     const p = positionIn(range.start, here, offset);
@@ -245,8 +250,9 @@ export class EditorIntegration
     const on = setting("inlineChanges");
     const located = on ? await this.locator.locate(ed.document) : [];
     // The moved-in half of a move shows a note instead of its text (see moveNote).
+    const project = this.host.projectFor(ed.document.uri);
     const all = located.map(({ item, range }) => {
-      const m = marks(ed.document, item, range);
+      const m = marks(ed.document, item, range, project);
       return item.move && !movesOut(item) ? { ...m, inserted: [] } : m;
     });
     ed.setDecorations(
@@ -290,9 +296,10 @@ export class EditorIntegration
     if (!setting("inlineChanges") || !usesHints(doc.uri)) return [];
     const max = inlineMax(doc.uri);
     const hints: vscode.InlayHint[] = [];
+    const project = this.host.projectFor(doc.uri);
     for (const { item, range: span } of await this.locator.locate(doc)) {
       if (!item.newText || item.move || !range.intersection(span)) continue;
-      for (const ins of marks(doc, item, span).inserted) {
+      for (const ins of marks(doc, item, span, project).inserted) {
         if (!range.contains(ins.at)) continue;
         // Kind "parameter": its colour can be set apart from other hints (Stet: Highlight proposed text).
         const hint = new vscode.InlayHint(ins.at, ghostText(ins.text, max), vscode.InlayHintKind.Parameter);

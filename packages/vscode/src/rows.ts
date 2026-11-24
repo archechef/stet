@@ -4,11 +4,9 @@ import {
   canUndo,
   changeSummary,
   type Group,
-  hasPreview,
   type Item,
   isAccepted,
   isLiveItem,
-  itemEffect,
   moveChangesOf,
   moveFrom,
   movesOut,
@@ -23,6 +21,7 @@ import {
   partId,
   plural,
   profileByName,
+  profileHasPreview,
   roundOf,
   spokenChange,
   summaryTexts,
@@ -133,7 +132,7 @@ export function threadText(count: number, unread: number): string {
  * A change as a screen reader reads it: what, where and its state in words, with no symbols or
  * colour (decorations aren't read).
  */
-export function itemSpoken(it: Item, line?: number, unread = 0): string {
+export function itemSpoken(it: Item, line?: number, unread = 0, profile = profileByName(it.file)): string {
   const where = `in ${it.file}${line && it.kind === "modify" ? ` line ${line}` : ""}`;
   // As the row says it: "revision requested", your wording,
   // the conversation.
@@ -149,8 +148,7 @@ export function itemSpoken(it: Item, line?: number, unread = 0): string {
   const breaks = paragraphChange(it.oldText, text);
   const what = breaks
     ? `${breaks}, “${o}” to “${n}”`
-    : (spokenChange(it.oldText, text, profileByName(it.file).spoken) ??
-      (!it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`));
+    : (spokenChange(it.oldText, text, profile.spoken) ?? (!it.oldText ? `insert “${n}”` : !text ? `delete “${o}”` : `replace “${o}” with “${n}”`));
   return `Change ${it.id}, ${what}, ${where}, ${state}${it.supersedes ? `, revises ${it.supersedes}` : ""}`;
 }
 
@@ -175,11 +173,11 @@ export function itemRow(
   const description =
     `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${place.line}` : ""}` +
     `${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLiveItem(it) ? " · your wording" : ""}` +
-    `${itemEffect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, opts.unread)}` : ""}`;
+    `${model.effect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, opts.unread)}` : ""}`;
   return {
     label: itemLabel(it, model.get),
     description,
-    spoken: itemSpoken(it, lost ? undefined : place.line, opts.unread) + (lost ? `, ${LOST_TEXT}` : ""),
+    spoken: itemSpoken(it, lost ? undefined : place.line, opts.unread, model.profile(it.file)) + (lost ? `, ${LOST_TEXT}` : ""),
     lost,
     contextValue: contextValueOf({ type: "item", item: it, parent: "" }, model),
   };
@@ -248,7 +246,7 @@ export function contextValueOf(node: Node, model: TreeModel): string {
     case "item": {
       const it = node.item;
       // ".pdf": the change has a PDF preview (not in a Typst file).
-      const pdf = it.kind === "modify" && hasPreview(it.file) ? ".pdf" : "";
+      const pdf = it.kind === "modify" && profileHasPreview(model.profile(it.file), it.file) ? ".pdf" : "";
       return isLiveItem(it) ? `item.live.${it.kind}${pdf}` : `item.done.${it.kind}${pdf}${canUndo(it) ? ".undo" : ""}`;
     }
   }
@@ -321,7 +319,7 @@ export function rowView(node: Node, model: TreeModel, f: { history: boolean; unr
         label: `${nt.id}  ${oneLine(nt.body, 50)}`,
         description: `${nt.file}${nt.deliveredAt ? "" : " · not delivered yet"}${replies}${nt.state === "resolved" ? " · resolved" : ""}`,
         tooltip:
-          `**${nt.id}** note for ${esc(nt.agent)} on ${esc(nt.file)}${nt.deliveredAt ? "" : " (the agent receives it at its next sync)"}\n\n${esc(nt.body)}\n\n${fence(nt.text, profileByName(nt.file).fence)}` +
+          `**${nt.id}** note for ${esc(nt.agent)} on ${esc(nt.file)}${nt.deliveredAt ? "" : " (the agent receives it at its next sync)"}\n\n${esc(nt.body)}\n\n${fence(nt.text, model.profile(nt.file).fence)}` +
           nt.thread
             .slice(-3)
             .map((r) => `\n\n> **${r.author === "user" ? "You" : esc(nt.agent)}:** ${esc(r.text)}`)

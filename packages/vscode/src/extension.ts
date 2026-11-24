@@ -6,13 +6,12 @@ import {
   type CliCommand,
   doctor,
   foldPath,
-  hasPreview,
   type Item,
   isLiveItem,
   parseId,
   pathExists,
   plural,
-  profileByName,
+  profileHasPreview,
   SHARE_MODES,
   type ShareMode,
   Stet,
@@ -273,14 +272,15 @@ export class StetExtension implements Host, vscode.Disposable {
 
   /** Settings that cut or hide inline proposals in a project file: say so once, with a fix for that language. */
   private async checkInline(doc: vscode.TextDocument): Promise<void> {
-    if (!this.projectFor(doc.uri) || !setting("inlineChanges")) return;
+    const project = this.projectFor(doc.uri);
+    if (!project || !setting("inlineChanges")) return;
     for (const p of inlineProblems(doc)) {
       const memo = `stet.inlineNotice:${p.key}:${doc.languageId}`;
       if (this.ctx.globalState.get<boolean>(memo)) continue;
       await this.ctx.globalState.update(memo, true);
       // A document file VS Code knows no language for (a .typ file without a Typst extension) is
       // "plaintext": a fix there would change every plain-text file.
-      const lang = profileByName(doc.uri.fsPath);
+      const lang = project.profile(project.relPath(doc.uri)!);
       if (doc.languageId === "plaintext" && lang.document) {
         void vscode.window.showInformationMessage(
           `Stet: ${p.message} VS Code opens ${lang.name} files as plain text here; with a ${lang.name} extension installed, Stet's own default for ${lang.name} files fixes this.`,
@@ -302,7 +302,7 @@ export class StetExtension implements Host, vscode.Disposable {
   /** The PDF preview for a change's hover: the image once built, else a note while it builds. */
   previewHover(p: Project, item: Item): string | undefined {
     const place = previewPlace();
-    if ((place !== "hover" && place !== "both") || item.kind !== "modify" || !hasPreview(item.file)) return undefined;
+    if ((place !== "hover" && place !== "both") || item.kind !== "modify" || !profileHasPreview(p.profile(item.file), item.file)) return undefined;
     const t = { project: p, item };
     const r = this.preview.peek(t);
     if (!r) {
@@ -427,7 +427,7 @@ export class StetExtension implements Host, vscode.Disposable {
   model(p: Project, mode: TreeMode = "review"): TreeModel {
     const key = `${mode}|${p.mainPath}`;
     let m = this.models.get(key);
-    if (!m) this.models.set(key, (m = new TreeModel(p.snapshot, mode, mode === "review" ? this.panel.filter : null)));
+    if (!m) this.models.set(key, (m = new TreeModel(p.snapshot, mode, mode === "review" ? this.panel.filter : null, p.profile, p.effect)));
     return m;
   }
 

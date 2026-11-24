@@ -233,11 +233,14 @@ export class Decisions {
 
     // Files that take effect (a latexmkrc, .gitattributes, AGENTS.md…): only when asked for
     // explicitly.
-    const effects = items.filter((i) => itemEffect(i));
+    const effects = items.flatMap((item) => {
+      const reason = itemEffect(item, cfg);
+      return reason ? [{ item, reason }] : [];
+    });
     if (effects.length && !opts.confirmEffects) {
       throw new StetError(
-        `${effects.map((i) => `${i.id} changes ${i.file}: ${itemEffect(i)}`).join("; ")}. ` +
-          `Look at ${effects.length > 1 ? "them" : "it"} first (stet show ${effects[0]!.id}), then accept with --confirm.`,
+        `${effects.map(({ item, reason }) => `${item.id} changes ${item.file}: ${reason}`).join("; ")}. ` +
+          `Look at ${effects.length > 1 ? "them" : "it"} first (stet show ${effects[0]!.item.id}), then accept with --confirm.`,
       );
     }
     const warnings: string[] = [];

@@ -229,6 +229,20 @@ Everything Stet knows about a document language is in its **profile** (`packages
 
 A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`, `files.typ`); keys are matched by kind across languages (a `.bib` entry defines the citation key a `\cite` or a Typst `@key` uses). The config keeps its shape: `files.tex` and the `preview` settings are the LaTeX profile's. The project's own language (`language`: `latex` or `typst`) is detected from its files when Stet is set up; the agents' instructions, the MCP tools' examples and PDF previews follow it.
 
+#### Local JavaScript profiles
+
+After setting up Stet, run `stet profile import ./example.mjs` from the reviewer's checkout. Stet copies the trusted module into its shared store (usually `.git/stet/profiles/`) and records the installed name in `profileModules`. The original file can change or be removed without affecting the installed profile. Reimport a profile with the same ID to update it.
+
+Set `language` to the profile's ID in the shared local Stet config to use its agent examples and preview settings. Use `files.example` to override its file patterns.
+
+Each module exports `apiVersion = 1` and a default object implementing [`LanguageProfile`](../packages/core/src/lang/profile.ts). Supply a unique `id` and `files` key (lowercase ASCII letters, digits, and hyphens, starting with a letter), `name`, `fence`, `document`, an `extensions` regular expression without the global or sticky flag, and a nonempty `defaultFiles` array. The optional hooks are the same as for built-in profiles. Supply `agentTerms` if the profile should be selectable as the project's `language`. Omit `files.example` to use the module's default patterns. Built-ins retain precedence, followed by local modules in config order.
+
+A profile can flag executable build scripts or configuration files with `fileEffects`. For example, `fileEffects: [{ path: /^build[.]proof[.]js$/, reason: "the proof runner executes this script" }]` requires confirmation before accepting a change to that file. Patterns match repository-relative paths with forward slashes, including both names of a renamed file. Rules from installed profiles apply even when a file uses another profile for splitting. Stet keeps its built-in confirmation rules and displays the built-in reason on a match.
+
+Bundle all dependencies into the module before importing it. Stet allows `node:` imports and blocks other module imports. It verifies the installed copy against its recorded content hash before executing it. Profile imports require a Node runtime with module hooks, such as Node 22.15 or later in the Node 22 series.
+
+The import command and subsequent config reads execute the module with the permissions of the importing process. Use only trusted profiles. Profile code runs in the CLI, MCP server, or VS Code extension host and must avoid reading executable code from the reviewable checkout.
+
 #### Typst
 `lang/typst.ts`. Specified by `packages/core/test/typst.test.ts`, written before the profile and mirroring the LaTeX tests. It covers tokens, splitting, references and citations, parts, files read in, prose (raw text, rebuilt sentences, moved paragraph breaks), and six realistic revisions, each reviewed in every way it allows: polishing a paper, restructuring, moving a proof into an appendix, maths, a figure with a table, and scripting (`#let` data, `#for`, `#if`). `scenarios.test.ts` and `moves.test.ts` run in both languages (`DOC_LANGS` in `test/helpers.ts`). The decisions:
 

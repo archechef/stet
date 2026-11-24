@@ -1,6 +1,6 @@
 /** Repository configuration (spec §11). */
 import { StetError } from "./errors.js";
-import { DOCUMENT_LANGUAGES, documentProfile, type FilePatterns, PROFILES } from "./lang/index.js";
+import { documentLanguages, documentProfile, type FilePatterns, type LanguageProfile, PROFILES, projectProfiles } from "./lang/index.js";
 import { DEFAULT_PREVIEW, PREVIEW_ISOLATIONS, PREVIEW_TEX, type PreviewConfig } from "./preview/env.js";
 
 export { matchesAny } from "./lang/index.js";
@@ -34,6 +34,9 @@ export const AUTO_COMMIT = ["on-finish", "when-clean", "never"] as const;
 
 export interface StetConfig {
   mainBranch: string;
+  /** Installed filenames of trusted local ESM profiles in the shared store. */
+  profileModules?: string[];
+  [projectProfiles]?: readonly LanguageProfile[];
   /** How to run the `stet` CLI; recorded by `stet init` for hooks and MCP configs. */
   cli?: { command: string; args: string[]; env?: Record<string, string> };
   /** Install git hooks that block merges/pushes of agent branches (spec §9). */
@@ -160,7 +163,12 @@ export function validateConfig(cfg: StetConfig): StetConfig {
   if (!AUTO_COMMIT.includes(cfg.autoCommit)) bad(`autoCommit '${cfg.autoCommit}' (${AUTO_COMMIT.join(", ")})`);
   if (!SHARE_MODES.includes(cfg.shareEdits)) bad(`shareEdits '${cfg.shareEdits}' (use ${SHARE_MODES.join(", ")})`);
   if (typeof cfg.maxFileMB !== "number" || !(cfg.maxFileMB > 0)) bad("maxFileMB (a number of megabytes)");
-  if (!DOCUMENT_LANGUAGES.some((p) => p.id === cfg.language)) bad(`language '${cfg.language}' (${DOCUMENT_LANGUAGES.map((p) => p.id).join(" or ")})`);
+  if (!documentLanguages(cfg).some((p) => p.id === cfg.language))
+    bad(
+      `language '${cfg.language}' (${documentLanguages(cfg)
+        .map((p) => p.id)
+        .join(" or ")})`,
+    );
   const pv = cfg.preview;
   if (typeof pv?.enabled !== "boolean") bad("preview.enabled (true or false)");
   // The root file becomes a command-line argument of the typesetter: a plain relative path of its own source files only.
