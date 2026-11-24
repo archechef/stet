@@ -696,6 +696,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
       ));
   ctx.subscriptions.push(ext, editor, threads);
   reg("stet.setup", () => ext.setupWizard.setup());
+  reg("stet.importProfile", () => ext.setupWizard.importProfile());
   reg("stet.newAgent", () => ext.agents.newAgent());
   reg("stet.openAgent", (a) => ext.agents.openAgent(a));
   reg("stet.copyAgentPath", (a) => ext.agents.copyAgentPath(a));

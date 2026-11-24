@@ -266,15 +266,34 @@ export const COMMANDS: Command[] = [
   {
     name: "profile",
     section: "project",
-    usage: ["stet profile import <file.mjs>     install a trusted local language profile"],
-    options: [],
+    usage: [
+      "stet profile import <file.mjs> [--use] [--ignore-build-files]",
+      "                                      install a trusted local language profile; --use makes it the project's",
+      "                                      language, --ignore-build-files adds its build files to .gitignore",
+    ],
+    options: ["use", "ignore-build-files"],
     project: true,
     reviewer: true,
-    async run({ args, cwd, stet, out }) {
+    async run({ args, opt, cwd, stet, out }) {
       const [action, file] = args;
-      if (action !== "import" || !file || args.length !== 2) throw usageError("Usage: stet profile import <file.mjs>");
-      const id = await stet.importProfile(resolve(cwd, file));
-      return out(() => `Installed language profile '${id}'. To select it, set language to '${id}' in the local Stet config.`, { id });
+      if (action !== "import" || !file || args.length !== 2) throw usageError("Usage: stet profile import <file.mjs> [--use] [--ignore-build-files]");
+      const r = await stet.importProfile(resolve(cwd, file), { use: !!opt.use });
+      const ignored = opt["ignore-build-files"] ? await stet.ignoreBuildFiles(r.id) : [];
+      const toIgnore = opt["ignore-build-files"] ? [] : r.buildFiles;
+      return out(
+        () =>
+          [
+            `Installed the language profile '${r.id}' (${r.name}).`,
+            r.language === r.id
+              ? `It is the project's language: agents' instructions and examples, and PDF previews, follow it.`
+              : r.selectable
+                ? `To make it the project's language: stet profile import ${file} --use`
+                : `It has no examples for agents (agentTerms), so it can't be the project's language; it splits and links its files.`,
+            ...(ignored.length ? [`Added to .gitignore: ${ignored.join(", ")}`] : []),
+            ...(toIgnore.length ? [`Its build files git doesn't ignore yet: ${toIgnore.join(", ")} (add them with --ignore-build-files)`] : []),
+          ].join("\n"),
+        { ...r, ignored },
+      );
     },
   },
   {

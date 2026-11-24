@@ -231,15 +231,19 @@ A file's profile is chosen by the config's patterns (`files.tex`, `files.bib`, `
 
 #### Local JavaScript profiles
 
-After setting up Stet, run `stet profile import ./example.mjs` from the reviewer's checkout. Stet copies the trusted module into its shared store (usually `.git/stet/profiles/`) and records the installed name in `profileModules`. The original file can change or be removed without affecting the installed profile. Reimport a profile with the same ID to update it.
+After setting up Stet, run `stet profile import ./example.mjs` from the reviewer's checkout, or **Stet: Import language profile…** in VS Code (which warns first that the profile is code). Stet copies the trusted module into its shared store (usually `.git/stet/profiles/`) and records the installed name in `profileModules`. The original file can change or be removed without affecting the installed profile. Reimport a profile with the same ID to update it.
 
-Set `language` to the profile's ID in the shared local Stet config to use its agent examples and preview settings. Use `files.example` to override its file patterns.
+`--use` (VS Code asks) makes the profile the project's language in the same step: agents' instructions and examples, and PDF previews, follow it, and the active agents' instructions are rewritten. Only a profile with `agentTerms` can be the language; otherwise nothing is installed. The import also lists the profile's build files git doesn't ignore yet (its `buildFiles`, and the outputs `outputOf` names that are there); `--ignore-build-files` (VS Code asks) appends them to the project's `.gitignore`. Use `files.example` to override its file patterns.
+
+VS Code starts Stet in any folder set up for it (`.git/stet/config.json`), so a project in an imported language needs no `.tex`, `.typ` or `.lean` file. Syntax highlighting and the editor's language for these files come from VS Code language extensions, not from the profile.
 
 Each module exports `apiVersion = 1` and a default object implementing [`LanguageProfile`](../packages/core/src/lang/profile.ts). Supply a unique `id` and `files` key (lowercase ASCII letters, digits, and hyphens, starting with a letter), `name`, `fence`, `document`, an `extensions` regular expression without the global or sticky flag, and a nonempty `defaultFiles` array. The optional hooks are the same as for built-in profiles. Supply `agentTerms` if the profile should be selectable as the project's `language`. Omit `files.example` to use the module's default patterns. Built-ins retain precedence, followed by local modules in config order.
 
 A profile can flag executable build scripts or configuration files with `fileEffects`. For example, `fileEffects: [{ path: /^build[.]proof[.]js$/, reason: "the proof runner executes this script" }]` requires confirmation before accepting a change to that file. Patterns match repository-relative paths with forward slashes, including both names of a renamed file. Rules from installed profiles apply even when a file uses another profile for splitting. Stet keeps its built-in confirmation rules and displays the built-in reason on a match.
 
 Bundle all dependencies into the module before importing it. Stet allows `node:` imports and blocks other module imports. It verifies the installed copy against its recorded content hash before executing it. Profile imports require a Node runtime with module hooks, such as Node 22.15 or later in the Node 22 series.
+
+A profile can bring its own PDF previews (`typesetter`, bundled into the module); the VS Code integration test imports LaTeX's preview backend under another ID this way. A project has one preview backend, the one of its language. Not supported yet: reference kinds beyond labels and citations, and several preview backends in one project.
 
 The import command and subsequent config reads execute the module with the permissions of the importing process. Use only trusted profiles. Profile code runs in the CLI, MCP server, or VS Code extension host and must avoid reading executable code from the reviewable checkout.
 

@@ -134,7 +134,11 @@ export class Store {
     return validateConfig(cfg);
   }
 
-  async importProfile(path: string): Promise<string> {
+  /**
+   * Install a trusted profile module; `use`: make it the project's language too, in the same
+   * step. Returns its id and whether the project's language changed.
+   */
+  async importProfile(path: string, opts: { use?: boolean } = {}): Promise<{ id: string; languageChanged: boolean }> {
     if (!path.endsWith(".mjs")) throw new StetError("Pass a self-contained .mjs profile.");
     const source = await readFile(path);
     const name = profileModuleName(source);
@@ -154,6 +158,12 @@ export class Store {
       }
       addProfile(cfg, profiles, profile);
       cfg[projectProfiles] = profiles;
+      const languageChanged = !!opts.use && cfg.language !== profile.id;
+      if (opts.use) {
+        // Only a profile with examples for agents can be the project's language.
+        if (!profile.agentTerms) throw new StetError(`${profile.name} can't be the project's language: its profile has no agentTerms. Nothing was installed.`);
+        cfg.language = profile.id;
+      }
       const installed = [...(cfg.profileModules ?? [])];
       installed.splice(same >= 0 ? same : old >= 0 ? old - PROFILES.length : installed.length, 0, name);
       cfg.profileModules = installed;
@@ -170,7 +180,7 @@ export class Store {
         await rm(temporary, { force: true });
       }
       await this.saveConfig(cfg);
-      return profile.id;
+      return { id: profile.id, languageChanged };
     });
   }
 

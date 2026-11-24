@@ -36,7 +36,7 @@ export type { PreviewConfig, PreviewEnv } from "./preview/env.js";
 export type { Box } from "./preview/words.js";
 export type { ReviewChange, ReviewDocument } from "./review.js";
 export type { GroupExtras } from "./service/groups.js";
-export type { AcceptResult, AgentStatus, ItemFilter, SubmitResult, SyncResult, UndoResult } from "./service.js";
+export type { AcceptResult, AgentStatus, ItemFilter, ProfileImport, SubmitResult, SyncResult, UndoResult } from "./service.js";
 export { Stet } from "./service.js";
 export type { Edit } from "./split.js";
 export { CHANGED_FILE } from "./store.js";

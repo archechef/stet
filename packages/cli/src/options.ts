@@ -33,6 +33,8 @@ export const OPTIONS = {
   full: { type: "boolean" },
   confirm: { type: "boolean" },
   language: { type: "string" },
+  use: { type: "boolean" },
+  "ignore-build-files": { type: "boolean" },
 } as const;
 
 export type OptionName = keyof typeof OPTIONS;

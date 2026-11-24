@@ -1,6 +1,7 @@
 // VS Code integration test: builds a fixture project, starts VS Code with a throwaway profile and
 // the extension under development, and reports the checks from suite.cjs.
-// Usage: node test/integration/run.mjs   (VS Code from PATH, or set VSCODE_EXE)
+// Usage: node test/integration/run.mjs   (VS Code from PATH, or set VSCODE_EXE; STET_IT_ONLY=proofs,latex-profile
+// runs only those, by fixture kind or runtime)
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,19 +23,28 @@ function vscodeExe() {
   return existsSync(bin) ? bin : cli;
 }
 
+const only = process.env.STET_IT_ONLY?.split(",");
 let failedRuns = 0;
 for (const runtime of ["auto", "vscode"]) {
+  if (only && !only.includes(runtime)) continue;
   console.log(`\n— stet.runtime = ${runtime}`);
   failedRuns += runOnce(runtime) ? 0 : 1;
 }
+// Projects in the language of an imported profile (custom.cjs).
+for (const kind of ["proofs", "latex-profile"]) {
+  if (only && !only.includes(kind)) continue;
+  console.log(`\n— imported profile: ${kind}`);
+  failedRuns += runOnce("auto", kind, "custom.cjs") ? 0 : 1;
+}
 process.exitCode = failedRuns ? 1 : 0;
 
-function runOnce(runtime) {
+function runOnce(runtime, kind = "paper", suite = "suite.cjs") {
   const tmp = mkdtempSync(join(tmpdir(), "stet-vscode-it-"));
   try {
     // The bundled fixture (from `npm run build`) runs without node_modules.
     const fixtureScript = existsSync(join(extDir, "dist", "it-fixture.mjs")) ? join(extDir, "dist", "it-fixture.mjs") : join(here, "fixture.mjs");
-    const fixture = execFileSync(process.execPath, [fixtureScript, tmp], { cwd: extDir, encoding: "utf8" }).trim().split("\n").pop();
+    const profile = join(extDir, "dist", "it-latex-profile.mjs");
+    const fixture = execFileSync(process.execPath, [fixtureScript, tmp, kind, profile], { cwd: extDir, encoding: "utf8" }).trim().split("\n").pop();
     const { repo } = JSON.parse(fixture);
     const out = join(tmp, "results.json");
     // When started from another Electron app, this variable would make VS Code run as plain Node.
@@ -52,7 +62,7 @@ function runOnce(runtime) {
         "--skip-release-notes",
         "--new-window",
         `--extensionDevelopmentPath=${extDir}`,
-        `--extensionTestsPath=${join(here, "suite.cjs")}`,
+        `--extensionTestsPath=${join(here, suite)}`,
         repo,
       ],
       { env, encoding: "utf8", timeout: 180_000 },

@@ -62,7 +62,10 @@ export class SetupWizard {
       if (!files.some((f) => DOCUMENT_LANGUAGES.some((p) => matchesAny(f, p.defaultFiles ?? [])))) {
         const go = await vscode.window.showWarningMessage(
           `${folder.name} has no ${names} files.`,
-          { modal: true, detail: `Stet reviews changes to a ${names} project. Set it up for this folder anyway?` },
+          {
+            modal: true,
+            detail: `Stet reviews changes to a ${names} project. Set it up for this folder anyway? For another language, import its profile after setup (Stet: Import language profile…).`,
+          },
           "Set up anyway",
         );
         if (go !== "Set up anyway") return;
@@ -142,6 +145,64 @@ export class SetupWizard {
     } catch (e: any) {
       void vscode.window.showErrorMessage(`Stet setup failed: ${e?.message ?? e}`);
     }
+  }
+
+  /**
+   * *Import language profile*: a trusted profile module (`stet profile import`), after a warning
+   * that it runs as code; then whether it is the project's language, and its build files for
+   * .gitignore.
+   */
+  async importProfile(): Promise<void> {
+    const p = await this.pickProject();
+    if (!p) return void vscode.window.showInformationMessage("Set up the project first (Stet: Set up project), then import a language profile.");
+    const [file] =
+      (await vscode.window.showOpenDialog({
+        title: "Import a language profile",
+        openLabel: "Import",
+        canSelectMany: false,
+        filters: { "Stet language profile": ["mjs"] },
+      })) ?? [];
+    if (!file) return;
+    const trust = await vscode.window.showWarningMessage(
+      `Import ${file.path.split("/").pop()} only if you trust it.`,
+      {
+        modal: true,
+        detail:
+          "A language profile is a program. Stet runs it with your permissions every time it reads the project: in VS Code, the stet command and the agents' Stet tools. Stet keeps a copy and checks that it stays unchanged.",
+      },
+      "Import",
+    );
+    if (trust !== "Import") return;
+    const r = await this.ext.run(p, () => p.stet.importProfile(file.fsPath));
+    if (!r) return;
+    const said = [`Installed the language profile ${r.name}.`];
+    if (r.selectable && r.language !== r.id) {
+      const current = documentProfile(await p.stet.config()).name;
+      const use = `Use ${r.name}`;
+      const pick = await vscode.window.showInformationMessage(
+        `Make ${r.name} the language of ${p.name}?`,
+        { modal: true, detail: `Agents' instructions and examples, and PDF previews, follow the project's language (now ${current}).` },
+        use,
+        `Keep ${current}`,
+      );
+      if (pick === use) {
+        const done = await this.ext.run(p, () => p.stet.setLanguage(r.id).then(() => true));
+        if (done) said.push(`It is the project's language now.`);
+      }
+    } else if (r.language === r.id) said.push(`It is the project's language.`);
+    if (r.buildFiles.length) {
+      const add = "Add to .gitignore";
+      const pick = await vscode.window.showInformationMessage(
+        `${r.name} has build files git doesn't ignore yet: ${r.buildFiles.slice(0, 4).join(", ")}${r.buildFiles.length > 4 ? ", …" : ""}`,
+        { modal: true, detail: "Add them to the project's .gitignore, so they are never committed or proposed?" },
+        add,
+      );
+      if (pick === add) {
+        const lines = await this.ext.run(p, () => p.stet.ignoreBuildFiles(r.id));
+        if (lines?.length) said.push(`Added ${lines.join(", ")} to .gitignore.`);
+      }
+    }
+    void vscode.window.showInformationMessage(said.join(" "));
   }
 
   private async setIdentity(repo: Repo, id: { name: string; email: string }): Promise<void> {

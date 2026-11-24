@@ -100,12 +100,13 @@ export function profileByName(path: string): LanguageProfile {
 /**
  * A .gitignore for the build files in a folder, by its files (relative paths): every profile's
  * build files, and the outputs of its sources that are there (`/main.pdf` next to `main.tex`, not
- * every PDF: figures are PDFs too). Empty if the folder has none.
+ * every PDF: figures are PDFs too). Empty if the folder has none. `profiles`: the built-in ones,
+ * or an imported profile's.
  */
-export function buildIgnores(paths: string[]): string[] {
+export function buildIgnores(paths: string[], profiles: readonly LanguageProfile[] = PROFILES): string[] {
   const have = new Set(paths.map((p) => p.toLowerCase()));
   const out: string[] = [];
-  for (const prof of PROFILES) {
+  for (const prof of profiles) {
     const patterns = prof.buildFiles ?? [];
     const folders = patterns.filter((pat) => pat.endsWith("/"));
     const names = patterns.filter((pat) => !pat.endsWith("/"));

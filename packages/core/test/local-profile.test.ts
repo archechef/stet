@@ -52,7 +52,7 @@ it("loads a local profile from the shared store and keeps it scoped to its repos
         files: { proof: ["*.custom"] },
       }),
     );
-  expect(await stet.importProfile(join(repo, profileFile))).toBe("local-proof");
+  expect((await stet.importProfile(join(repo, profileFile))).id).toBe("local-proof");
   const installed = (await stet.config()).profileModules!;
   expect(installed).toHaveLength(1);
   expect(read(stet.storeRoot, `profiles/${installed[0]}`)).toBe(source);
@@ -102,4 +102,67 @@ it("loads a local profile from the shared store and keeps it scoped to its repos
   config(installed);
   write(stet.storeRoot, `profiles/${installed[0]}`, 'throw new Error("The copy was changed");');
   await expect(stet.config()).rejects.toThrow("has changed");
+});
+
+const PROOFS = (id: string, name: string, agentTerms = true) => `
+  export const apiVersion = 1;
+  export default {
+    id: ${JSON.stringify(id)},
+    name: ${JSON.stringify(name)},
+    files: ${JSON.stringify(id)},
+    defaultFiles: ["*.prf"],
+    extensions: /\\.prf$/,
+    fence: "prf",
+    document: true,
+    buildFiles: ["_out/", "*.prfc"],
+    outputOf: (source) => (source.endsWith(".prf") ? source.slice(0, -4) + ".pdf" : null),
+    ${
+      agentTerms
+        ? `agentTerms: {
+      location: 'main.prf:1 "step"',
+      linked: "a lemma and its uses",
+      compiles: "a missing lemma is an error",
+      reference: "a lemma with its uses",
+      dependencies: "lemmas and their uses",
+    },`
+        : ""
+    }
+  };
+`;
+
+it("is made the project's language on import or later, and offers its build files for .gitignore", async () => {
+  const dir = outsideDir();
+  write(dir, "proofs.mjs", PROOFS("proofs", "Proofs"));
+  write(dir, "notes.mjs", PROOFS("notes", "Notes", false));
+  const { stet, repo } = await setup({ "main.prf": "a\n", ".gitignore": "*.prfc\n" });
+  await stet.setCli(FAKE_CLI);
+  const { worktree } = await stet.newAgent("a", { kind: "claude-code" });
+  write(repo, "main.pdf", "%PDF");
+  write(repo, "cache.prfc", "ignored already");
+
+  const r = await stet.importProfile(join(dir, "proofs.mjs"));
+  expect(r).toEqual({ id: "proofs", name: "Proofs", language: "latex", selectable: true, buildFiles: ["_out/", "/main.pdf"] });
+  expect(read(worktree, "CLAUDE.local.md")).not.toContain("Proofs");
+  await stet.setLanguage("proofs");
+  expect(documentProfile(await stet.config()).name).toBe("Proofs");
+  expect(read(worktree, "CLAUDE.local.md")).toContain("Proofs"); // the agent's instructions follow
+
+  expect(await stet.ignoreBuildFiles("proofs")).toEqual(["_out/", "/main.pdf"]);
+  expect(read(repo, ".gitignore")).toBe("*.prfc\n\n# Build files of Proofs (written by Stet)\n_out/\n/main.pdf\n");
+  expect(await stet.buildFilesToIgnore("proofs")).toEqual([]);
+  expect(await stet.ignoreBuildFiles("proofs")).toEqual([]);
+
+  // A profile without examples for agents can't be the language: nothing is installed.
+  await expect(stet.importProfile(join(dir, "notes.mjs"), { use: true })).rejects.toThrow("can't be the project's language");
+  await expect(stet.setLanguage("notes")).rejects.toThrow("Unknown language 'notes'");
+  expect((await stet.config()).profileModules).toHaveLength(1);
+  expect((await stet.importProfile(join(dir, "notes.mjs"))).selectable).toBe(false);
+
+  // Selected in the same step as the import.
+  await stet.setLanguage("latex");
+  write(dir, "proofs.mjs", PROOFS("proofs", "Proofs 2"));
+  const used = await stet.importProfile(join(dir, "proofs.mjs"), { use: true });
+  expect(used).toMatchObject({ id: "proofs", name: "Proofs 2", language: "proofs" });
+  expect(read(worktree, "CLAUDE.local.md")).toContain("Proofs 2");
+  expect((await stet.config()).profileModules).toHaveLength(2);
 });

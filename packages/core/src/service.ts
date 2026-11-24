@@ -1,6 +1,6 @@
 /** Stet service layer (spec §7, §12.1). All frontends go through this class. */
 import { createHash } from "node:crypto";
-import { readFile, rm, rmdir } from "node:fs/promises";
+import { readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { anchorNear, type Neighbour, type Span } from "./anchor.js";
 import type { FileChange, FileView, TextFile } from "./apply.js";
@@ -8,7 +8,7 @@ import { defaultConfig, type StetConfig } from "./config.js";
 import { notFound, StetError } from "./errors.js";
 import { gitRaw, Repo, untrustedWorktreeConfig } from "./git.js";
 import { type HookStatus, hookStatus, installHooks, uninstallHooks } from "./hooks.js";
-import { detectLanguage, documentLanguages, type LanguageProfile, languageCounts, profileFor } from "./lang/index.js";
+import { buildIgnores, detectLanguage, documentLanguages, type LanguageProfile, languageCounts, profileFor, profilesFor } from "./lang/index.js";
 import {
   type Accepted,
   type Agent,
@@ -131,6 +131,18 @@ function neighboursIn(all: readonly Item[], item: Item): Neighbour[] {
  * opens the project and holds the helpers its parts share; the operations live in the parts
  * (service/: review base, agents, submit, groups, decisions, previews, drafts, notes).
  */
+/** What `importProfile` installed. */
+export interface ProfileImport {
+  id: string;
+  name: string;
+  /** The project's language now. */
+  language: string;
+  /** Whether it can be the project's language (it has examples for agents). */
+  selectable: boolean;
+  /** Its build files git doesn't ignore yet (`ignoreBuildFiles` adds them to .gitignore). */
+  buildFiles: string[];
+}
+
 export class Stet {
   /**
    * The parts of the service, by area. Stet's own methods below forward to them, so callers
@@ -254,8 +266,69 @@ export class Stet {
     return stet;
   }
 
-  importProfile(path: string): Promise<string> {
-    return this.store.importProfile(path);
+  /**
+   * Install a trusted local language profile (`stet profile import`). `use`: make it the project's
+   * language, and rewrite the active agents' instructions, which follow it. Says which of the
+   * project's build files it would leave out of git (`ignoreBuildFiles`).
+   */
+  async importProfile(path: string, opts: { use?: boolean } = {}): Promise<ProfileImport> {
+    const { id, languageChanged } = await this.store.importProfile(path, opts);
+    if (languageChanged) await this.agentOps.refreshWorkspaces();
+    const cfg = await this.config();
+    const profile = this.installedProfile(cfg, id);
+    return { id, name: profile.name, language: cfg.language, selectable: !!profile.agentTerms, buildFiles: await this.buildFilesToIgnore(id) };
+  }
+
+  /** Make `id` the project's language (a built-in or imported profile with examples for agents); the active agents' instructions follow it. */
+  async setLanguage(id: string): Promise<void> {
+    const changed = await this.store.withLock(async () => {
+      const cfg = await this.config();
+      const known = documentLanguages(cfg);
+      if (!known.some((p) => p.id === id)) throw new StetError(`Unknown language '${id}' (${known.map((p) => p.id).join(" or ")}).`);
+      if (cfg.language === id) return false;
+      await this.store.saveConfig({ ...cfg, language: id });
+      return true;
+    });
+    if (changed) await this.agentOps.refreshWorkspaces();
+  }
+
+  private installedProfile(cfg: StetConfig, id: string): LanguageProfile {
+    const profile = profilesFor(cfg).find((p) => p.id === id);
+    if (!profile) throw new StetError(`There is no language profile '${id}' in this project.`);
+    return profile;
+  }
+
+  /**
+   * The project's build files of a language (its `buildFiles` and the outputs of its sources),
+   * for .gitignore: those git doesn't ignore yet.
+   */
+  async buildFilesToIgnore(profileId: string): Promise<string[]> {
+    const cfg = await this.config();
+    const profile = this.installedProfile(cfg, profileId);
+    const patterns = (profile.files && cfg.files[profile.files]) || profile.defaultFiles || [];
+    const paths = ((await this.repo.tryRun(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])) ?? "").split("\0").filter(Boolean);
+    const out: string[] = [];
+    for (const line of buildIgnores(paths, [{ ...profile, defaultFiles: patterns }])) {
+      if (/[\r\n]/.test(line)) continue;
+      // Already ignored: check-ignore names it.
+      if (!(await this.repo.tryRun(["check-ignore", "--no-index", "--", line.replace(/^\//, "")]))) out.push(line);
+    }
+    return out;
+  }
+
+  /** Add a language's build files to the project's .gitignore (`buildFilesToIgnore`); returns the lines added. */
+  async ignoreBuildFiles(profileId: string): Promise<string[]> {
+    const lines = await this.buildFilesToIgnore(profileId);
+    if (!lines.length) return [];
+    const name = this.installedProfile(await this.config(), profileId).name.replace(/[\r\n]+/g, " ");
+    const path = join(this.mainPath, ".gitignore");
+    const old = await readFile(path, "utf8").catch((e) => {
+      if (e?.code === "ENOENT") return "";
+      throw e;
+    });
+    const sep = !old ? "" : old.endsWith("\n") ? "\n" : "\n\n";
+    await writeFile(path, `${old}${sep}# Build files of ${name} (written by Stet)\n${lines.join("\n")}\n`);
+    return lines;
   }
 
   config(): Promise<StetConfig> {

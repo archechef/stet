@@ -42,7 +42,8 @@
   "activationEvents": [
     "workspaceContains:**/*.tex",
     "workspaceContains:**/*.typ",
-    "workspaceContains:**/*.lean"
+    "workspaceContains:**/*.lean",
+    "workspaceContains:.git/stet/config.json"
   ],
   "scripts": {
     "build": "tsc -b ../core && tsc -p . && tsc -p tsconfig.webview.json && node esbuild.mjs",
@@ -143,6 +144,11 @@
         "title": "Refresh",
         "category": "Stet",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "stet.importProfile",
+        "title": "Import language profile…",
+        "category": "Stet"
       },
       {
         "command": "stet.doctor",
@@ -542,6 +548,11 @@
           "command": "stet.setup",
           "when": "view == stet.review && !stet.agentWorkspace",
           "group": "2_tools@4"
+        },
+        {
+          "command": "stet.importProfile",
+          "when": "view == stet.review && stet.active && !stet.agentWorkspace",
+          "group": "2_tools@5"
         }
       ],
       "view/item/context": [
@@ -742,6 +753,10 @@
         {
           "command": "stet.setup",
           "when": "!stet.agentWorkspace"
+        },
+        {
+          "command": "stet.importProfile",
+          "when": "stet.active && !stet.agentWorkspace"
         },
         {
           "command": "stet.reopenNote",

@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { edit, PAPER, setup } from "../../core/test/helpers.js";
+import { edit, outsideDir, PAPER, read, setup, write } from "../../core/test/helpers.js";
 import { COMMANDS } from "../src/commands.js";
 import { EXIT, help, main } from "../src/main.js";
 import { GLOBAL_OPTIONS, OPTIONS } from "../src/options.js";
@@ -63,6 +63,39 @@ describe("the command table (code quality report 6a517ae, refactoring 5)", () =>
     expect(refused.code).toBe(EXIT.error);
     expect(refused.err).toContain("is for the reviewer, and this is an agent's workspace");
     expect((await stet(worktree, "agent", "list")).code).toBe(0);
+  });
+});
+
+describe("stet profile import", () => {
+  it("installs a profile, makes it the project's language with --use, and ignores its build files on request", async () => {
+    const dir = outsideDir();
+    write(
+      dir,
+      "proofs.mjs",
+      `export const apiVersion = 1;
+export default {
+  id: "proofs", name: "Proofs", files: "proofs", defaultFiles: ["*.prf"], extensions: /\\.prf$/, fence: "prf", document: true,
+  buildFiles: ["_out/"],
+  agentTerms: { location: 'main.prf:1 "step"', linked: "x", compiles: "x", reference: "x", dependencies: "x" },
+};
+`,
+    );
+    const { repo } = await setup({ "main.prf": "a\n" });
+    const first = await stet(repo, "profile", "import", join(dir, "proofs.mjs"));
+    expect(first.err).toBe("");
+    expect(first.out).toContain("Installed the language profile 'proofs' (Proofs).");
+    expect(first.out).toContain("--use");
+    expect(first.out).toContain("Its build files git doesn't ignore yet: _out/ (add them with --ignore-build-files)");
+    const used = await stet(repo, "profile", "import", join(dir, "proofs.mjs"), "--use", "--ignore-build-files");
+    expect(used.out).toContain("It is the project's language");
+    expect(used.out).toContain("Added to .gitignore: _out/");
+    expect(read(repo, ".gitignore")).toContain("_out/\n");
+    expect(JSON.parse((await stet(repo, "profile", "import", join(dir, "proofs.mjs"), "--json")).out)).toMatchObject({
+      id: "proofs",
+      language: "proofs",
+      buildFiles: [],
+    });
+    expect((await stet(repo, "profile", "list")).code).toBe(EXIT.usage);
   });
 });
 

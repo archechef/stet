@@ -1,18 +1,79 @@
-// Builds a Stet project with one agent and two pending proposals, for the VS Code integration test.
-// Usage: node fixture.mjs <dir>   (prints the project path)
+// Builds a Stet project with one agent and pending proposals, for the VS Code integration test.
+// Usage: node fixture.mjs <dir> [paper|proofs|latex-profile] [<it-latex-profile.mjs>]   (prints the project as JSON)
+// - paper: a LaTeX paper with three proposals (suite.cjs).
+// - proofs: a project in a language of an imported profile, with no LaTeX, Typst or Lean files (custom.cjs).
+// - latex-profile: a LaTeX paper whose .tex files an imported profile takes, with LaTeX's preview backend bundled in (custom.cjs).
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Stet } from "@stet/core";
 
 const root = process.argv[2];
-const repo = join(root, "paper");
-mkdirSync(repo, { recursive: true });
+const kind = process.argv[3] ?? "paper";
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
-git(repo, "init", "-q", "-b", "master");
-git(repo, "config", "user.name", "Test User");
-git(repo, "config", "user.email", "test@example.com");
-git(repo, "config", "core.autocrlf", "false");
+const newRepo = (name) => {
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  git(dir, "init", "-q", "-b", "master");
+  git(dir, "config", "user.name", "Test User");
+  git(dir, "config", "user.email", "test@example.com");
+  git(dir, "config", "core.autocrlf", "false");
+  return dir;
+};
+
+if (kind === "proofs") {
+  const repo = newRepo("proofs");
+  writeFileSync(join(repo, "main.prf"), "lemma one: a = a\n  by refl\n\nlemma two: b = b\n  by refl\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "init");
+  const profile = join(root, "proofs.mjs");
+  writeFileSync(
+    profile,
+    `export const apiVersion = 1;
+export default {
+  id: "proofs", name: "Proofs", files: "proofs", defaultFiles: ["*.prf"], extensions: /\\.prf$/, fence: "prf", document: true,
+  buildFiles: ["_out/"],
+  agentTerms: { location: 'main.prf:1 "by refl"', linked: "a lemma and its uses", compiles: "a missing lemma is an error", reference: "a lemma with its uses", dependencies: "lemmas and their uses" },
+};
+`,
+  );
+  const stet = await Stet.init(repo);
+  await stet.importProfile(profile, { use: true });
+  const agent = await stet.newAgent("claude-1", { kind: "claude-code" });
+  const f = join(agent.worktree, "main.prf");
+  writeFileSync(f, readFileSync(f, "utf8").replace("lemma two: b = b\n  by refl", "lemma two: b = b\n  by rfl"));
+  const r = await stet.submit("claude-1", { title: "Tidy proofs" });
+  console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id), file: "main.prf", language: "proofs" }));
+  process.exit(0);
+}
+
+if (kind === "latex-profile") {
+  const repo = newRepo("paper");
+  writeFileSync(
+    join(repo, "main.tex"),
+    "\\documentclass{article}\n\\begin{document}\nIn this work we study the problem of reviewing changes.\n\n" +
+      "We show that this approach is effective in practice.\n\\end{document}\n",
+  );
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "init");
+  const stet = await Stet.init(repo);
+  // The built-in LaTeX profile takes no files here: the imported one does.
+  const configFile = join(stet.storeRoot, "config.json");
+  const raw = JSON.parse(readFileSync(configFile, "utf8"));
+  writeFileSync(configFile, JSON.stringify({ ...raw, files: { ...(raw.files ?? {}), tex: [] } }, null, 2));
+  await stet.importProfile(process.argv[4], { use: true });
+  const cfg = await stet.config();
+  if (stet.profile(cfg, "main.tex").id !== "paper-latex" || cfg.language !== "paper-latex")
+    throw new Error(`main.tex is ${stet.profile(cfg, "main.tex").id}, the language ${cfg.language}`);
+  const agent = await stet.newAgent("claude-1", { kind: "claude-code" });
+  const f = join(agent.worktree, "main.tex");
+  writeFileSync(f, readFileSync(f, "utf8").replace("the problem of reviewing", "the task of reviewing"));
+  const r = await stet.submit("claude-1", { title: "Wording" });
+  console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id), file: "main.tex", language: "paper-latex" }));
+  process.exit(0);
+}
+
+const repo = newRepo("paper");
 writeFileSync(
   join(repo, "main.tex"),
   `\\documentclass{article}
@@ -62,4 +123,4 @@ writeFileSync(
   ),
 );
 const r = await stet.submit("claude-1", { title: "Polish wording", rationale: "Clearer terms." });
-console.log(JSON.stringify({ repo, worktree: agent.worktree, items: r.items.map((i) => i.id) }));
+console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id) }));
