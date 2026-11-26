@@ -245,27 +245,28 @@ The agent is told and can propose it again against the current text.
 
 ### PDF previews
 
-PDF previews are for LaTeX projects; Typst projects have none yet, and their changes don't offer them. Changes to Markdown files show rendered instead (see *Rendered Markdown previews* below).
+PDF previews are for LaTeX and Typst projects. Changes to Markdown files show rendered instead (see *Rendered Markdown previews* below).
 
 **PDF preview** (among a change's actions: hover, *More…*, Ctrl+., right-click, `p` in the panel) opens a panel next to the editor. It shows the region of the compiled paper where the change lands, after and before. The change itself is in the editor at once; the panel says *Building the preview…* and fills in a second or two later. While the panel is open it follows the change you select or put the cursor on, and prepares the next two changes in the background, so moving through a review stays quick.
 
 - **In the hover, too:** a change's hover shows its preview once it is built. Selecting a change starts building it, so it is usually ready by the time you hover. The setting `stet.pdfPreviews` (also under **View options**) chooses where previews appear: in the hover and the panel (default), only one of them, or off (nothing is compiled).
 - **What a preview includes:** the change with what accepting it would apply too (the rest of its move or linked part). If that alone breaks the document (say, the change removes a `\begin{proof}` and another change its `\end{proof}`), the preview adds the changes of its round that complete it, or the whole round, and says so: accept them together.
-- Changes with no place of their own on the page (the preamble, a macro definition, bibliography data, files that aren't `.tex`) get no preview, and the panel says so.
+- Changes with no place of their own on the page (the preamble, a macro definition, bibliography data, files that aren't `.tex`; in Typst a `#let`, `#set` or `#show`) get no preview, and the panel says so.
 - **LaTeX errors:** previews are built like your own compile, past errors, so a paper with a small error elsewhere still gets them. Errors that only appear with the change are shown as a warning next to the preview. If no PDF comes out, the panel shows the LaTeX error, or says the document doesn't compile without the change either.
 
 **The page view:** the Preview panel shows the whole page with the change, opened at it. The changed words are highlighted: inserted ones in green in *After*, removed ones in red in *Before*. The highlighting compares the words of the two versions as typeset, punctuation included, so a paragraph that only reflowed isn't marked, and a comma added is. Only the change itself is highlighted: an equation or a reference that got another number because of it is not. A change the editor shows whole (mostly rewritten) is highlighted whole; inside a formula, the symbols that differ. Formulas that only moved because the words around them changed are not highlighted. **After | Before** flips between the versions at the same zoom and position (`A` and `B` on the page), and ◀ ▶ turn the pages (Page Up and Page Down) (other pages are rendered when you go there, without highlights). The hover keeps showing just the region of the change.
 
 **Zoom** works like a PDF viewer: the page keeps its place in the panel, and zooming enlarges it inside. Ctrl/Cmd + wheel zooms around the mouse pointer, dragging moves the page, and when zoomed in the wheel moves it too. Double-click zooms in on a spot, or back to the whole width; the buttons above the images (−, *Fit*, +) do the same. Zoom and position stay while you flip and while you move from change to change.
 
-**What it needs:** Podman, and on Linux preferably TeX Live. Previews compile the agents' text in an isolated container, because LaTeX can read any file you can and copy it into the PDF. The container has no network and sees only the build folder.
+**What it needs:** Podman, and for LaTeX on Linux preferably TeX Live. Previews compile the agents' text in an isolated container, because LaTeX can read any file you can and copy it into the PDF. The container has no network and sees only the build folder.
+- **Typst:** the image brings Typst and Poppler (**Set up**, about 150 MB). Packages (`@preview/…`) come from your Typst package cache, read-only: compile the document once with Typst or Tinymist and they are there. Your installed fonts are used too. Typst stops at an error, so a change that breaks the document shows Typst's message instead of a page. The setting `preview.typstImage` names the image.
 - **Linux with a standalone TeX Live** (from tug.org): the container uses your TeX, read-only. Its image is small (**Set up**, about 150 MB: Debian, Perl and Poppler).
 - **macOS, or Linux with a distribution's TeX:** your TeX can't run in the Linux container, so the image brings its own (Debian's TeX Live with the common packages, about 1 GB). If a preview fails because a file isn't there (say `dsfont.sty`), Stet names it and asks once whether to install TeX's extra fonts (dsfont, bbm, bbold and many more, about 2 GB more); the panel offers the same as a button. Nothing is downloaded without your click. On macOS, Podman runs containers in its machine: start it once with `podman machine init` and `podman machine start`. Projects must be in your home folder, which Podman shares with its machine.
 - The setting `preview.tex` in `.git/stet/config.json` chooses where TeX comes from: `auto` (default), `host` or `image`.
 
 The first time, Stet offers to build the image (**Set up**). It never downloads anything without that click. If something is missing (Podman, its machine, the image), Stet says once what and how to fix it; everything else works as usual. *Stet: Set up PDF previews* builds the image at any time.
 
-Without Podman, previews stay off. For material you trust, you can set `"preview": { "isolation": "process" }` in `.git/stet/config.json` to compile without a container. TeX can then read every file you can.
+Without Podman, previews stay off. For material you trust, you can set `"preview": { "isolation": "process" }` in `.git/stet/config.json` to compile without a container, with your own TeX or Typst. TeX can then read every file you can, and Typst every file in the project (and download packages).
 
 ### Rendered Markdown previews
 

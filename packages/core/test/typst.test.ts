@@ -13,7 +13,7 @@
  *   come from .bib files only.
  * - A project's language is detected at setup from its files and kept in the config
  *   (`language`), LaTeX when in doubt; documentProfile(cfg) follows it.
- * - No PDF previews for Typst yet (no SyncTeX to find a change on the page): said, not attempted.
+ * - PDF previews of .typ files, by Typst's own typesetter (typst-preview.test.ts).
  */
 import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config.js";
@@ -96,12 +96,12 @@ spec("Typst: files and projects", () => {
     expect(T().agentTerms!.reference).toMatch(/<.+>.*@/);
   });
 
-  it("has no PDF previews yet, and says so", async () => {
-    expect(hasPreview("main.typ")).toBe(false);
-    const { stet } = await setup({ "main.typ": TYPST_PAPER });
-    const env = await stet.previewStatus();
-    expect(env.status).toBe("unavailable");
-    expect(env.message).toMatch(/Typst/);
+  it("has PDF previews of its .typ files, with its own settings", () => {
+    expect(hasPreview("main.typ")).toBe(true);
+    expect(hasPreview("refs.bib")).toBe(false);
+    expect(T().typesetter?.name).toBe("Typst");
+    expect(T().typesetter?.engines).toEqual([]);
+    expect(cfg.preview).toMatchObject({ typstImage: "localhost/stet-preview-typst:1" });
   });
 });
 

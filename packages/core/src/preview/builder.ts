@@ -269,6 +269,7 @@ export class PreviewBuilder {
       target.file,
       lines(after, applied.start, applied.start + target.newText.length),
       join(itemDir, "after.png"),
+      base.root,
       spansAfter,
     );
     if (!afterAt) return noSpot;
@@ -278,6 +279,7 @@ export class PreviewBuilder {
       target.file,
       lines(target.baseText, target.range.start, target.range.end),
       join(itemDir, "before.png"),
+      base.root,
       spansBefore,
     );
     const [afterImg, beforeImg] = [afterAt.img, beforeAt?.img ?? null];
@@ -428,10 +430,11 @@ export class PreviewBuilder {
     file: string,
     lines: number[],
     out: string,
+    root: string,
     spans: Span3[] = [],
   ): Promise<{ img: PreviewImage; found: Located[] } | null> {
     const pdfRel = relTo(work, pdf);
-    const boxes = await this.ts.locate(this.run, work, pdfRel, file, lines);
+    const boxes = await this.ts.locate(this.run, work, pdfRel, file, lines, root);
     if (!boxes?.length) return null;
     const page = boxes[0]!.page;
 

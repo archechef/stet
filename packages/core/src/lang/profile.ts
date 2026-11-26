@@ -260,8 +260,11 @@ export interface Typesetter {
   outputs(root: string): string[];
   /** Whether text at `offset` has no place on the page (LaTeX: the root's preamble). */
   noSpot(text: string, offset: number, isRoot: boolean): boolean;
-  /** Where source lines of `file` are on the page; null if they typeset nothing there. */
-  locate(run: RunIsolated, work: string, pdfRel: string, file: string, lines: number[]): Promise<SourceBox[] | null>;
+  /**
+   * Where (1-based) source lines of `file` are on the page; null if they typeset nothing there.
+   * `root`: the document compiled (Typst asks it where its markers are).
+   */
+  locate(run: RunIsolated, work: string, pdfRel: string, file: string, lines: number[], root?: string): Promise<SourceBox[] | null>;
   /** The errors of a log, without what a change shifts (line numbers). */
   errorsOf(log: string): string[];
   /** Files a build couldn't find (packages, fonts). */

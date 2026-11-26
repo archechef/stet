@@ -25,7 +25,7 @@ Next: stet show <id> · stet accept <id> · stet reject <id> -m <why>
 ## Features
 
 - **Reviewable changes:**
-  - Agent edits are split into word- and sentence-level changes that understand LaTeX, Typst and Markdown: math, labels, citations and links stay intact, and re-wrapped lines are ignored. Lean files are reviewed by declaration: a theorem's changed proof is one change, and a renamed lemma comes with the proofs that use it. (PDF previews of changes are LaTeX only for now; in VS Code, Markdown changes show rendered.)
+  - Agent edits are split into word- and sentence-level changes that understand LaTeX, Typst and Markdown: math, labels, citations and links stay intact, and re-wrapped lines are ignored. Lean files are reviewed by declaration: a theorem's changed proof is one change, and a renamed lemma comes with the proofs that use it. (PDF previews of changes are for LaTeX and Typst; in VS Code, Markdown changes show rendered.)
   - Changes that belong together are grouped. *Linked* groups, such as a macro and its uses, are all-or-nothing; large ones come in parts you can accept one at a time, as long as each part alone still compiles.
 - **A real conversation:**
   - Rejections with a reason, revision requests, comments and edited wording all go back to the agent automatically, through MCP tools. No copy-paste.
@@ -108,7 +108,6 @@ Version 0.19.0. Milestones M1–M3 and M5 are done:
 **Still to do:** live runs with the Claude Code CLI and with Codex ([docs/live-tests.md](docs/live-tests.md)).
 
 **Not there yet:**
-- PDF previews for Typst;
 - Hayagriva (`.yml`) bibliographies in Typst projects;
 - **M4:** Overleaf pull/push helpers;
 - **M6:** a web UI.

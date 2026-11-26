@@ -846,9 +846,7 @@ export const COMMANDS: Command[] = [
             dim(
               opt.extras
                 ? "Adding the extra fonts to the preview image (downloads about 2 GB; this takes a while)…"
-                : before.toolSource === "image"
-                  ? "Building the preview image with its own TeX Live (downloads about 1 GB; this takes a while)…"
-                  : "Building the preview image (downloads Debian, Perl and Poppler; TeX comes from your own installation)…",
+                : `Building the preview image${before.download ? ` (downloads ${before.download}; this can take a while)` : ""}…`,
             ),
           ),
         );

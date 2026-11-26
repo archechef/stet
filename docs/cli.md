@@ -106,7 +106,7 @@ Run these in your project folder (in an agent's workspace they are refused, so a
 | `stet preview <12.3>` | PDF preview of a change: writes images of the page region after and before the change and prints their paths. Says so when the change has no place on the page, or when the document doesn't compile. |
 | `stet preview <12.3> --page <n> [--before]` | A whole page of the preview as an image: of the version with the change, or `--before` it. |
 | `stet preview status` | What PDF previews can use here, and what is missing. |
-| `stet preview setup` | Builds the container image previews compile in (downloads Debian, Perl and Poppler, about 150 MB). Only ever on this command. |
+| `stet preview setup` | Builds the container image previews compile in. It downloads what the project's language needs (LaTeX with your own TeX: Debian, Perl and Poppler, about 150 MB; with the image's TeX, about 1 GB; Typst: Debian, Poppler and Typst, about 150 MB) and says so first. Only ever on this command. |
 | `stet preview setup --extras` | Adds TeX's extra fonts (dsfont, bbm, bbold, …, about 2 GB) to the preview image with its own TeX, and uses it from then on. A preview that fails over a missing file suggests it. |
 | | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. A sentence that only changes paragraph (the break before or after it moved) is no move: one change, `paragraph break moved`, and `stet show` marks just the breaks (`[-␣-]{+¶+}`). Splits and joins say `paragraph split` / `paragraphs joined`. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |

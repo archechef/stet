@@ -1,7 +1,7 @@
 /**
  * The Typst profile: what Stet knows about Typst source (markup, code and maths modes, headings,
- * labels and references, `#let` definitions, files read in). No PDF previews yet: Typst has no
- * SyncTeX to find a change on the page.
+ * labels and references, `#let` definitions, files read in), and its PDF previews
+ * (`typst-preview.ts`).
  *
  * `@key` is a reference or a citation by what the project defines: a `<key>` label in a .typ file
  * makes it a reference, an entry in a bibliography a citation key. So `@key` counts as a use of
@@ -9,6 +9,7 @@
  */
 import { LABEL, tokenizeWords } from "./kit.js";
 import type { DefinitionRules, IncludeRules, Item, LanguageProfile, PartRules, ReferenceRules, SyntaxRules, Token, TokenType } from "./profile.js";
+import { TYPST_TYPESETTER } from "./typst-preview.js";
 
 // ---------------------------------------------------------------------------
 // Tokens
@@ -505,6 +506,7 @@ export const TYPST: LanguageProfile = {
   definitions,
   includes,
   parts,
+  typesetter: TYPST_TYPESETTER,
   spoken: {
     maths: /\$/,
     keys: /<[^>\s]+>|@\w/,

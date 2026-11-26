@@ -1,9 +1,11 @@
 // Builds a Stet project with one agent and pending proposals, for the VS Code integration test.
-// Usage: node fixture.mjs <dir> [paper|proofs|latex-profile|markdown] [<it-latex-profile.mjs>]   (prints the project as JSON)
+// Usage: node fixture.mjs <dir> [paper|proofs|latex-profile|markdown|typst] [<it-latex-profile.mjs>]   (prints the project as JSON)
 // - paper: a LaTeX paper with three proposals (suite.cjs).
 // - proofs: a project in a language of an imported profile, with no LaTeX, Typst or Lean files (custom.cjs).
 // - latex-profile: a LaTeX paper whose .tex files an imported profile takes, with LaTeX's preview backend bundled in (custom.cjs).
 // - markdown: a project of Markdown files, whose changes show rendered (custom.cjs).
+// - typst: a Typst paper with a chapter on its second page, for its PDF previews (custom.cjs). Its
+//   preview image is preview.typstImage's, or STET_IT_TYPST_IMAGE's.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -77,6 +79,36 @@ if (kind === "markdown") {
   const r = await stet.submit("claude-1", { title: "README" });
   const image = r.items.find((i) => i.file === "README.md" && i.newText.includes("panel.svg"))?.id;
   console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id), image, file: "README.md", language: "markdown" }));
+  process.exit(0);
+}
+
+if (kind === "typst") {
+  const repo = newRepo("typst-paper");
+  writeFileSync(
+    join(repo, "main.typ"),
+    '#set page(width: 300pt, height: 300pt)\n#set heading(numbering: "1.")\n= Introduction <intro>\nIn this work we study the problem of reviewing changes.\n\n#include "ch/two.typ"\n',
+  );
+  mkdirSync(join(repo, "ch"));
+  writeFileSync(join(repo, "ch", "two.typ"), "#pagebreak()\n= Results\nWe show that this approach is effective in practice, as @intro said.\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "init");
+  const stet = await Stet.init(repo);
+  if (process.env.STET_IT_TYPST_IMAGE) {
+    const configFile = join(stet.storeRoot, "config.json");
+    const raw = JSON.parse(readFileSync(configFile, "utf8"));
+    writeFileSync(configFile, JSON.stringify({ ...raw, preview: { ...(raw.preview ?? {}), typstImage: process.env.STET_IT_TYPST_IMAGE } }, null, 2));
+  }
+  const cfg = await stet.config();
+  let image = false;
+  try {
+    execFileSync("podman", ["image", "exists", cfg.preview.typstImage]);
+    image = true;
+  } catch {}
+  const agent = await stet.newAgent("claude-1", { kind: "claude-code" });
+  const f = join(agent.worktree, "ch", "two.typ");
+  writeFileSync(f, readFileSync(f, "utf8").replace("effective in practice", "effective in real use"));
+  const r = await stet.submit("claude-1", { title: "Wording" });
+  console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id), file: "ch/two.typ", language: "typst", image }));
   process.exit(0);
 }
 

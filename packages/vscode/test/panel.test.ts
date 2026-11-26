@@ -156,10 +156,11 @@ describe("a change's row gets the menu entries that fit it", () => {
     for (const c of ["stet.accept", "stet.reject", "stet.edit", "stet.revise", "stet.preview", "stet.comment"]) expect(m).toContain(c);
   });
 
-  it("a pending change in a Typst file has no PDF preview entry", () => {
+  it("a pending change in a Typst file is previewed too; one in a Lean file isn't", () => {
     const m = menu("stet.review", item("1.1", { file: "main.typ" }));
     expect(m).toContain("stet.accept");
-    expect(m).not.toContain("stet.preview");
+    expect(m).toContain("stet.preview");
+    expect(menu("stet.review", item("1.1", { file: "Main.lean" }))).not.toContain("stet.preview");
   });
 
   it("in History, an accepted change can be undone until it is committed, and previewed", () => {
@@ -196,7 +197,7 @@ describe("the menus' when clauses and the rows' contextValue (code quality repor
       }
     }
     for (const kind of ["modify", "add-file", "delete-file", "rename-file", "binary"] as const)
-      for (const file of ["main.tex", "main.typ", "README.md"])
+      for (const file of ["main.tex", "main.typ", "Main.lean", "README.md"])
         for (const extra of [
           {},
           { status: "accepted", resolution: { appliedText: "x", edited: false, committed: null } },

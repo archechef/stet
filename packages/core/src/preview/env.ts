@@ -87,6 +87,8 @@ export interface PreviewEnv {
   toolSource?: "host" | "image";
   /** The image with its own TeX is the small one: the extra fonts can still be added. */
   extrasAvailable?: boolean;
+  /** What building the image downloads, for messages before it: "Debian with TeX Live, about 1 GB". */
+  download?: string;
 }
 
 /** Run a program (not isolated: for Podman itself and the like), with an optional timeout. */

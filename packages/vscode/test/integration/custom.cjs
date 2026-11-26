@@ -1,5 +1,5 @@
 // Runs inside VS Code (--extensionTestsPath) for projects in the language of an imported profile
-// (fixture.mjs: proofs, latex-profile), and a Markdown project (markdown). Stet must start by
+// (fixture.mjs: proofs, latex-profile), a Markdown project (markdown) and a Typst one (typst). Stet must start by
 // itself, as it does for LaTeX, Typst and Lean.
 const { existsSync, readdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
@@ -34,7 +34,11 @@ exports.run = async function run() {
         if (!active) await ext.activate();
         await until("managed CLI", () => existsSync(join(store, "bin", "stet.mjs")), 30000);
         const cfg = JSON.parse(readFileSync(join(store, "config.json"), "utf8"));
-        check(`the project's language is ${fx.kind === "markdown" ? "" : "the imported "}${fx.language}`, cfg.language === fx.language, cfg.language);
+        check(
+          `the project's language is ${["markdown", "typst"].includes(fx.kind) ? "" : "the imported "}${fx.language}`,
+          cfg.language === fx.language,
+          cfg.language,
+        );
       },
     ],
     [
@@ -152,6 +156,49 @@ exports.run = async function run() {
           result?.status === "ready" && result.after?.page === 1 && existsSync(result.after.file),
           JSON.stringify(result && { status: result.status, message: result.message, after: result.after }),
         );
+      },
+    ]);
+  if (fx.kind === "typst")
+    steps.push([
+      "Typst PDF preview",
+      async () => {
+        // Typst compiles the document; its markers find the change on the page (the second, in an
+        // included file), before and after, and the page view marks the changed words.
+        await vscode.commands.executeCommand("stet.preview", fx.items[0]);
+        if (!fx.image) {
+          // Without its image, the panel says how to set it up.
+          const { preview } = vscode.extensions.getExtension("archechef.stet-vscode").exports;
+          const html = await until("the setup message", () => (/stet preview setup/.test(preview.html || "") ? preview.html : null), 30000).catch(
+            () => preview.html || "",
+          );
+          console.log("Typst preview: no preview image here, only its setup message is checked");
+          check("without its image, the preview says how to set it up", /stet preview setup/.test(html), html.slice(0, 600));
+          return;
+        }
+        const previewDir = join(store, "previews");
+        const result = await until(
+          "preview",
+          async () => {
+            if (!existsSync(previewDir)) return null;
+            for (const base of readdirSync(previewDir)) {
+              const items = join(previewDir, base, "items");
+              if (!existsSync(items)) continue;
+              const hit = readdirSync(items).find((d) => d.startsWith(`${fx.items[0]}-`) && existsSync(join(items, d, "result.json")));
+              if (hit) return JSON.parse(readFileSync(join(items, hit, "result.json"), "utf8"));
+            }
+            return null;
+          },
+          90000,
+        ).catch(() => null);
+        console.log(`Typst preview: ${result?.status}`);
+        const detail = JSON.stringify(result && { status: result.status, message: result.message, after: result.after, before: result.before });
+        check(
+          "Typst compiles the document and finds the change on page 2, before and after",
+          result?.status === "ready" && result.after?.page === 2 && result.before?.page === 2 && existsSync(result.after.file),
+          detail,
+        );
+        const marked = (result?.pages?.after?.marks ?? []).length;
+        check("the page view marks the changed words", marked > 0, JSON.stringify(result?.pages && Object.keys(result.pages)));
       },
     ]);
   for (const [name, step] of steps) {

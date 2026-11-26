@@ -4,7 +4,7 @@
  *
  * Changes show up in the panel and the editor at once; previews compile in the background (one
  * at a time, the selected change first, then the next few) and appear here when ready. Without
- * TeX or the container image, the panel says what is missing; nothing else depends on it.
+ * the typesetter or its container image, the panel says what is missing; nothing else depends on it.
  */
 
 import { randomBytes } from "node:crypto";
@@ -208,7 +208,7 @@ export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, proje
   if (env.status === "needs-setup") {
     const setup = "Set up";
     const pick = await vscode.window.showInformationMessage(
-      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once (${env.toolSource === "image" ? "downloads Debian with TeX Live, about 1 GB" : "downloads Debian, Perl and Poppler, about 150 MB"}).`,
+      `Stet can show PDF previews of changes in ${projectName}. They compile in an isolated container, whose image is built once${env.download ? ` (downloads ${env.download})` : ""}.`,
       setup,
       "Not now",
       never,

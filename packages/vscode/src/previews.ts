@@ -21,7 +21,7 @@ export class PreviewCommands {
   /** Say once what PDF previews need here (nothing when they work). Never sets anything up unasked. */
   async checkPreviews(p: Project): Promise<void> {
     try {
-      // A language without previews (Typst): nothing to tell at startup, and no preview entries.
+      // A language without PDF previews (Lean, Markdown): nothing to tell at startup, and no preview entries.
       const doc = documentProfile(await p.stet.config());
       if (!doc.typesetter) {
         if (!this.noPreviews.has(foldPath(p.mainPath)))
@@ -46,7 +46,7 @@ export class PreviewCommands {
     }
   }
 
-  /** Projects in a language Stet has no PDF previews for (Typst), by key. */
+  /** Projects in a language Stet has no PDF previews for (Lean), by key. */
   noPreviews = new Set<string>();
 
   /** Build the preview image: downloads packages, so only on the user's click. */
@@ -65,10 +65,10 @@ export class PreviewCommands {
     const r = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title:
-          (await project.stet.previewStatus(true)).toolSource === "image"
-            ? "Stet: building the PDF preview image with its own TeX Live (about 1 GB, this takes a while)…"
-            : "Stet: building the PDF preview image (downloads Debian, Perl and Poppler)…",
+        title: `Stet: building the PDF preview image${await project.stet.previewStatus(true).then(
+          (s) => (s.download ? ` (downloads ${s.download}; this can take a while)` : ""),
+          () => "",
+        )}…`,
       },
       () => project.stet.setupPreview().catch((e: any) => ({ ok: false, log: String(e?.message ?? e), status: undefined })),
     );

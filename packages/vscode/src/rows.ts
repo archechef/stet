@@ -257,7 +257,7 @@ export function contextValueOf(node: Node, model: TreeModel): string {
       return model.partMembers(node.group, node.index).some(isLiveItem) ? "part.live" : "part.done";
     case "item": {
       const it = node.item;
-      // ".pdf": the change has a PDF preview (not in a Typst file); ".rendered": VS Code renders it (Markdown, in review).
+      // ".pdf": the change has a PDF preview (a .tex or .typ file); ".rendered": VS Code renders it (Markdown, in review).
       const pdf =
         it.kind !== "modify"
           ? ""

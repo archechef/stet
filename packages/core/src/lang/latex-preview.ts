@@ -137,11 +137,18 @@ async function detect(preview: PreviewConfig, opts: { podman?: string | null } =
       ...(source === "host" ? [[texMount!, texMount!] as [string, string]] : []),
       ...(texmfHome ? [[texmfHome, TEXMF_HOME] as [string, string]] : []),
     ];
+    const download =
+      source === "host"
+        ? "Debian, Perl and Poppler, about 150 MB; TeX is yours"
+        : cfg.texExtras
+          ? "Debian with TeX Live and its extra fonts, about 3 GB"
+          : "Debian with TeX Live, Perl and Poppler, about 1 GB";
     const base = {
       isolation: "container" as const,
       podman,
       toolSource: source,
       image,
+      download,
       extrasAvailable: source === "image" && !cfg.texExtras,
       bin: source === "host" ? texBin! : "/usr/bin",
       ...(mounts.length ? { mounts } : {}),
@@ -151,12 +158,7 @@ async function detect(preview: PreviewConfig, opts: { podman?: string | null } =
         status: "needs-setup",
         ...base,
         message: "PDF previews run in a container, whose image isn't built yet.",
-        fix:
-          source === "host"
-            ? "Build it once with `stet preview setup` or the Set up button (downloads Debian, Perl and Poppler, about 150 MB; TeX is yours)."
-            : cfg.texExtras
-              ? "Build it once with `stet preview setup --extras` or the Set up button (Debian with TeX Live and its extra fonts, about 3 GB)."
-              : "Build it once with `stet preview setup` or the Set up button (downloads Debian with TeX Live, Perl and Poppler, about 1 GB).",
+        fix: `Build it once with \`stet preview setup${cfg.texExtras && source === "image" ? " --extras" : ""}\` or the Set up button (downloads ${download}).`,
       };
     }
     return {

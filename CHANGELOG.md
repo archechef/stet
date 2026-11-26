@@ -9,6 +9,13 @@
 - **A project of Markdown alone is a Markdown project:** agents get Markdown examples. A README doesn't change a LaTeX, Typst or Lean project's language.
 - **In VS Code, a Markdown change shows rendered.** **Rendered preview** (`p` in the panel) shows the block around the change after and before, as VS Code's Markdown preview renders it, with the change highlighted. New images come from the agent's workspace. There is nothing to compile or set up; the CLI has no preview for Markdown.
 
+**PDF previews for Typst.** A change in a `.typ` file gets the same preview as in LaTeX: the region of the page where it lands, after and before, the whole page with the changed words highlighted, in the hover and the Preview panel (`stet preview` in the CLI).
+
+- **Typst compiles in its own container image** with Typst and Poppler: **Set up PDF previews** (`stet preview setup`) builds it once, about 150 MB, from Typst's release checked against its published checksum. Like LaTeX's, the container has no network and sees only the build. Your Typst package cache and fonts are mounted read-only, so `@preview` packages you have compiled with once are there. `preview.typstImage` names the image.
+- **Stet finds the change on the page by asking Typst.** Typst has no SyncTeX: Stet puts invisible markers at the change's lines in a scratch copy and asks the laid-out document where they are. They take no space, so the page is the one you'd compile. Changes to `#let`, `#set` and `#show` have no place of their own and get no preview.
+- **Typst's errors** are shown as its diagnostics; a missing package is named, with how to get it.
+- The messages about setting up previews say what the project's image downloads, in VS Code and the CLI.
+
 **Changes by file in VS Code.**
 
 - **View options → Group changes by file** (`stet.groupBy`) lists each agent's changes as agent → file → change, rounds merged, in the order they come in the file. Each change says its line, round and group.
@@ -16,6 +23,7 @@
 - **History by file shows each file's latest rounds,** 3 by default (`stet.historyRoundsPerFile`, also under View options: 1, 3, 5, 10 or all). *Show older rounds* at the end of a file shows more.
 
 Also:
+- A typesetter's `locate` also gets the document's root file, and a preview environment can say what building its image downloads (`download`); both optional, so existing profiles work as before.
 - Profiles can say their files are *incidental* (detected as the project's language only when no other language has files), that front ends render them (`renderer`), and which nesting counts go modulo 2 (`nestingParity`).
 
 ## 0.19.0 — 2026-11-24
