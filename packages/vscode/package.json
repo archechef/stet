@@ -459,6 +459,40 @@
         "icon": "$(diff-multiple)"
       },
       {
+        "command": "stet.acceptFile",
+        "title": "Accept all changes in this file",
+        "category": "Stet",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "stet.rejectFile",
+        "title": "Reject all changes in this file…",
+        "category": "Stet",
+        "icon": "$(close-all)"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.groupBy.round",
+        "title": "Group changes by round",
+        "toggled": "config.stet.groupBy == 'round'"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.groupBy.file",
+        "title": "Group changes by file",
+        "toggled": "config.stet.groupBy == 'file'"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.historyRoundsPerFile",
+        "title": "History by file: rounds per file…"
+      },
+      {
+        "category": "Stet",
+        "command": "stet.showOlderRounds",
+        "title": "Show older rounds"
+      },
+      {
         "command": "stet.reviewAccept",
         "title": "Accept (from the review)",
         "category": "Stet"
@@ -623,6 +657,11 @@
           "group": "3_view@3"
         },
         {
+          "command": "stet.reviewFile",
+          "when": "view == stet.review && viewItem =~ /^file\\.live/",
+          "group": "3_view@3"
+        },
+        {
           "command": "stet.showItem",
           "when": "view == stet.review && viewItem =~ /^item/",
           "group": "3_view@4"
@@ -669,22 +708,22 @@
         },
         {
           "command": "stet.acceptGroup",
-          "when": "view == stet.review && viewItem =~ /^(group|part)\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part|file)\\.live/",
           "group": "inline@1"
         },
         {
           "command": "stet.rejectGroup",
-          "when": "view == stet.review && viewItem =~ /^(group|part)\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part|file)\\.live/",
           "group": "inline@2"
         },
         {
           "command": "stet.acceptGroup",
-          "when": "view == stet.review && viewItem =~ /^(group|part|changeset)\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part|changeset|file)\\.live/",
           "group": "1_decide@1"
         },
         {
           "command": "stet.rejectGroup",
-          "when": "view == stet.review && viewItem =~ /^(group|part|changeset)\\.live/",
+          "when": "view == stet.review && viewItem =~ /^(group|part|changeset|file)\\.live/",
           "group": "1_decide@2"
         },
         {
@@ -761,6 +800,18 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "stet.showOlderRounds",
+          "when": "false"
+        },
+        {
+          "command": "stet.acceptFile",
+          "when": "stet.fileHasChanges"
+        },
+        {
+          "command": "stet.rejectFile",
+          "when": "stet.fileHasChanges"
+        },
         {
           "command": "stet.previewRendered",
           "when": "false"
@@ -863,9 +914,31 @@
           "command": "stet.reviewFile",
           "when": "resourceScheme == file && stet.fileHasChanges",
           "group": "stet@1"
+        },
+        {
+          "command": "stet.acceptFile",
+          "when": "resourceScheme == file && stet.fileHasChanges",
+          "group": "stet@2"
+        },
+        {
+          "command": "stet.rejectFile",
+          "when": "resourceScheme == file && stet.fileHasChanges",
+          "group": "stet@3"
         }
       ],
       "stet.viewOptions": [
+        {
+          "command": "stet.groupBy.round",
+          "group": "0_group@1"
+        },
+        {
+          "command": "stet.groupBy.file",
+          "group": "0_group@2"
+        },
+        {
+          "command": "stet.historyRoundsPerFile",
+          "group": "0_group@3"
+        },
         {
           "command": "stet.toggleInlineChanges",
           "group": "1_editor@1"
@@ -1064,6 +1137,25 @@
           "type": "boolean",
           "default": true,
           "description": "After you accept, reject, edit or request a revision of a change, select the next pending change and show it."
+        },
+        "stet.groupBy": {
+          "type": "string",
+          "enum": [
+            "round",
+            "file"
+          ],
+          "default": "round",
+          "enumDescriptions": [
+            "Each agent's changes by round, then by group: as the agent proposed them.",
+            "Each agent's changes by file, in the order they come in the file, rounds merged. A file's Accept all and Reject all ask first about changes linked with other files."
+          ],
+          "description": "How the Review panel and History group each agent's changes."
+        },
+        "stet.historyRoundsPerFile": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "markdownDescription": "History grouped by file (`#stet.groupBy#`): how many of a file's latest rounds it shows; the older ones are a click away (*Show older rounds*). `0`: all."
         },
         "stet.navigationOrder": {
           "type": "string",

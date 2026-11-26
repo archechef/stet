@@ -183,6 +183,8 @@ describe("the menus' when clauses and the rows' contextValue (code quality repor
     out.add(contextValueOf({ type: "agent", agent: { ...agent, state: "archived" } }, model({})));
     for (const state of ["open", "resolved"] as const) out.add(contextValueOf({ type: "note", note: { state } as Note }, model({})));
     out.add(contextValueOf({ type: "notes", agent }, model({})));
+    out.add(contextValueOf({ type: "file", agent, file: "main.tex" }, model({})));
+    out.add(contextValueOf({ type: "older", agent, file: "main.tex", rounds: 1, changes: 1, hidden: 1 }, model({})));
     for (const status of ["pending", "accepted"] as const) {
       const items = ["1.1", "1.2"].map((i) => item(i, { status, groups: ["G1"] }));
       for (const kind of ["linked", "related", "atomic"] as const) {
@@ -207,7 +209,7 @@ describe("the menus' when clauses and the rows' contextValue (code quality repor
 
   it("makes values of the documented form", () => {
     const form =
-      /^(agent\.active\.notify-(now|batched|off)|agent\.archived|note\.(open|resolved)|notes|changeset\.(live|done)|group\.(live|done)\.(linked|related|atomic)|part\.(live|done)|item\.live\.[a-z-]+(\.pdf|\.rendered)?|item\.done\.[a-z-]+(\.pdf)?(\.undo)?)$/;
+      /^(agent\.active\.notify-(now|batched|off)|agent\.archived|note\.(open|resolved)|notes|changeset\.(live|done)|group\.(live|done)\.(linked|related|atomic)|part\.(live|done)|item\.live\.[a-z-]+(\.pdf|\.rendered)?|item\.done\.[a-z-]+(\.pdf)?(\.undo)?|file\.(live|done)|older)$/;
     for (const v of values) expect(v).toMatch(form);
     expect(values).toContain("item.done.modify.pdf.undo");
     expect(values).toContain("item.live.modify");

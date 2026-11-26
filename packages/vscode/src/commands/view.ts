@@ -4,7 +4,7 @@ import { announce } from "../announce.js";
 import { usesHints } from "../editor.js";
 import type { StetExtension } from "../extension.js";
 import { offerContrastStyle } from "../questions.js";
-import type { Settings } from "../settings.js";
+import { type Settings, setting } from "../settings.js";
 
 /**
  * Green for Stet's proposed text in word-wrapped editors. Inlay hints can't be coloured per hint,
@@ -53,6 +53,20 @@ export class ViewOptions {
     const i = conf.inspect(key);
     const target = i?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
     await conf.update(key, value, target);
+  }
+
+  /** *History: rounds per file…*: how many of a file's latest rounds History shows, grouped by file. */
+  async pickHistoryRounds(): Promise<void> {
+    const now = setting("historyRoundsPerFile");
+    const picks = [1, 3, 5, 10, 0].map((n) => ({
+      label: `${n === now ? "$(check) " : ""}${n ? `The latest ${n === 1 ? "round" : `${n} rounds`}` : "All rounds"}`,
+      n,
+    }));
+    const pick = await vscode.window.showQuickPick(picks, {
+      title: "History grouped by file: rounds shown per file",
+      placeHolder: "A file's older rounds stay one click away (Show older rounds)",
+    });
+    if (pick) await this.setOption("historyRoundsPerFile", pick.n);
   }
 
   /**

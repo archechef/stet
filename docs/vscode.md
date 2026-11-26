@@ -109,6 +109,10 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
   - ▣ **related:** changes on the same theme, which you can accept or reject in one go.
   - The tag *auto* means Stet detected the group itself. *broken* means the group was resolved inconsistently, and the agent has been asked to repair the document.
 - **Change** (`1.2`: round 1, change 2): a single edit, located at `file:line` in your current text. In the panel it shows its number within the round.
+
+**Grouped by file** (**View options → Group changes by file**, `stet.groupBy`): **agent → file → change** instead, with each agent's rounds merged. Each file lists its changes in the order they come in the file, and each change says its line, round and group (*line 12 · round 3 · G2 linked*). Groups are not rows of their own here, but accepting a linked change still asks what to take along.
+- A file's row has **✓ Accept all** and **✗ Reject all** (buttons and right-click), and **Review file**. The editor's right-click menu and the Command Palette have the same for the file you're in: *Accept all changes in this file*, *Reject all changes in this file…* (when several agents have changes there, you pick one).
+- When some of the file's changes are linked with changes in other files (a linked group or a move across files), Stet asks first. You can take the changes in the other files along (**Accept all 7, with those in refs.bib**), or decide only the changes that stand alone (**Accept only the 5 without links elsewhere**). A change stands alone when everything it must be decided with is in this file: its move, and its linked group or the part of it. The linked ones stay pending. Without such links it asks only as for a round (*Accept all 4 changes in main.tex?*).
   - Icons show its status: pending, *revision requested*, accepted, rejected, stale.
   - Selecting a change shows it in the editor. Ctrl/Shift+click selects several: **Accept** and **Reject…** (buttons, right-click, `a`, `r`) then decide them together, with one reason for a rejection. If they are linked with changes you didn't select, Stet asks whether to take those along.
   - **⚠ takes effect:** a file that a build, git, VS Code or an AI agent runs or reads once accepted (`.latexmkrc`, `.vscode/settings.json`, `CLAUDE.md`, …). Its hover says what it sets off and shows its content; accepting it asks you to confirm.
@@ -131,7 +135,8 @@ The panel is a tree: **agent → round → group → change.** It shows only wha
 - **View options** (gear): everything you may want to switch while you work, with a checkmark at the current choice:
   - changes inline in the editor, actions above changes (CodeLens), going to the next change after deciding, what the left side of a diff shows;
   - how new text is drawn (by word wrap, highlighted, or wrapping), and whether wrapping text is green too (see 4.2);
-  - how long changes are shown, which of your edits agents see, and where PDF previews appear.
+  - how long changes are shown, which of your edits agents see, and where PDF previews appear;
+  - whether changes are grouped by round or by file, and how many rounds per file History shows.
   
   They are the settings of §9, so the Settings editor shows the same values. Settings you choose once (such as `stet.runtime`) are only there.
 - `…` menu: **New agent workspace**, **Refresh** (reloads the panel and rewrites the active agents' instructions, tool configuration and guardrails, e.g. after you updated Stet; agent sessions read them when they start, so restart running ones), **Set up PDF previews**, **Check setup**, **Set up project**, **Import language profile…** (a trusted local profile for another language, from your profile library or a file; for a file it warns that the profile is code, asks whether it is the project's language, and offers its build files for `.gitignore`; Stet then starts by itself in that project).
@@ -145,6 +150,7 @@ The **History** view (under Review in the Stet sidebar; click its title to open 
 - **Where changes open:** going to a change (or a note, or a diff) uses the editor group that already has its file open, even when another one has the focus. Otherwise it opens in the active group, unless that shows the PDF preview: then in a group showing text, or beside it.
 - **Undo** (the ↶ button): the change is pending again, and the agent is told. Undoing an accept takes the change out of your file again, and changes the accept had made stale are pending again too. A change decided together with others (a linked group, a move) is undone with them. A revision request the agent hasn't answered yet can be taken back too. A rejection is undone only while the change can still be applied: if your file changed where it was, or the agent has proposed something else for the same text since (reject or withdraw that first), Stet says so and nothing is undone. You can undo an accept until you **Finish review**; after that it is in git's history, and its diff still shows here.
 - A round that is partly decided appears in both views: its open changes under Review, the decided ones under History.
+- **Grouped by file** (`stet.groupBy`): agent → file → change, each file closed by default. A file shows the changes of its latest rounds, the newest first: 3 by default, as **View options → History by file: rounds per file…** (`stet.historyRoundsPerFile`) sets, from 1 to all. These are the latest rounds that changed that file, not the project's latest rounds. A row at the end, **Show 3 older rounds**, shows that file's next older rounds.
 - **Resolved notes** are listed under their agent in a **Notes** row, collapsed until you open it, with their replies in the tooltip. **Reopen note** opens one again; the agent is told.
 
 ### 4.2 In the editor
@@ -346,6 +352,8 @@ Most of these can also be switched from the panel's **View options** (§4.1).
 |---|---|---|
 | `stet.codeLens` | `true` | Actions above each proposed change. |
 | `stet.autoAdvance` | `true` | After a decision on a change, select the next pending change and show it. |
+| `stet.groupBy` | `round` | How the panel and History group each agent's changes: `round` (round → group → change) or `file` (file → change, rounds merged; see *Grouped by file*). |
+| `stet.historyRoundsPerFile` | `3` | History grouped by file: how many of a file's latest rounds it shows; the older ones are one click away. `0`: all. |
 | `stet.navigationOrder` | `panel` | The order `j`/`k` go through changes: `panel` (as the panel lists them, by agent, round and group) or `document` (by file and line). |
 | `stet.diffShowsProposals` | `false` | In Diff and Review file, your file itself on the left (editable, with the proposals in it) instead of your text as it is, read-only. |
 | `stet.inlineChanges` | `true` | Strike-through and the new text in the editor. With word wrap on, the new text wraps with the line. VS Code can't show line breaks inline (⏎ marks them); the panel under a long change shows its text in full. Stet sets VS Code's `editor.inlayHints.maximumLength` to no limit for LaTeX, BibTeX, Typst, Lean, Markdown and plain-text files; where a limit holds, Stet shortens the text to it and shows it in full as `stet.longChanges` says. If your settings hide inline text, Stet says so once and offers to fix them for that language. |

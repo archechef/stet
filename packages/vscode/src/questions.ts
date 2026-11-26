@@ -94,6 +94,33 @@ export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what
   return `${verb} all ${s.count} changes of ${s.what}?`;
 }
 
+/**
+ * What to ask before deciding all of a file's changes: nothing for one change alone; with changes
+ * linked with others in other files, whether to take those along or to decide only the file's
+ * changes that stand alone (`alone`: how many). Null: just do it.
+ */
+export function fileQuestion(
+  verb: "Accept" | "Reject",
+  s: { file: string; count: number; alone: number; outside: { id: string; file: string }[] },
+): { message: string; detail?: string; choices: { label: string; take: "all" | "alone" }[] } | null {
+  const done = `${verb.toLowerCase()}ed`;
+  if (!s.outside.length)
+    return s.count < 2 ? null : { message: `${verb} all ${s.count} changes in ${s.file}?`, choices: [{ label: `${verb} all`, take: "all" }] };
+  const linked = s.count - s.alone;
+  const files = [...new Set(s.outside.map((o) => o.file))];
+  return {
+    message: `${verb} all changes in ${s.file}?`,
+    detail:
+      `${linked === s.count ? (s.count === 1 ? "Its change is" : `All ${s.count} of its changes are`) : `${linked} of its ${s.count} changes ${linked === 1 ? "is" : "are"}`} ` +
+      `linked with ${plural(s.outside.length, "change")} in ${files.join(", ")} (${s.outside.map((o) => o.id).join(", ")}), which must be ${done} with ${linked === 1 ? "it" : "them"}.` +
+      (s.alone ? ` The other ${s.alone} can be ${done} on ${s.alone === 1 ? "its" : "their"} own.` : ""),
+    choices: [
+      { label: `${verb} all ${s.count + s.outside.length}, with those in ${files.length === 1 ? files[0] : "other files"}`, take: "all" },
+      ...(s.alone ? [{ label: `${verb} only the ${s.alone} without links elsewhere`, take: "alone" as const }] : []),
+    ],
+  };
+}
+
 /** The question before dissolving a group, or null: a linked group's changes can then be decided apart, which can break the document. */
 export function dissolveQuestion(g: { id: string; kind: string; title: string }): string | null {
   if (g.kind === "linked")

@@ -10,6 +10,7 @@ export const LONG_MODES = ["expanded", "collapsed", "hover"] as const;
 export const NEW_TEXT_STYLES = ["auto", "highlighted", "wrapping"] as const;
 export const RUNTIME_MODES = ["auto", "node", "vscode"] as const;
 export const PREVIEW_PLACES = ["both", "hover", "panel", "off"] as const;
+export const GROUP_BY = ["round", "file"] as const;
 
 /** The values a setting with a fixed list of them may take. */
 export const CHOICES = {
@@ -19,6 +20,7 @@ export const CHOICES = {
   runtime: RUNTIME_MODES,
   shareEdits: SHARE_MODES,
   pdfPreviews: PREVIEW_PLACES,
+  groupBy: GROUP_BY,
 } as const;
 
 type Choice<K extends keyof typeof CHOICES> = (typeof CHOICES)[K][number];
@@ -36,6 +38,10 @@ export type Settings = {
   runtime: Choice<"runtime">;
   shareEdits: Choice<"shareEdits">;
   pdfPreviews: Choice<"pdfPreviews">;
+  /** The Review panel and History: changes by round, or by file. */
+  groupBy: Choice<"groupBy">;
+  /** History by file: the latest rounds shown per file; 0: all. */
+  historyRoundsPerFile: number;
 };
 
 export const DEFAULTS: Readonly<Settings> = {
@@ -50,6 +56,8 @@ export const DEFAULTS: Readonly<Settings> = {
   runtime: "auto",
   shareEdits: "manual",
   pdfPreviews: "both",
+  groupBy: "round",
+  historyRoundsPerFile: 3,
 };
 
 /** The settings that are on or off (View options toggles them). */

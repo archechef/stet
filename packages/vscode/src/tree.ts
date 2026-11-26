@@ -1,4 +1,5 @@
 /** The Review panel and the History view: their rows, their order, moving through them, and the panel's filter. */
+import { join } from "node:path";
 import { foldPath, type Item, isLiveItem, parsePartId, partId } from "@stet/core";
 import * as vscode from "vscode";
 import type { El } from "./common.js";
@@ -27,6 +28,10 @@ function elId(el: El): string {
       return `${p}|group|${n.group.id}`;
     case "part":
       return `${p}|part|${partId(n.group.id, n.index)}`;
+    case "file":
+      return `${p}|file|${n.agent.id}|${n.file}`;
+    case "older":
+      return `${p}|older|${n.agent.id}|${n.file}`;
     case "item":
       return `${p}|${n.parent}|${n.item.id}`;
   }
@@ -103,7 +108,15 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
       }
       case "part":
         return { project: p, node: { type: "group", group: n.group } };
+      case "file":
+        return { project: p, node: { type: "agent", agent: n.agent } };
+      case "older":
+        return { project: p, node: { type: "file", agent: n.agent, file: n.file } };
       case "item": {
+        if (n.parent.startsWith("file|")) {
+          const agent = snap.agents.find((a) => a.id === n.item.agent);
+          return agent && { project: p, node: { type: "file", agent, file: n.item.file } };
+        }
         const pid = parsePartId(n.parent);
         const owner = snap.groups.find((g) => g.id === (pid ? pid.group : n.parent));
         if (owner && pid) return { project: p, node: { type: "part", group: owner, index: pid.index } };
@@ -244,6 +257,12 @@ export class ReviewTree implements vscode.TreeDataProvider<El> {
     t.contextValue = row.contextValue;
     if (row.spoken) t.accessibilityInformation = { label: row.spoken };
     if (n.type === "note") t.command = { command: "stet.showNote", title: "Go to note", arguments: [el] };
+    // A file's row shows the file's icon in your icon theme.
+    if (n.type === "file") {
+      t.resourceUri = vscode.Uri.file(join(el.project.mainPath, n.file));
+      t.iconPath = vscode.ThemeIcon.File;
+    }
+    if (n.type === "older") t.command = { command: "stet.showOlderRounds", title: "Show older rounds", arguments: [el] };
     // Decided changes open as a diff of the change itself; open ones are shown in the file.
     if (n.type === "item")
       t.command = history

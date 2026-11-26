@@ -10,13 +10,24 @@ import type { StetExtension } from "../extension.js";
 import { fromPanel, type Ref } from "../model.js";
 import { previewPlace } from "../preview.js";
 import type { Project } from "../project.js";
-import { bulkQuestion, dissolveQuestion, FINISH_SAVE, failedAcceptActions, finishQuestion, manyQuestion } from "../questions.js";
+import { bulkQuestion, dissolveQuestion, FINISH_SAVE, failedAcceptActions, fileQuestion, finishQuestion, manyQuestion } from "../questions.js";
 import { ReviewFiles } from "../review.js";
 import { actionsTitle } from "../rows.js";
 import { editedPart, editFrame, noLinks, oneLine, toLf } from "../text.js";
 
 /** Longest change (one line) edited in an input box; that box shows about this many characters. */
 const SHORT_EDIT = 80;
+
+/** What Accept all / Reject all act on: a group's, part's, round's or file's pending changes. */
+interface DecisionScope {
+  project: Project;
+  ids: string[];
+  what: string;
+  changeset: boolean;
+  linked: boolean;
+  /** A file's changes (the panel grouped by file). */
+  file?: string;
+}
 
 export class ReviewCommands {
   constructor(private readonly ext: StetExtension) {}
@@ -37,6 +48,11 @@ export class ReviewCommands {
     if (arg instanceof vscode.Uri) {
       p = this.ext.projectFor(arg);
       file = p?.relPath(arg);
+    } else if (arg && typeof arg === "object" && (arg as { node?: { type?: string } }).node?.type === "file") {
+      // A file's row (the panel grouped by file).
+      const row = arg as { project: { mainPath: string }; node: { file: string } };
+      p = this.ext.allProjects().find((x) => x.mainPath === row.project.mainPath);
+      file = row.node.file;
     } else if (arg !== undefined) {
       const t = await this.ext.targetItem(arg);
       if (t) [p, file] = [t.project, t.item.file];
@@ -314,7 +330,7 @@ export class ReviewCommands {
    * The pending changes a group, a changeset, or a change's group stands for (Accept all /
    * Reject all). Tells the user and returns undefined when there is nothing to act on.
    */
-  private async scope(arg: unknown): Promise<{ project: Project; ids: string[]; what: string; changeset: boolean; linked: boolean } | undefined> {
+  private async scope(arg: unknown): Promise<DecisionScope | undefined> {
     const t = await this.ext.target(arg);
     if (!t?.node) return undefined;
     const p = t.project;
@@ -344,6 +360,15 @@ export class ReviewCommands {
         ? { project: p, ids, what: `${n.group.id} “${n.group.title}”`, changeset: false, linked: n.group.kind === "linked" }
         : void vscode.window.showInformationMessage(`Nothing pending in ${n.group.id}.`);
     }
+    if (n.type === "file") {
+      const ids = model
+        .inFile(n.agent.id, n.file)
+        .filter((i) => i.status === "pending")
+        .map((i) => i.id);
+      return ids.length
+        ? { project: p, ids, what: n.file, changeset: false, linked: false, file: n.file }
+        : void vscode.window.showInformationMessage(`Nothing of ${n.agent.id}'s is waiting for you in ${n.file}.`);
+    }
     if (n.type === "changeset") {
       const cs = n.changeset;
       const ids = pendingInRound(p.snapshot.items, cs.id).map((i) => i.id);
@@ -357,6 +382,7 @@ export class ReviewCommands {
   async acceptAll(arg: unknown): Promise<void> {
     const s = await this.scope(arg);
     if (!s) return;
+    if (s.file) return this.decideScopeOfFile("Accept", { ...s, file: s.file }, fromPanel(arg));
     let ids = s.ids;
     if (s.changeset)
       ids = [
@@ -421,9 +447,71 @@ export class ReviewCommands {
     else announce(`$(close) ${what}`, 4000);
   }
 
+  /**
+   * *Accept (Reject) all changes in this file*, from the editor: the file's pending changes, of the
+   * agent you pick when several have some there.
+   */
+  async decideFile(verb: "Accept" | "Reject", arg: unknown): Promise<void> {
+    const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+    const p = uri && this.ext.projectFor(uri);
+    const file = p && uri ? p.relPath(uri) : null;
+    if (!p || !file) return void vscode.window.showInformationMessage("Open a file of a Stet project first.");
+    const pending = p.snapshot.items.filter((i) => i.file === file && i.status === "pending");
+    const agents = [...new Set(pending.map((i) => i.agent))].sort();
+    if (!agents.length) return void vscode.window.showInformationMessage(`${file} has no changes waiting for you.`);
+    let agent = agents[0]!;
+    if (agents.length > 1) {
+      // Agents' changes can overlap: one agent's at a time.
+      const pick = await vscode.window.showQuickPick(
+        agents.map((a) => ({ label: a, description: plural(pending.filter((i) => i.agent === a).length, "change") })),
+        { title: `${verb} all changes in ${file} of which agent?` },
+      );
+      if (!pick) return;
+      agent = pick.label;
+    }
+    const ids = pending.filter((i) => i.agent === agent).map((i) => i.id);
+    await this.decideScopeOfFile(verb, { project: p, ids, what: file, changeset: false, linked: false, file }, false);
+  }
+
+  /**
+   * All pending changes of one agent in a file: with the changes in other files they are linked
+   * with, or (asked first) only those that stand alone.
+   */
+  private async decideScopeOfFile(verb: "Accept" | "Reject", s: DecisionScope & { file: string }, panel: boolean): Promise<void> {
+    const p = s.project;
+    const model = this.ext.model(p);
+    const rest = model.linkedRest(s.ids);
+    const outside = rest.filter((r) => r.file !== s.file);
+    const alone = outside.length ? model.standAlone(s.ids, s.file) : s.ids;
+    const q = fileQuestion(verb, { file: s.file, count: s.ids.length, alone: alone.length, outside: outside.map((o) => ({ id: o.id, file: o.file })) });
+    let ids = [...s.ids, ...rest.map((r) => r.id)];
+    if (q) {
+      const labels = q.choices.map((c) => c.label);
+      const pick = await vscode.window.showWarningMessage(q.message, { modal: true, ...(q.detail ? { detail: q.detail } : {}) }, ...labels);
+      const choice = q.choices.find((c) => c.label === pick);
+      if (!choice) return;
+      if (choice.take === "alone") ids = alone;
+    }
+    if (verb === "Accept") return this.ext.panel.decide(p, ids[0]!, panel, () => this.doAccept(p, ids));
+    const reason = await this.reason(`Reject ${plural(ids.length, "change")} in ${s.file}`);
+    if (reason === undefined) return;
+    await this.ext.panel.decide(p, ids[0]!, panel, () =>
+      this.ext.run(p, async () => {
+        const r = await p.stet.reject(ids, { ...(reason ? { reason } : {}), mode: "all" });
+        this.ext.undos.noteDecision(
+          p,
+          r.map((i) => i.id),
+          "rejection",
+        );
+        this.rejected(p, r);
+      }),
+    );
+  }
+
   async rejectAll(arg: unknown): Promise<void> {
     const s = await this.scope(arg);
     if (!s) return;
+    if (s.file) return this.decideScopeOfFile("Reject", { ...s, file: s.file }, fromPanel(arg));
     const ask = bulkQuestion("Reject", { ...s, count: s.ids.length });
     if (ask && (await vscode.window.showWarningMessage(ask, { modal: true }, "Reject all")) !== "Reject all") return;
     const reason = await this.reason(`Reject all ${s.ids.length} changes of ${s.what}`);

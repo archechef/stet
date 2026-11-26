@@ -8,6 +8,14 @@
 - **Links are linked with what they point to.** A renamed heading is linked with the `#anchor` links to it, in the file and in others ("Rename heading anchor #getting-started → #installation"). The same goes for a reference definition (`[docs]: …`) and its links, a footnote and its marks, and a new image or page and the link that shows it.
 - **A project of Markdown alone is a Markdown project:** agents get Markdown examples. A README doesn't change a LaTeX, Typst or Lean project's language.
 - **In VS Code, a Markdown change shows rendered.** **Rendered preview** (`p` in the panel) shows the block around the change after and before, as VS Code's Markdown preview renders it, with the change highlighted. New images come from the agent's workspace. There is nothing to compile or set up; the CLI has no preview for Markdown.
+
+**Changes by file in VS Code.**
+
+- **View options → Group changes by file** (`stet.groupBy`) lists each agent's changes as agent → file → change, rounds merged, in the order they come in the file. Each change says its line, round and group.
+- **A file's row has Accept all and Reject all,** and the editor's right-click menu has *Accept all changes in this file* and *Reject all changes in this file…*. When some of its changes are linked with changes in other files, Stet asks whether to take those along or to decide only the changes that stand alone; the linked ones stay pending.
+- **History by file shows each file's latest rounds,** 3 by default (`stet.historyRoundsPerFile`, also under View options: 1, 3, 5, 10 or all). *Show older rounds* at the end of a file shows more.
+
+Also:
 - Profiles can say their files are *incidental* (detected as the project's language only when no other language has files), that front ends render them (`renderer`), and which nesting counts go modulo 2 (`nestingParity`).
 
 ## 0.19.0 — 2026-11-24

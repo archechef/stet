@@ -861,6 +861,39 @@ exports.run = async function run() {
       },
     ],
     [
+      "grouped by file",
+      async () => {
+        // View options → Group changes by file: agent → file → changes; a file's Accept all accepts its changes.
+        const { tree } = ext.exports;
+        await vscode.commands.executeCommand("stet.groupBy.file");
+        const rows = await until(
+          "file rows",
+          () => {
+            const [agentRow] = tree.getChildren();
+            const files = agentRow ? tree.getChildren(agentRow).filter((r) => r.node?.type === "file") : [];
+            return files.length ? files : null;
+          },
+          10000,
+        ).catch(() => []);
+        check("grouped by file, an agent's rows are its files", rows.length > 0, JSON.stringify(rows.map((r) => r.node?.file)));
+        const row = rows.find((r) => tree.getChildren(r).some((c) => c.node?.item?.status === "pending"));
+        if (row) {
+          const pending = tree
+            .getChildren(row)
+            .filter((c) => c.node?.item?.status === "pending")
+            .map((c) => c.node.item.id);
+          const t = await tree.getTreeItem(row);
+          check("a file's row offers Accept all", t.contextValue === "file.live", t.contextValue);
+          if (pending.length === 1) {
+            await vscode.commands.executeCommand("stet.acceptGroup", row);
+            const done = await until("accepted", () => statusOf(pending[0]) === "accepted", 15000).catch(() => false);
+            check(`Accept all on ${row.node.file}'s row accepts its change`, done, pending.join(","));
+          }
+        } else check("a file still has a pending change to accept", false, JSON.stringify(rows.map((r) => r.node?.file)));
+        await vscode.commands.executeCommand("stet.groupBy.round");
+      },
+    ],
+    [
       "every command in package.json is registered",
       async () => {
         const allCommands = await vscode.commands.getCommands(true);

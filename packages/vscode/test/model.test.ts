@@ -78,7 +78,9 @@ const ids = (nodes: Node[]) =>
               ? n.note.id
               : n.type === "notes"
                 ? `notes:${n.agent.id}`
-                : n.item.id,
+                : n.type === "item"
+                  ? n.item.id
+                  : n.type,
   );
 
 describe("tree model", () => {

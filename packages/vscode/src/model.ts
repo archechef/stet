@@ -19,6 +19,7 @@ import {
   partId,
   partIndexOf,
   profileByName,
+  roundOf,
 } from "@stet/core";
 import { noLinks, STATUS_TEXT } from "./text.js";
 
@@ -49,8 +50,27 @@ export type Node =
   | { type: "group"; group: Group }
   /** A part of a linked group (spec §6.4.6), accepted or rejected on its own. */
   | { type: "part"; group: Group; index: number }
-  /** `parent`: the changeset, group or part id the item is shown under. */
+  /** An agent's changes to one file (grouped by file, setting stet.groupBy). */
+  | { type: "file"; agent: Agent; file: string }
+  /** History grouped by file: the file's older rounds, not shown yet (setting stet.historyRoundsPerFile). */
+  | { type: "older"; agent: Agent; file: string; rounds: number; changes: number; hidden: number }
+  /** `parent`: the changeset, group or part id the item is shown under; `file|<path>` under a file. */
   | { type: "item"; item: Item; parent: string };
+
+/** How the trees group changes (settings stet.groupBy and stet.historyRoundsPerFile). */
+export interface TreeView {
+  /** By round (agent → round → group → change), or by file (agent → file → change). */
+  groupBy: "round" | "file";
+  /** History by file: the latest rounds shown per file (0: all of them). */
+  roundsPerFile: number;
+  /** How many more rounds a file shows in History (after *Show older rounds*). */
+  more(agent: string, file: string): number;
+}
+
+export const ROUND_VIEW: TreeView = { groupBy: "round", roundsPerFile: 0, more: () => 0 };
+
+/** The parent id of a change shown under its file. */
+export const fileParent = (file: string) => `file|${file}`;
 
 /**
  * An item or group id together with its project, as passed by CodeLens and hover links.
@@ -161,6 +181,8 @@ export class TreeModel {
     public filter: PanelFilter | null = null,
     readonly profile = profileByName,
     readonly effect: (item: Item) => string | null = itemEffect,
+    /** How the tree groups changes; read on each call, so a setting's change shows at the next redraw. */
+    readonly view: () => TreeView = () => ROUND_VIEW,
   ) {
     for (const i of snap.items) this.items.set(i.id, i);
     for (const g of snap.groups) this.groups.set(g.id, g);
@@ -254,11 +276,14 @@ export class TreeModel {
           // Resolved notes, with their replies, in History (they vanished from VS Code): in one row
           // of their own, which folds away like a round.
           ...(this.resolvedNotes(node.agent.id).length ? [{ type: "notes", agent: node.agent } as Node] : []),
-          ...this.snap.changesets
-            .filter((c) => c.agent === node.agent.id && this.csVisible(c))
-            .sort((a, b) => num(b.id) - num(a.id))
-            .map((changeset): Node => ({ type: "changeset", changeset })),
+          ...(this.view().groupBy === "file"
+            ? this.filesOf(node.agent.id).map((file): Node => ({ type: "file", agent: node.agent, file }))
+            : this.roundsOf(node.agent.id)),
         ];
+      case "file":
+        return this.fileChildren(node.agent, node.file);
+      case "older":
+        return [];
       case "note":
         return [];
       case "notes":
@@ -278,6 +303,67 @@ export class TreeModel {
       case "item":
         return [];
     }
+  }
+
+  /** An agent's rounds with something to show, the latest first. */
+  private roundsOf(agent: string): Node[] {
+    return this.snap.changesets
+      .filter((c) => c.agent === agent && this.csVisible(c))
+      .sort((a, b) => num(b.id) - num(a.id))
+      .map((changeset): Node => ({ type: "changeset", changeset }));
+  }
+
+  /** The files an agent's shown changes are in, by path. */
+  filesOf(agent: string): string[] {
+    return [...new Set(this.snap.items.filter((i) => i.agent === agent && this.visible(i)).map((i) => i.file))].sort((a, b) => a.localeCompare(b));
+  }
+
+  /** An agent's shown changes to a file, in all rounds. */
+  inFile(agent: string, file: string): Item[] {
+    return this.snap.items.filter((i) => i.agent === agent && i.file === file && this.visible(i));
+  }
+
+  /**
+   * A file's changes: in review, all of them in the order they come in the file; in History, those
+   * of its latest rounds (stet.historyRoundsPerFile), the latest first, then a row for the older ones.
+   */
+  private fileChildren(agent: Agent, file: string): Node[] {
+    const items = this.inFile(agent.id, file);
+    const inOrder = (xs: Item[]) =>
+      [...xs].sort((a, b) => (a.kind === "modify" ? a.range.start : -1) - (b.kind === "modify" ? b.range.start : -1) || byId(a, b));
+    const node = (item: Item): Node => ({ type: "item", item, parent: fileParent(file) });
+    if (this.mode === "review") return inOrder(items).map(node);
+    const rounds = [...new Set(items.map((i) => i.changeset))].sort((a, b) => num(b) - num(a));
+    const per = this.view().roundsPerFile;
+    const shown = per ? per + this.view().more(agent.id, file) : rounds.length;
+    const out = rounds.slice(0, shown).flatMap((cs) => inOrder(items.filter((i) => i.changeset === cs)).map(node));
+    const older = rounds.slice(shown);
+    if (!older.length) return out;
+    const step = Math.min(per || 3, older.length);
+    return [
+      ...out,
+      {
+        type: "older",
+        agent,
+        file,
+        rounds: step,
+        changes: items.filter((i) => older.slice(0, step).includes(i.changeset)).length,
+        hidden: older.length,
+      },
+    ];
+  }
+
+  /** The round of a change, as the panel says it: "round 3". */
+  roundText(item: Item): string {
+    return `round ${roundOf(item.changeset)}`;
+  }
+
+  /**
+   * Of `ids` (changes in `file`), those accepted or rejected with nothing outside the file: no
+   * part of their move or linked group (or part) is in another file.
+   */
+  standAlone(ids: string[], file: string): string[] {
+    return ids.filter((id) => this.linkedRest([id]).every((r) => r.file === file));
   }
 
   /** Resolved notes for an agent, shown in History only. */

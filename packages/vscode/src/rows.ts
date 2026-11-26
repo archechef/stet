@@ -171,8 +171,14 @@ export function itemRow(
   opts: { history: boolean; unread: number },
 ): { label: string; description: string; spoken: string; lost: boolean; contextValue: string } {
   const lost = !place.found && !opts.history;
+  // Under its file (stet.groupBy "file"): the line, and the round and group the file row doesn't say.
+  const byFile = model.view().groupBy === "file";
+  const group = it.groups.map((g) => model.group(g)).find((g) => g && g.kind !== "atomic");
+  const where = byFile
+    ? `${lost ? "⚠ not found" : it.kind === "modify" ? `line ${place.line}` : ""}`
+    : `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${place.line}` : ""}`;
   const description =
-    `${lost ? "⚠ not found in " : ""}${it.file}${it.kind === "modify" && !lost ? `:${place.line}` : ""}` +
+    [where, ...(byFile ? [model.roundText(it), ...(group ? [`${group.id} ${group.kind}`] : [])] : [])].filter(Boolean).join(" · ") +
     `${it.status === "pending" ? "" : ` · ${STATUS_TEXT[it.status]}`}${it.draft !== undefined && isLiveItem(it) ? " · your wording" : ""}` +
     `${model.effect(it) ? " · ⚠ takes effect" : ""}${it.thread.length ? ` · ${threadText(it.thread.length, opts.unread)}` : ""}`;
   return {
@@ -227,8 +233,9 @@ export function statusView(s: {
  * - `changeset.live`, `changeset.done` (live: it has changes waiting)
  * - `group.live.<kind>`, `group.done.<kind>` (kind: linked, related, atomic)
  * - `part.live`, `part.done`
- * - `item.live.<kind>[.pdf]`, `item.done.<kind>[.pdf][.undo]` (kind: the item's; `.pdf`: it has a
- *   PDF preview; `.undo`: its decision can still be undone)
+ * - `item.live.<kind>[.pdf|.rendered]`, `item.done.<kind>[.pdf][.undo]` (kind: the item's; `.pdf`: it
+ *   has a PDF preview; `.rendered`: VS Code renders it; `.undo`: its decision can still be undone)
+ * - `file.live`, `file.done` (grouped by file; live: it has changes waiting), `older` (History's older rounds of a file)
  */
 export function contextValueOf(node: Node, model: TreeModel): string {
   switch (node.type) {
@@ -240,6 +247,10 @@ export function contextValueOf(node: Node, model: TreeModel): string {
       return "notes";
     case "changeset":
       return model.liveCount((i) => i.changeset === node.changeset.id) ? "changeset.live" : "changeset.done";
+    case "file":
+      return model.liveCount((i) => i.agent === node.agent.id && i.file === node.file) ? "file.live" : "file.done";
+    case "older":
+      return "older";
     case "group":
       return `group.${model.members(node.group).some(isLiveItem) ? "live" : "done"}.${node.group.kind}`;
     case "part":
@@ -360,6 +371,32 @@ export function rowView(node: Node, model: TreeModel, f: { history: boolean; unr
         expand: history ? "collapsed" : "expanded",
       };
     }
+    case "file": {
+      const { agent, file } = node;
+      const mine = (i: Item) => i.agent === agent.id && i.file === file;
+      const rounds = new Set(model.inFile(agent.id, file).map((i) => i.changeset)).size;
+      return {
+        label: file,
+        description: history ? model.outcome(mine) : model.openText(mine),
+        tooltip:
+          `**${esc(file)}**: ${history ? "decided" : "open"} changes of ${esc(agent.id)}, from ${plural(rounds, "round")}` +
+          (history
+            ? ""
+            : ", in the order they come in the file.\n\n*Accept all* and *Reject all* act on them all, and ask first about changes linked with other files."),
+        icon: { id: "file" },
+        contextValue,
+        expand: history ? "collapsed" : "expanded",
+      };
+    }
+    case "older":
+      return {
+        label: `Show ${plural(node.rounds, "older round")}`,
+        description: `${plural(node.changes, "change")}${node.hidden > node.rounds ? ` · ${node.hidden} older rounds in all` : ""}`,
+        tooltip: `${esc(node.file)} changed in ${plural(node.hidden, "older round")} too. Click to show ${node.rounds === 1 ? "the next one" : `the next ${node.rounds}`} (setting stet.historyRoundsPerFile).`,
+        icon: { id: "history" },
+        contextValue,
+        expand: "none",
+      };
     case "group": {
       const g = node.group;
       const move = model.isMove(g);

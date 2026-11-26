@@ -41,6 +41,7 @@ import {
   projectOfQuery,
   type TreeMode,
   TreeModel,
+  type TreeView,
 } from "./model.js";
 import { inPreviewCache, PreviewPanel, previewPlace } from "./preview.js";
 import { isRendered, PreviewCommands } from "./previews.js";
@@ -48,7 +49,7 @@ import { Project } from "./project.js";
 import { REVIEW_SCHEME, ReviewFiles, type ReviewHost } from "./review.js";
 import { itemLabel, statusView } from "./rows.js";
 import { cliCommand, installCli, isManaged } from "./runtime.js";
-import { LONG_MODES, NEW_TEXT_STYLES, PREVIEW_PLACES, setting, type Toggle } from "./settings.js";
+import { GROUP_BY, LONG_MODES, NEW_TEXT_STYLES, PREVIEW_PLACES, setting, type Toggle } from "./settings.js";
 import { SetupWizard } from "./setup.js";
 import { changeAt, changesAt, esc, noLinks, oneLine } from "./text.js";
 import { ReviewTree } from "./tree.js";
@@ -173,6 +174,11 @@ export class StetExtension implements Host, vscode.Disposable {
       vscode.workspace.onDidChangeWorkspaceFolders(() => void this.discover()),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("stet.runtime")) void this.applyRuntime();
+        if (e.affectsConfiguration("stet.groupBy") || e.affectsConfiguration("stet.historyRoundsPerFile")) {
+          this.olderShown.clear();
+          this.panel.treeChanged.fire(undefined);
+          this.panel.historyChanged.fire(undefined);
+        }
         if (e.affectsConfiguration("workbench.colorCustomizations")) void this.view.updateHighlightContext();
         // Only the projects whose setting changed: in a multi-root workspace each folder has its own.
         for (const p of this.projects.values()) if (e.affectsConfiguration("stet.shareEdits", vscode.Uri.file(p.mainPath))) void this.applyShareMode(p, true);
@@ -419,8 +425,31 @@ export class StetExtension implements Host, vscode.Disposable {
   model(p: Project, mode: TreeMode = "review"): TreeModel {
     const key = `${mode}|${p.mainPath}`;
     let m = this.models.get(key);
-    if (!m) this.models.set(key, (m = new TreeModel(p.snapshot, mode, mode === "review" ? this.panel.filter : null, p.profile, p.effect)));
+    if (!m)
+      this.models.set(key, (m = new TreeModel(p.snapshot, mode, mode === "review" ? this.panel.filter : null, p.profile, p.effect, () => this.treeView(p))));
     return m;
+  }
+
+  /** History by file: the extra rounds each file shows after *Show older rounds*, by project, agent and file. */
+  private olderShown = new Map<string, number>();
+
+  /** How the trees group changes (stet.groupBy, stet.historyRoundsPerFile). */
+  treeView(p: Project): TreeView {
+    const per = setting("historyRoundsPerFile");
+    return {
+      groupBy: setting("groupBy"),
+      roundsPerFile: per,
+      more: (agent, file) => this.olderShown.get(`${p.mainPath}|${agent}|${file}`) ?? 0,
+    };
+  }
+
+  /** *Show older rounds* on a file in History: that file shows as many rounds more. */
+  showOlderRounds(arg: unknown): void {
+    const el = arg as El | undefined;
+    if (el?.node?.type !== "older") return;
+    const key = `${el.project.mainPath}|${el.node.agent.id}|${el.node.file}`;
+    this.olderShown.set(key, (this.olderShown.get(key) ?? 0) + el.node.rounds);
+    this.panel.historyChanged.fire(undefined);
   }
 
   allProjects(): Project[] {
@@ -654,6 +683,7 @@ export class StetExtension implements Host, vscode.Disposable {
 export interface TestApi {
   editor: EditorIntegration;
   preview: PreviewPanel;
+  tree: ReviewTree;
 }
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
@@ -733,6 +763,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   for (const v of SHARE_MODES) reg(`stet.shareEdits.${v}`, () => ext.view.setOption("shareEdits", v));
   for (const v of PREVIEW_PLACES) reg(`stet.pdfPreviews.${v}`, () => ext.view.setOption("pdfPreviews", v));
   for (const v of NEW_TEXT_STYLES) reg(`stet.newTextStyle.${v}`, () => ext.view.setOption("newTextStyle", v));
+  for (const v of GROUP_BY) reg(`stet.groupBy.${v}`, () => ext.view.setOption("groupBy", v));
+  reg("stet.historyRoundsPerFile", () => ext.view.pickHistoryRounds());
+  reg("stet.showOlderRounds", (a) => ext.showOlderRounds(a));
+  reg("stet.acceptFile", (a) => ext.reviewing.decideFile("Accept", a));
+  reg("stet.rejectFile", (a) => ext.reviewing.decideFile("Reject", a));
   reg("stet.refresh", () => ext.refresh());
   reg("stet.doctor", () => ext.doctor());
   reg("stet.finishReview", () => ext.reviewing.finishReview());
@@ -788,7 +823,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.showNote", (a) => ext.notes.showNote(a));
   await ext.view.updateHighlightContext();
   await ext.discover();
-  return { editor, preview: ext.preview };
+  return { editor, preview: ext.preview, tree: ext.panel };
 }
 
 export function deactivate(): void {}
