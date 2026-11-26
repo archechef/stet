@@ -12,20 +12,20 @@ The extension manual ([vscode.md](vscode.md)) explains the concepts in more deta
 - Node.js 22 or newer
 - git 2.28 or newer (on Windows: *Git for Windows*)
 
-**From a release (the usual way):** every [release](https://github.com/archechef/stet/releases) has `stet-<version>.mjs`, the whole command in one file, and `SHA256SUMS.txt` to check it. Save it somewhere permanent (here `~/bin`, for version 0.20.0) and run it with Node.js:
+**From a release (the usual way):** every [release](https://github.com/archechef/stet/releases) has `stet-<version>.mjs`, the whole command in one file, and `SHA256SUMS.txt` to check it. Save it somewhere permanent (here `~/bin`, for version 0.20.1) and run it with Node.js:
 
 ```bash
-node ~/bin/stet-0.20.0.mjs --help
+node ~/bin/stet-0.20.1.mjs --help
 ```
 
 To type `stet` instead, put a small script on your PATH. On Linux and macOS, `~/bin/stet`, made executable with `chmod +x ~/bin/stet`:
 
 ```bash
 #!/bin/sh
-exec node "$HOME/bin/stet-0.20.0.mjs" "$@"
+exec node "$HOME/bin/stet-0.20.1.mjs" "$@"
 ```
 
-On Windows, `stet.cmd` in a folder on your PATH: `@node "%USERPROFILE%\bin\stet-0.20.0.mjs" %*`.
+On Windows, `stet.cmd` in a folder on your PATH: `@node "%USERPROFILE%\bin\stet-0.20.1.mjs" %*`.
 
 The VS Code extension brings its own copy for the agents and doesn't need this one.
 
@@ -107,7 +107,7 @@ Run these in your project folder (in an agent's workspace they are refused, so a
 | `stet preview <12.3> --page <n> [--before]` | A whole page of the preview as an image: of the version with the change, or `--before` it. |
 | `stet preview status` | What PDF previews can use here, and what is missing. |
 | `stet preview setup` | Builds the container image previews compile in. It downloads what the project's language needs (LaTeX with your own TeX: Debian, Perl and Poppler, about 150 MB; with the image's TeX, about 1 GB; Typst: Debian, Poppler and Typst, about 150 MB) and says so first. Only ever on this command. |
-| `stet preview setup --extras` | Adds TeX's extra fonts (dsfont, bbm, bbold, …, about 2 GB) to the preview image with its own TeX, and uses it from then on. A preview that fails over a missing file suggests it. |
+| `stet preview setup --extras` | Adds the typesetter's extras to the preview image. LaTeX: TeX's extra fonts (dsfont, bbm, bbold, …, about 2 GB), in the image with its own TeX, used from then on; a preview that fails over a missing file suggests it. Typst has none: the command says so and downloads nothing. |
 | | **Moves:** `stet review` shows a moved passage as `moved out` and `moved in … word for word` (or with the number of changed words, listed by `stet show`). Accepting or rejecting either half decides both. A sentence that only changes paragraph (the break before or after it moved) is no move: one change, `paragraph break moved`, and `stet show` marks just the breaks (`[-␣-]{+¶+}`). Splits and joins say `paragraph split` / `paragraphs joined`. |
 | `stet revise <12.3> -m <what to change>` | Asks the agent for a new version. |
 | `stet comment <12.3\|N3> -m <text>` | Sends a message about a change, or in a note's thread; the agent can reply. |

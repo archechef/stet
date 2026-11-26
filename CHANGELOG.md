@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.20.1 — 2026-11-26
+
+Fixes:
+- **CI on Windows:** the paths where Typst keeps its packages and fonts use the system's separators in the tests, as Stet already did when running.
+- **Accept and Undo follow a sentence's own section when sections are swapped.** When the same sentence is in two sections and you swap them, Stet used to change the copy at the old place. It now follows the text around the change as recorded, when only one place matches it.
+- **An insertion at the end of a file needs its preceding text to survive.** After you rewrote the whole file, Accept used to append the old proposal to your new text (and Undo the deleted appendix); now it says the change can't be found. An insertion into an empty file still goes at its end.
+- **A refused Undo of several decisions changes nothing.** When one accept couldn't be undone (you edited its text since), a rejection undone in the same call used to come back pending anyway.
+- **Undo in VS Code takes back only its own decision.** When the CLI or another window undid it and decided again since, *Undo* used to undo that newer decision; now it says the decision was already undone or decided again. Each decision has its own id, revision requests too, and Stet checks it under its lock.
+- **Finish review commits only what it asked about.** When the CLI or another window accepted another change or a file changed while the question was open, it used to commit that too; now nothing is committed and the question comes again with what is there now. Saved unsaved edits count as what you were shown.
+- **`stet reject G1` with nothing pending is an error,** as `stet accept G1` is, instead of an empty success.
+- **PDF previews follow the project's language and settings.** Switching the language (Markdown to Typst, LaTeX to an imported language) used to keep the old builder, and fail or compile with the old one; builds are now cached per language, imported profile and preview settings, so a changed root or engine never shows an old build.
+- **A typesetter's PDF may be anywhere in the build:** the builder keeps the path it returns, where it used to assume `stet-build/`.
+- **A typesetter's source pattern is matched against the path from the project's top** when finding the document, as everywhere else (`src/*.tex`).
+- **VS Code offers PDF previews only where they are built:** in a LaTeX project, a `.typ` file has none (no action, no hover, no `p`).
+- **A preview is built with the changes accepted with it, whatever their file:** a citation with its bibliography entry, an `\include` with the chapter it adds, a deleted or renamed file. A binary file can't be included; the preview's note names it.
+- **A macro's name in a file of another language isn't a use of it:** a `\foo` mentioned in `notes.txt` no longer links it with the macro's definition.
+- **A bibliography the config maps to BibTeX** (`files.bib`, say `*.refs`) is read for its keys, as a `.bib` file is: renaming a key links the entry with its citations.
+- **`stet preview setup --extras` in a Typst project** says there are none, where it announced TeX's extra fonts and built Typst's image.
+
+Also, for profiles:
+- **Rendered previews come from the profile:** `renderSource` gives the Markdown to render for a change, its changed text marked. VS Code keeps rendering it and handling the HTML, so a Markdown dialect can bring its own.
+- **A typesetter's setup actions come with their texts:** `setupActions` (LaTeX's `extras`: TeX's extra fonts) say what each adds, may bring and downloads; the CLI and VS Code ask and report with them. `setupPreview({ action })` runs one; `extras: true` still means the action `extras`.
+- **The rules for latexmk's, Lake's and elan's files are in the LaTeX and Lean profiles** (`fileEffects`), where an imported language keeps its own. They apply in every project, as before.
+- `hasPdfPreview(cfg, profile, path)` says whether a change has a PDF preview in a project, for the service and front ends alike.
+
 ## 0.20.0 — 2026-11-26
 
 **Markdown.** Stet reviews Markdown (`*.md`, `*.markdown`) as prose, like LaTeX and Typst, where it used to propose whole changed lines.

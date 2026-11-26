@@ -2,7 +2,7 @@
   "name": "stet-vscode",
   "displayName": "Stet",
   "description": "Review AI-proposed changes to LaTeX, Typst, Lean and Markdown projects: accept, reject, edit or comment on each change.",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "publisher": "archechef",
   "license": "MIT",
   "author": "Noah Tittelbach",
@@ -51,7 +51,7 @@
     "test:integration": "node test/integration/run.mjs"
   },
   "dependencies": {
-    "@stet/core": "0.20.0"
+    "@stet/core": "0.20.1"
   },
   "devDependencies": {
     "@types/vscode": "~1.100.0",
