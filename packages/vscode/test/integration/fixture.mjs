@@ -1,8 +1,9 @@
 // Builds a Stet project with one agent and pending proposals, for the VS Code integration test.
-// Usage: node fixture.mjs <dir> [paper|proofs|latex-profile] [<it-latex-profile.mjs>]   (prints the project as JSON)
+// Usage: node fixture.mjs <dir> [paper|proofs|latex-profile|markdown] [<it-latex-profile.mjs>]   (prints the project as JSON)
 // - paper: a LaTeX paper with three proposals (suite.cjs).
 // - proofs: a project in a language of an imported profile, with no LaTeX, Typst or Lean files (custom.cjs).
 // - latex-profile: a LaTeX paper whose .tex files an imported profile takes, with LaTeX's preview backend bundled in (custom.cjs).
+// - markdown: a project of Markdown files, whose changes show rendered (custom.cjs).
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,6 +51,32 @@ export default {
   );
   const r = await stet.submit("claude-1", { title: "Tidy proofs" });
   console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id), file: "main.prf", language: "proofs" }));
+  process.exit(0);
+}
+
+if (kind === "markdown") {
+  const repo = newRepo("notes");
+  writeFileSync(
+    join(repo, "README.md"),
+    "# Stet\n\nStet lets you review the changes an agent proposes. See [getting started](#getting-started).\n\n" +
+      "## Getting started\n\nOpen your project and click **Set up project**.\n",
+  );
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "init");
+  const stet = await Stet.init(repo);
+  const agent = await stet.newAgent("claude-1", { kind: "claude-code" });
+  const f = join(agent.worktree, "README.md");
+  mkdirSync(join(agent.worktree, "images"));
+  writeFileSync(join(agent.worktree, "images", "panel.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>\n');
+  writeFileSync(
+    f,
+    readFileSync(f, "utf8")
+      .replace("review the changes", "review every change")
+      .replace("**Set up project**.", "**Set up project**.\n\n![The review panel](images/panel.svg)"),
+  );
+  const r = await stet.submit("claude-1", { title: "README" });
+  const image = r.items.find((i) => i.file === "README.md" && i.newText.includes("panel.svg"))?.id;
+  console.log(JSON.stringify({ kind, repo, worktree: agent.worktree, items: r.items.map((i) => i.id), image, file: "README.md", language: "markdown" }));
   process.exit(0);
 }
 

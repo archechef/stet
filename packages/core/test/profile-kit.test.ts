@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { LATEX, type LanguageProfile, LEAN, TYPST } from "../src/lang/index.js";
+import { LATEX, type LanguageProfile, LEAN, MARKDOWN, TYPST } from "../src/lang/index.js";
 import { KIT_SPECIFIER } from "../src/lang/load.js";
 import type { Stet } from "../src/service.js";
 import { edit, LABELLED, outsideDir, setup, write } from "./helpers.js";
@@ -25,6 +25,7 @@ const FAMILY: Record<string, string[]> = {
   "bibtex.ts": ["./latex.js"],
   "typst.ts": [],
   "lean.ts": [],
+  "markdown.ts": [],
   "plain.ts": [],
 };
 
@@ -75,7 +76,7 @@ export default { ...p, id: ${JSON.stringify(id)}, name: "Imported " + p.name, fi
   return { path: join(dir, `${id}.mjs`), inputs: Object.keys(out.metafile.inputs).map((p) => p.replace(/\\/g, "/")) };
 }
 
-const exportName = (p: LanguageProfile) => ({ latex: "LATEX", typst: "TYPST", lean: "LEAN" })[p.id]!;
+const exportName = (p: LanguageProfile) => ({ latex: "LATEX", typst: "TYPST", lean: "LEAN", markdown: "MARKDOWN" })[p.id]!;
 
 /** The same agent's edits in a project, reviewed by the built-in profile or the imported copy of it. */
 async function review(
@@ -137,6 +138,18 @@ const CASES: { profile: LanguageProfile; file: string; files: Record<string, str
     edits: [
       ["Basic.lean", "theorem double_eq (n", "theorem double_eq_add (n"],
       ["Uses.lean", "rw [double_eq]", "rw [double_eq_add]"],
+    ],
+  },
+  {
+    profile: MARKDOWN,
+    file: "markdown.ts",
+    files: {
+      "README.md": "# Introduction\n\nIn this work we study the problem of reviewing changes.\n\nAs [the introduction](#introduction) shows, it is hard.\n",
+    },
+    edits: [
+      ["README.md", "# Introduction", "# Overview"],
+      ["README.md", "(#introduction)", "(#overview)"],
+      ["README.md", "the problem of reviewing", "the task of reviewing"],
     ],
   },
 ];

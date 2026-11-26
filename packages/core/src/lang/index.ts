@@ -1,22 +1,23 @@
 /**
  * The language profiles Stet knows, and which one a file gets: the first whose config patterns
- * (`files.tex`, `files.bib`, `files.typ`, `files.lean`) match it, else plain text.
+ * (`files.tex`, `files.bib`, `files.typ`, `files.lean`, `files.md`) match it, else plain text.
  */
 import { BIBTEX } from "./bibtex.js";
 import { LATEX } from "./latex.js";
 import { LEAN } from "./lean.js";
+import { MARKDOWN } from "./markdown.js";
 import { PLAIN } from "./plain.js";
 import type { FilesKey, LanguageProfile } from "./profile.js";
 import { TYPST } from "./typst.js";
 
 export type { LanguageProfile } from "./profile.js";
-export { BIBTEX, LATEX, LEAN, PLAIN, TYPST };
+export { BIBTEX, LATEX, LEAN, MARKDOWN, PLAIN, TYPST };
 
 /** Every profile with files of its own, in the order they are tried. */
-export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX, TYPST, LEAN];
+export const PROFILES: readonly LanguageProfile[] = [LATEX, BIBTEX, TYPST, LEAN, MARKDOWN];
 
 /** File patterns per profile (the config's `files`). */
-export type FilePatterns = Record<"tex" | "bib" | "typ" | "lean", string[]> & Partial<Record<FilesKey, string[]>>;
+export type FilePatterns = Record<"tex" | "bib" | "typ" | "lean" | "md", string[]> & Partial<Record<FilesKey, string[]>>;
 
 /** The language of a project that names none, and the fallback for one Stet doesn't know. */
 export const DEFAULT_LANGUAGE = LATEX.id;
@@ -76,14 +77,19 @@ export function documentProfile(cfg?: ProfileScope & { language?: string }): Lan
   return languages.find((p) => p.id === (cfg?.language ?? DEFAULT_LANGUAGE)) ?? languages.find((p) => p.id === DEFAULT_LANGUAGE)!;
 }
 
-/** How many files of each document language a project has (relative paths), by language id; languages without files left out. */
+/**
+ * How many files of each document language a project has (relative paths), by language id;
+ * languages without files left out, and incidental ones (Markdown: a README) when another has files.
+ */
 export function languageCounts(paths: string[], files: FilePatterns, scope?: ProfileScope): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const p of documentLanguages(scope)) {
+  const languages = documentLanguages(scope);
+  for (const p of languages) {
     if (!p.files) continue;
     const n = paths.filter((f) => matchesAny(f, files[p.files!] ?? p.defaultFiles ?? [])).length;
     if (n) out[p.id] = n;
   }
+  if (languages.some((p) => !p.incidental && out[p.id])) for (const p of languages) if (p.incidental) delete out[p.id];
   return out;
 }
 
@@ -104,6 +110,11 @@ export function hasPreview(path: string): boolean {
 
 export function profileHasPreview(profile: LanguageProfile, path: string): boolean {
   return !!profile.typesetter?.source.test(path);
+}
+
+/** How a front end renders changes to the profile's files itself (VS Code's Markdown), if it can. */
+export function profileRenderer(profile: LanguageProfile): LanguageProfile["renderer"] | null {
+  return profile.renderer ?? null;
 }
 
 /** The profile of a file by its name alone (front ends, which don't read the config). */

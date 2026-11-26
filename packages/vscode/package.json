@@ -394,6 +394,12 @@
         "icon": "$(file-pdf)"
       },
       {
+        "command": "stet.previewRendered",
+        "title": "Rendered preview",
+        "category": "Stet",
+        "icon": "$(open-preview)"
+      },
+      {
         "command": "stet.previewSetup",
         "title": "Set up PDF previews",
         "category": "Stet"
@@ -607,6 +613,11 @@
           "group": "3_view@2"
         },
         {
+          "command": "stet.previewRendered",
+          "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify\\.rendered/",
+          "group": "3_view@2"
+        },
+        {
           "command": "stet.reviewFile",
           "when": "view == stet.review && viewItem =~ /^item\\.live\\.modify/",
           "group": "3_view@3"
@@ -750,6 +761,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "stet.previewRendered",
+          "when": "false"
+        },
         {
           "command": "stet.setup",
           "when": "!stet.agentWorkspace"

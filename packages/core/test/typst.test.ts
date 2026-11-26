@@ -81,7 +81,7 @@ spec("Typst: files and projects", () => {
     expect(documentProfile(await typst.stet.config())).toBe(T());
     const latex = await setup({ "main.tex": "\\documentclass{article}\n", "notes.typ": "= Notes\n" });
     expect((await latex.stet.config()).language).toBe("latex");
-    const none = await setup({ "README.md": "Hello.\n" });
+    const none = await setup({ "notes.txt": "Hello.\n" });
     expect((await none.stet.config()).language).toBe("latex");
     expect(documentProfile(await none.stet.config())).toBe(LATEX);
   });

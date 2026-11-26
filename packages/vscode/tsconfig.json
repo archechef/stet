@@ -9,6 +9,6 @@
     "moduleResolution": "Bundler"
   },
   "include": ["src"],
-  "exclude": ["src/webview/preview.ts"],
+  "exclude": ["src/webview/preview.ts", "src/webview/marks.ts"],
   "references": [{ "path": "../core" }]
 }

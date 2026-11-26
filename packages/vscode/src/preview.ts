@@ -1,5 +1,6 @@
 /**
- * The PDF preview panel: where a change lands on the compiled page, before and after.
+ * The preview panel: where a change lands on the compiled page, before and after; or, for
+ * Markdown, the change rendered by VS Code's own Markdown renderer.
  *
  * Changes show up in the panel and the editor at once; previews compile in the background (one
  * at a time, the selected change first, then the next few) and appear here when ready. Without
@@ -7,10 +8,11 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { Item, PreviewEnv, PreviewResult } from "@stet/core";
 import * as vscode from "vscode";
-import { previewPage } from "./previewPage.js";
+import { localImages } from "./markdownPreview.js";
+import { type PanelResult, previewPage, type RenderedResult } from "./previewPage.js";
 import type { Project } from "./project.js";
 import { type Settings, setting } from "./settings.js";
 
@@ -21,7 +23,7 @@ const keyOf = (t: Target) => `${t.project.mainPath}|${t.item.id}|${t.item.baseCo
 export class PreviewPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private current: Target | undefined;
-  private readonly results = new Map<string, PreviewResult>();
+  private readonly results = new Map<string, PanelResult>();
   private readonly queue: Target[] = [];
   private running = false;
 
@@ -34,10 +36,17 @@ export class PreviewPanel implements vscode.Disposable {
     private readonly onMissing: (p: Project, files: string[]) => void,
     /** The extension's folder: the page's script and style are in it. */
     private readonly extensionUri: vscode.Uri,
+    /** Changes shown rendered rather than compiled (Markdown): which ones, and their rendering. */
+    private readonly rendering: { applies(t: Target): boolean; render(t: Target): Promise<RenderedResult | PreviewResult> } | null = null,
   ) {}
 
   get visible(): boolean {
     return !!this.panel;
+  }
+
+  /** The page shown, as HTML (for the integration test). */
+  get html(): string | undefined {
+    return this.panel?.webview.html;
   }
 
   /** Open the panel on a change (or move it there). */
@@ -67,7 +76,7 @@ export class PreviewPanel implements vscode.Disposable {
   }
 
   /** The result for `t` if it is built (nothing is started). */
-  peek(t: Target): PreviewResult | undefined {
+  peek(t: Target): PanelResult | undefined {
     return this.results.get(keyOf(t));
   }
 
@@ -108,9 +117,9 @@ export class PreviewPanel implements vscode.Disposable {
     this.running = true;
     try {
       for (let t = this.queue.shift(); t; t = this.queue.shift()) {
-        let r: PreviewResult;
+        let r: PanelResult;
         try {
-          r = await t.project.stet.preview(t.item.id);
+          r = await (this.rendering?.applies(t) ? this.rendering.render(t) : t.project.stet.preview(t.item.id));
         } catch (e: any) {
           r = { status: "failed", message: "Stet couldn't build the preview.", log: String(e?.message ?? e) };
         }
@@ -147,8 +156,23 @@ export class PreviewPanel implements vscode.Disposable {
       r = { status: "unavailable", message: "This preview's files aren't in Stet's preview cache; not shown." };
     }
     const own = (...p: string[]) => vscode.Uri.joinPath(this.extensionUri, ...p);
-    const pictures = r?.status === "ready" ? [vscode.Uri.file(r.pages ? previewCacheRoot(t.project) : dirname(r.after.file))] : [];
+    // A rendered change's images: the user's files before it, the agent's after it.
+    const trees = r?.status === "rendered" ? renderedTrees(t) : null;
+    const pictures =
+      r?.status === "ready"
+        ? [vscode.Uri.file(r.pages ? previewCacheRoot(t.project) : dirname(r.after.file))]
+        : trees
+          ? [...new Set([trees.before, trees.after])].map((f) => vscode.Uri.file(f))
+          : [];
     w.options = { enableScripts: true, localResourceRoots: [own("dist"), own("media"), ...pictures] };
+    if (r?.status === "rendered" && trees) {
+      const images = (root: string) => (path: string) => {
+        const file = path.startsWith("/") ? join(root, path) : join(root, dirname(t.item.file), path);
+        const rel = relative(root, file);
+        return rel.startsWith("..") || isAbsolute(rel) ? null : `${w.asWebviewUri(vscode.Uri.file(file))}`;
+      };
+      r = { ...r, before: localImages(r.before, images(trees.before)), after: localImages(r.after, images(trees.after)) };
+    }
     // Which project, when the window has several: their ids are the same.
     const several = (vscode.workspace.workspaceFolders?.length ?? 0) > 1;
     this.panel.title = `Preview ${t.item.id}${several ? ` (${t.project.name})` : ""}`;
@@ -156,6 +180,7 @@ export class PreviewPanel implements vscode.Disposable {
     w.html = previewPage({
       item: t.item,
       result: r,
+      rendered: !!this.rendering?.applies(t),
       img,
       inCache,
       cspSource: w.cspSource,
@@ -200,6 +225,12 @@ export async function previewNotice(env: PreviewEnv, memo: vscode.Memento, proje
 }
 
 export const previewCacheRoot = (p: Project) => join(p.storeRoot, "previews");
+
+/** Where a rendered change's files are: the user's working copy before it, the agent's workspace after it. */
+function renderedTrees(t: Target): { before: string; after: string } {
+  const agent = t.project.snapshot.agents.find((a) => a.id === t.item.agent);
+  return { before: t.project.mainPath, after: agent?.worktree ?? t.project.mainPath };
+}
 
 /** Whether `file` is in the project's preview cache (images are shown from nowhere else). */
 export function inPreviewCache(p: Project, file: string | undefined): boolean {

@@ -68,7 +68,7 @@ describe("language profiles", () => {
     expect(profileFor("main.tex", cfg.files)).toBe(LATEX);
     expect(profileFor("chapters/intro.tex", cfg.files)).toBe(LATEX);
     expect(profileFor("refs.bib", cfg.files)).toBe(BIBTEX);
-    expect(profileFor("notes.md", cfg.files)).toBe(PLAIN);
+    expect(profileFor("notes.txt", cfg.files)).toBe(PLAIN);
     // The patterns are the user's: another extension can be LaTeX.
     expect(profileFor("paper.ltx2", { ...cfg.files, tex: ["*.ltx2"] })).toBe(LATEX);
     expect(profileFor("main.tex", { ...cfg.files, tex: ["*.ltx2"] })).toBe(PLAIN);
@@ -79,7 +79,7 @@ describe("language profiles", () => {
     expect(hasPreview("macros.sty")).toBe(false); // LaTeX, but not compiled on its own
     expect(hasPreview("refs.bib")).toBe(false);
     expect(profileByName("macros.sty").fence).toBe("latex");
-    expect(profileByName("notes.md").fence).toBe("");
+    expect(profileByName("notes.txt").fence).toBe("");
     expect(documentProfile()).toBe(LATEX);
   });
 

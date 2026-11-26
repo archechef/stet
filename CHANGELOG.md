@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+**Markdown.** Stet reviews Markdown (`*.md`, `*.markdown`) as prose, like LaTeX and Typst, where it used to propose whole changed lines.
+
+- **Changes are split by words and sentences.** Code spans and fenced code keep their spaces. Maths (`$…$`, `$$…$$`), link targets, URLs and HTML tags stay whole, and a changed URL is a change of its own. A new code block is one change, blank lines and all.
+- **Links are linked with what they point to.** A renamed heading is linked with the `#anchor` links to it, in the file and in others ("Rename heading anchor #getting-started → #installation"). The same goes for a reference definition (`[docs]: …`) and its links, a footnote and its marks, and a new image or page and the link that shows it.
+- **A project of Markdown alone is a Markdown project:** agents get Markdown examples. A README doesn't change a LaTeX, Typst or Lean project's language.
+- **In VS Code, a Markdown change shows rendered.** **Rendered preview** (`p` in the panel) shows the block around the change after and before, as VS Code's Markdown preview renders it, with the change highlighted. New images come from the agent's workspace. There is nothing to compile or set up; the CLI has no preview for Markdown.
+- Profiles can say their files are *incidental* (detected as the project's language only when no other language has files), that front ends render them (`renderer`), and which nesting counts go modulo 2 (`nestingParity`).
+
 ## 0.19.0 — 2026-11-24
 
 **Language profiles of your own.** Stet can now review documents in languages it doesn't know, from a trusted JavaScript profile you import, kept for your other projects in your profile library. The built-in LaTeX, Typst, BibTeX and Lean profiles are written the same way, with only the public profile kit.

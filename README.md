@@ -2,7 +2,7 @@
 
 *stet* (Latin, "let it stand"): the proofreader's mark for undoing an edit.
 
-**Stet lets AI agents propose changes to your LaTeX, Typst or Lean project while you stay in control.**
+**Stet lets AI agents propose changes to your LaTeX, Typst, Lean or Markdown project while you stay in control.**
 - The agents (Claude, Codex, …) work in their own copy of the project.
 - Their edits reach you as small, reviewable changes.
 - You accept, reject, edit or discuss each one, from VS Code or the command line.
@@ -25,7 +25,7 @@ Next: stet show <id> · stet accept <id> · stet reject <id> -m <why>
 ## Features
 
 - **Reviewable changes:**
-  - Agent edits are split into word- and sentence-level changes that understand LaTeX and Typst: math, labels and citations stay intact, and re-wrapped lines are ignored. Lean files are reviewed by declaration: a theorem's changed proof is one change, and a renamed lemma comes with the proofs that use it. (PDF previews of changes are LaTeX only for now.)
+  - Agent edits are split into word- and sentence-level changes that understand LaTeX, Typst and Markdown: math, labels, citations and links stay intact, and re-wrapped lines are ignored. Lean files are reviewed by declaration: a theorem's changed proof is one change, and a renamed lemma comes with the proofs that use it. (PDF previews of changes are LaTeX only for now; in VS Code, Markdown changes show rendered.)
   - Changes that belong together are grouped. *Linked* groups, such as a macro and its uses, are all-or-nothing; large ones come in parts you can accept one at a time, as long as each part alone still compiles.
 - **A real conversation:**
   - Rejections with a reason, revision requests, comments and edited wording all go back to the agent automatically, through MCP tools. No copy-paste.
@@ -55,7 +55,7 @@ npm run package:vscode        # → packages/vscode/stet-vscode.vsix
 
 Install it in VS Code: Extensions view → `…` → *Install from VSIX…*. Coworkers only need the `.vsix` file, not Node.js or this repository.
 
-1. Open your LaTeX, Typst or Lean project folder in VS Code, then open the **Stet** view in the activity bar and click **Set up project**.
+1. Open your LaTeX, Typst, Lean or Markdown project folder in VS Code, then open the **Stet** view in the activity bar and click **Set up project**.
 2. Click **New agent workspace**, pick Claude or Codex, and open the workspace folder in that agent.
 3. Ask the agent to improve the paper. Its proposals appear in the Stet panel and inline in your `.tex` files. Keys: `a` accept, `r` reject, `e` edit, `v` revise, `c` comment, `j`/`k` next/previous.
 4. Click **Finish review** to commit everything you accepted in one commit.
@@ -66,7 +66,7 @@ Install it in VS Code: Extensions view → `…` → *Install from VSIX…*. Cow
 
 Requirements: Node.js ≥ 22 and git ≥ 2.28. Download `stet-<version>.mjs` from the [latest release](https://github.com/archechef/stet/releases/latest): it is the whole command in one file. Run it as `node stet-<version>.mjs`, or put a `stet` command on your PATH that does ([details](docs/cli.md#1-installation)).
 
-In your LaTeX, Typst or Lean project (a git repository with at least one commit):
+In your LaTeX, Typst, Lean or Markdown project (a git repository with at least one commit):
 
 ```bash
 stet init                             # set up Stet (and git hooks)

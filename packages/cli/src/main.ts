@@ -31,7 +31,9 @@ export function help(): string {
     ].join("\n"),
   );
   return [
-    `stet — review AI-proposed changes to ${DOCUMENT_LANGUAGES.map((p) => p.name).join(" and ")} projects`,
+    `stet — review AI-proposed changes to ${DOCUMENT_LANGUAGES.map((p) => p.name)
+      .join(", ")
+      .replace(/, ([^,]*)$/, " and $1")} projects`,
     ...sections,
     "Global: --json for machine-readable output, --help.",
   ].join("\n\n");

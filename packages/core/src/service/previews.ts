@@ -35,6 +35,8 @@ export function completing(item: Item, pool: Item[], profileOf: ProfileOf): Item
 
 /** Why a project in this language has no PDF previews. */
 export function noPreviews(doc: LanguageProfile): string {
+  if (doc.renderer)
+    return `${doc.name} projects have no PDF previews; VS Code shows changes to ${doc.name} files rendered instead. Everything else works as usual.`;
   return `Stet has no PDF previews for ${doc.name} projects yet. Everything else works as usual.`;
 }
 

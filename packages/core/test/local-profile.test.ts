@@ -234,7 +234,7 @@ describe("the profile library", () => {
 
     // Chosen by name, or an unknown one.
     const other = (await setup({ "main.tex": "\\section{x}\n" })).repo;
-    await expect(Stet.init(other, { language: "nope" })).rejects.toThrow(/Unknown language 'nope' \(latex or typst or lean or proofs\)/);
+    await expect(Stet.init(other, { language: "nope" })).rejects.toThrow(/Unknown language 'nope' \(latex or typst or lean or markdown or proofs\)/);
     expect((await (await Stet.init(other, { language: "proofs" })).config()).language).toBe("proofs");
   });
 });

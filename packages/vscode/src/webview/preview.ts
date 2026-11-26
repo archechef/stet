@@ -4,6 +4,7 @@
  * (`tsconfig.webview.json`). The page gives it its pages as JSON in `#stet-pages`.
  */
 import { frameKey, pageAlt, viewerKey } from "./keys.js";
+import { markChanges } from "./marks.js";
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void; getState(): unknown; setState(s: unknown): void };
 
@@ -45,6 +46,12 @@ if (setupButton) setupButton.onclick = () => vscode.postMessage({ type: "setup" 
 const extrasButton = byId("extras");
 if (extrasButton) extrasButton.onclick = () => vscode.postMessage({ type: "extras" });
 const PAGES = JSON.parse(byId("stet-pages")?.textContent || "null") as Pages | null;
+
+// A rendered change: its marks become highlights; its links don't navigate the panel away.
+for (const r of document.querySelectorAll(".rendered")) markChanges(r);
+document.addEventListener("click", (e) => {
+  if (e.target instanceof Element && e.target.closest(".rendered a")) e.preventDefault();
+});
 
 // Zoom and position like a PDF viewer: each image stays in its frame, zoom enlarges it inside,
 // dragging moves it. Before and after share zoom and position, so they show the same spot. Both

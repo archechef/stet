@@ -22,6 +22,7 @@ import {
   plural,
   profileByName,
   profileHasPreview,
+  profileRenderer,
   roundOf,
   spokenChange,
   summaryTexts,
@@ -245,8 +246,15 @@ export function contextValueOf(node: Node, model: TreeModel): string {
       return model.partMembers(node.group, node.index).some(isLiveItem) ? "part.live" : "part.done";
     case "item": {
       const it = node.item;
-      // ".pdf": the change has a PDF preview (not in a Typst file).
-      const pdf = it.kind === "modify" && profileHasPreview(model.profile(it.file), it.file) ? ".pdf" : "";
+      // ".pdf": the change has a PDF preview (not in a Typst file); ".rendered": VS Code renders it (Markdown, in review).
+      const pdf =
+        it.kind !== "modify"
+          ? ""
+          : profileHasPreview(model.profile(it.file), it.file)
+            ? ".pdf"
+            : isLiveItem(it) && profileRenderer(model.profile(it.file)) === "markdown"
+              ? ".rendered"
+              : "";
       return isLiveItem(it) ? `item.live.${it.kind}${pdf}` : `item.done.${it.kind}${pdf}${canUndo(it) ? ".undo" : ""}`;
     }
   }

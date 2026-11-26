@@ -16,10 +16,25 @@ const extrasButton = (m: { files: string[]; extras: boolean } | undefined) =>
     ? `<p><button id="extras">Install extra fonts for previews (about 2 GB)</button> <span class="muted">may bring ${html(m.files.join(", "))}</span></p>`
     : "";
 
+/**
+ * A change shown rendered by VS Code itself (Markdown): the block around it, before and after, as
+ * HTML with the changed text between marks (`markdownPreview.ts`), its images already local.
+ */
+export interface RenderedResult {
+  status: "rendered";
+  before: string;
+  after: string;
+}
+
+/** What the preview panel shows: a PDF preview, or a rendered one. */
+export type PanelResult = PreviewResult | RenderedResult;
+
 export interface PageInput {
   item: Pick<Item, "id" | "file" | "oldText" | "newText">;
   /** The preview, or undefined while it builds. Only files in the preview cache are shown. */
-  result: PreviewResult | undefined;
+  result: PanelResult | undefined;
+  /** It is a rendered preview (Markdown), not a PDF one. */
+  rendered?: boolean;
   /** A picture's URI in the webview. */
   img: (file: string) => string;
   inCache: (file: string | undefined) => boolean;
@@ -32,14 +47,23 @@ export interface PageInput {
   style: string;
 }
 
-export function previewPage({ item, result: r, img, inCache, cspSource, nonce, script, style }: PageInput): string {
+export function previewPage({ item, result: r, rendered, img, inCache, cspSource, nonce, script, style }: PageInput): string {
   let body: string;
   let pageData: unknown = null;
   // What changed, for the pictures' alt text: where the changes are said nothing of what they are.
   const [was, now] = changeSummary(item.oldText, item.newText, 60);
   const what = !item.oldText ? `“${now}” inserted` : !item.newText ? `“${was}” deleted` : `“${was}” replaced with “${now}”`;
-  if (!r) body = `<p class="muted">Building the preview… The change is already in the editor; its page appears here when it's compiled.</p>`;
-  else if (r.status === "ready" && r.pages && inCache(r.pages.after.file) && (!r.pages.before || inCache(r.pages.before.file))) {
+  if (!r)
+    body = rendered
+      ? `<p class="muted">Rendering the change…</p>`
+      : `<p class="muted">Building the preview… The change is already in the editor; its page appears here when it's compiled.</p>`;
+  else if (r.status === "rendered") {
+    // The renderer's HTML: scripts can't run (the policy allows the page's own script only), and images are the project's.
+    body =
+      `<p class="muted">As VS Code's Markdown preview shows it, the change marked.</p>` +
+      `<h3>After</h3><div class="rendered after" role="region" aria-label="After the change: ${html(what)}">${r.after}</div>` +
+      `<h3>Before</h3><div class="rendered before" role="region" aria-label="Before the change">${r.before}</div>`;
+  } else if (r.status === "ready" && r.pages && inCache(r.pages.after.file) && (!r.pages.before || inCache(r.pages.before.file))) {
     const side = (s: PageSide) => ({ page: s.page, count: s.count, width: s.width, height: s.height, src: img(s.file), marks: s.marks });
     pageData = { after: side(r.pages.after), before: r.pages.before ? side(r.pages.before) : null, what };
     body =

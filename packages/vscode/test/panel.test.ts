@@ -194,7 +194,7 @@ describe("the menus' when clauses and the rows' contextValue (code quality repor
       }
     }
     for (const kind of ["modify", "add-file", "delete-file", "rename-file", "binary"] as const)
-      for (const file of ["main.tex", "main.typ"])
+      for (const file of ["main.tex", "main.typ", "README.md"])
         for (const extra of [
           {},
           { status: "accepted", resolution: { appliedText: "x", edited: false, committed: null } },
@@ -207,10 +207,11 @@ describe("the menus' when clauses and the rows' contextValue (code quality repor
 
   it("makes values of the documented form", () => {
     const form =
-      /^(agent\.active\.notify-(now|batched|off)|agent\.archived|note\.(open|resolved)|notes|changeset\.(live|done)|group\.(live|done)\.(linked|related|atomic)|part\.(live|done)|item\.live\.[a-z-]+(\.pdf)?|item\.done\.[a-z-]+(\.pdf)?(\.undo)?)$/;
+      /^(agent\.active\.notify-(now|batched|off)|agent\.archived|note\.(open|resolved)|notes|changeset\.(live|done)|group\.(live|done)\.(linked|related|atomic)|part\.(live|done)|item\.live\.[a-z-]+(\.pdf|\.rendered)?|item\.done\.[a-z-]+(\.pdf)?(\.undo)?)$/;
     for (const v of values) expect(v).toMatch(form);
     expect(values).toContain("item.done.modify.pdf.undo");
     expect(values).toContain("item.live.modify");
+    expect(values).toContain("item.live.modify.rendered");
   });
 
   it("every viewItem test in a menu matches some row (a typo leaves its entry nowhere)", () => {

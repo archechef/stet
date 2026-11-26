@@ -1,9 +1,19 @@
-/** PDF previews: setting them up, the extra fonts, and opening the preview panel. */
-import { documentProfile, foldPath, profileHasPreview } from "@stet/core";
+/** Previews: setting PDF previews up, the extra fonts, rendering Markdown, and opening the preview panel. */
+import { join } from "node:path";
+import { documentProfile, foldPath, type Item, isLiveItem, type PreviewResult, profileHasPreview, profileRenderer } from "@stet/core";
 import * as vscode from "vscode";
 import type { StetExtension } from "./extension.js";
+import { cleanTags, markdownSides } from "./markdownPreview.js";
 import { previewNotice, previewPlace } from "./preview.js";
+import type { RenderedResult } from "./previewPage.js";
 import type { Project } from "./project.js";
+
+type Target = { project: Project; item: Item };
+
+/** Whether VS Code shows a change rendered (a text change in review, in a Markdown file). */
+export function isRendered(p: Project, item: Item): boolean {
+  return item.kind === "modify" && isLiveItem(item) && profileRenderer(p.profile(item.file)) === "markdown";
+}
 
 export class PreviewCommands {
   constructor(private readonly ext: StetExtension) {}
@@ -15,7 +25,9 @@ export class PreviewCommands {
       const doc = documentProfile(await p.stet.config());
       if (!doc.typesetter) {
         if (!this.noPreviews.has(foldPath(p.mainPath)))
-          this.ext.output.appendLine(`PDF previews in ${p.name}: Stet has no PDF previews for ${doc.name} projects yet.`);
+          this.ext.output.appendLine(
+            `PDF previews in ${p.name}: ${doc.renderer ? `${doc.name} projects have none; changes to ${doc.name} files show rendered in the preview panel.` : `Stet has no PDF previews for ${doc.name} projects yet.`}`,
+          );
         this.noPreviews.add(foldPath(p.mainPath));
         void this.ext.onProjectChanged();
         return;
@@ -46,7 +58,9 @@ export class PreviewCommands {
     const doc = documentProfile(await project.stet.config());
     if (!doc.typesetter)
       return void vscode.window.showInformationMessage(
-        `Stet has no PDF previews for ${doc.name} projects yet, so there is nothing to set up in ${project.name}.`,
+        doc.renderer
+          ? `${doc.name} projects have no PDF previews to set up: Stet shows changes to ${doc.name} files rendered, with VS Code's own renderer.`
+          : `Stet has no PDF previews for ${doc.name} projects yet, so there is nothing to set up in ${project.name}.`,
       );
     const r = await vscode.window.withProgress(
       {
@@ -109,14 +123,48 @@ export class PreviewCommands {
     this.ext.preview.refresh();
   }
 
-  /** Open the PDF preview of a change. */
+  /**
+   * A Markdown change rendered by VS Code's Markdown renderer: the block around it in your file,
+   * before and after, the changed text marked.
+   */
+  async renderMarkdown(t: Target): Promise<RenderedResult | PreviewResult> {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(join(t.project.mainPath, t.item.file)));
+    const hit = (await this.ext.locator.locate(doc)).find((l) => l.item.id === t.item.id);
+    if (!hit) return { status: "unavailable", message: `Stet can't find ${t.item.id} in ${t.item.file} any more, so there is nothing to render.` };
+    const { before, after } = markdownSides(doc.getText(), doc.offsetAt(hit.range.start), doc.offsetAt(hit.range.end), t.item.newText);
+    const render = async (markdown: string) => {
+      const out = await vscode.commands.executeCommand<unknown>("markdown.api.render", markdown);
+      if (typeof out !== "string") throw new Error("no HTML");
+      return cleanTags(out);
+    };
+    try {
+      const [b, a] = await Promise.all([render(before), render(after)]);
+      return { status: "rendered", before: b, after: a };
+    } catch {
+      return {
+        status: "unavailable",
+        message: "VS Code's Markdown renderer isn't available, so Stet can't render this change.",
+        fix: "Enable the built-in extension “Markdown Language Features”.",
+      };
+    }
+  }
+
+  /** Open the preview of a change: its PDF preview, or the change rendered (Markdown). */
   async showPreview(arg: unknown): Promise<void> {
     const t = await this.ext.targetItem(arg);
     if (!t) return;
+    // Rendered by VS Code: whatever the PDF previews' setting says.
+    if (isRendered(t.project, t.item)) return void this.ext.preview.show(t);
     // `p` on a Typst change opened an empty preview panel.
     if (t.item.kind !== "modify" || !profileHasPreview(t.project.profile(t.item.file), t.item.file))
       return void vscode.window.showInformationMessage(
-        `Stet has no PDF preview for ${t.item.id}: ${t.item.kind !== "modify" ? "it is not a text change" : `there are no PDF previews for ${t.project.profile(t.item.file).name} files yet`}.`,
+        `Stet has no ${profileRenderer(t.project.profile(t.item.file)) ? "rendered" : "PDF"} preview for ${t.item.id}: ${
+          t.item.kind !== "modify"
+            ? "it is not a text change"
+            : profileRenderer(t.project.profile(t.item.file))
+              ? "only changes in review are rendered"
+              : `there are no PDF previews for ${t.project.profile(t.item.file).name} files yet`
+        }.`,
       );
     if (previewPlace() === "off")
       return void vscode.window.showInformationMessage("PDF previews are off (setting stet.pdfPreviews, or View options in the Stet panel).");

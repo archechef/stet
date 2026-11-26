@@ -30,10 +30,10 @@ for (const runtime of ["auto", "vscode"]) {
   console.log(`\n— stet.runtime = ${runtime}`);
   failedRuns += runOnce(runtime) ? 0 : 1;
 }
-// Projects in the language of an imported profile (custom.cjs).
-for (const kind of ["proofs", "latex-profile"]) {
+// Projects in the language of an imported profile, and a Markdown project (custom.cjs).
+for (const kind of ["proofs", "latex-profile", "markdown"]) {
   if (only && !only.includes(kind)) continue;
-  console.log(`\n— imported profile: ${kind}`);
+  console.log(`\n— ${kind === "markdown" ? "Markdown project" : `imported profile: ${kind}`}`);
   failedRuns += runOnce("auto", kind, "custom.cjs") ? 0 : 1;
 }
 process.exitCode = failedRuns ? 1 : 0;

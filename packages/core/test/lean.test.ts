@@ -37,9 +37,15 @@ const lines = (t: string) => t.split(/(?<=\n)/);
 describe("Lean files (Lean profile)", () => {
   it("are Lean by their name and by the config's patterns", () => {
     expect(profileByName("MyProject/Basic.lean")).toBe(LEAN);
-    expect(profileFor("MyProject/Basic.lean", { tex: [], bib: [], typ: [], lean: ["*.lean"] })).toBe(LEAN);
+    expect(profileFor("MyProject/Basic.lean", { tex: [], bib: [], typ: [], lean: ["*.lean"], md: [] })).toBe(LEAN);
     expect(
-      detectLanguage(["MyProject.lean", "MyProject/Basic.lean", "lakefile.toml"], { tex: ["*.tex"], bib: ["*.bib"], typ: ["*.typ"], lean: ["*.lean"] }),
+      detectLanguage(["MyProject.lean", "MyProject/Basic.lean", "lakefile.toml"], {
+        tex: ["*.tex"],
+        bib: ["*.bib"],
+        typ: ["*.typ"],
+        lean: ["*.lean"],
+        md: ["*.md"],
+      }),
     ).toBe("lean");
   });
 

@@ -43,7 +43,7 @@ import {
   TreeModel,
 } from "./model.js";
 import { inPreviewCache, PreviewPanel, previewPlace } from "./preview.js";
-import { PreviewCommands } from "./previews.js";
+import { isRendered, PreviewCommands } from "./previews.js";
 import { Project } from "./project.js";
 import { REVIEW_SCHEME, ReviewFiles, type ReviewHost } from "./review.js";
 import { itemLabel, statusView } from "./rows.js";
@@ -145,6 +145,7 @@ export class StetExtension implements Host, vscode.Disposable {
       (p) => this.previews.installExtras(p),
       (p, files) => void this.previews.offerExtras(p, files),
       ctx.extensionUri,
+      { applies: (t) => isRendered(t.project, t.item), render: (t) => this.previews.renderMarkdown(t) },
     );
     // Several changes can be selected (Ctrl/Shift+click) and accepted or rejected together.
     this.tree = vscode.window.createTreeView("stet.review", { treeDataProvider: this.panel, showCollapseAll: true, canSelectMany: true });
@@ -652,6 +653,7 @@ export class StetExtension implements Host, vscode.Disposable {
 /** Returned by `activate`, for the integration test (VS Code's commands don't resolve inlay hints). */
 export interface TestApi {
   editor: EditorIntegration;
+  preview: PreviewPanel;
 }
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
@@ -700,6 +702,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
     inOrder((a) => ext.undos.undo(a)),
   );
   reg("stet.preview", (a) => ext.previews.showPreview(a));
+  reg("stet.previewRendered", (a) => ext.previews.showPreview(a));
   reg("stet.openAgentProject", () => ext.openAgentProject());
   reg(
     "stet.undoLast",
@@ -785,7 +788,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<TestApi> {
   reg("stet.showNote", (a) => ext.notes.showNote(a));
   await ext.view.updateHighlightContext();
   await ext.discover();
-  return { editor };
+  return { editor, preview: ext.preview };
 }
 
 export function deactivate(): void {}

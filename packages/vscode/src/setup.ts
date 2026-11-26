@@ -22,7 +22,11 @@ export class SetupWizard {
   async setup(): Promise<void> {
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (!folders.length)
-      return void vscode.window.showInformationMessage(`Open the folder of your ${DOCUMENT_LANGUAGES.map((p) => p.name).join(" or ")} project first.`);
+      return void vscode.window.showInformationMessage(
+        `Open the folder of your ${DOCUMENT_LANGUAGES.map((p) => p.name)
+          .join(", ")
+          .replace(/, ([^,]*)$/, " or $1")} project first.`,
+      );
     const folder =
       folders.length === 1
         ? folders[0]!

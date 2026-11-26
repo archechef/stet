@@ -200,6 +200,7 @@ A key in the panel acts on the change selected there. From the Command Palette, 
 | **Comment…** | `c` | Sends a message about the change; the agent can reply. |
 | **Diff** | `d` | Your file and the file with this change, side by side: a review of just this change (and what accepting it takes along), editable, with the same actions (see *Reviewing a whole file*). Decided changes, and file additions, deletions and renames, get a read-only diff. |
 | **PDF preview** | `p` | The compiled page with the change, after and before (see *PDF previews*). |
+| **Rendered preview** | `p` | For Markdown: the change as VS Code's Markdown preview shows it, after and before (see *Rendered Markdown previews*). |
 | **Review file** | `f` | All pending changes of the file in one editable diff (see *Reviewing a whole file*). |
 | **Use agent's wording** | | Drops the wording you gave the change in *Review file*. |
 | **Undo** | `u` in History | For a decided change: it is pending again (see *The History view*). |
@@ -238,7 +239,7 @@ The agent is told and can propose it again against the current text.
 
 ### PDF previews
 
-PDF previews are for LaTeX projects; Typst projects have none yet, and their changes don't offer them.
+PDF previews are for LaTeX projects; Typst projects have none yet, and their changes don't offer them. Changes to Markdown files show rendered instead (see *Rendered Markdown previews* below).
 
 **PDF preview** (among a change's actions: hover, *More…*, Ctrl+., right-click, `p` in the panel) opens a panel next to the editor. It shows the region of the compiled paper where the change lands, after and before. The change itself is in the editor at once; the panel says *Building the preview…* and fills in a second or two later. While the panel is open it follows the change you select or put the cursor on, and prepares the next two changes in the background, so moving through a review stays quick.
 
@@ -259,6 +260,14 @@ PDF previews are for LaTeX projects; Typst projects have none yet, and their cha
 The first time, Stet offers to build the image (**Set up**). It never downloads anything without that click. If something is missing (Podman, its machine, the image), Stet says once what and how to fix it; everything else works as usual. *Stet: Set up PDF previews* builds the image at any time.
 
 Without Podman, previews stay off. For material you trust, you can set `"preview": { "isolation": "process" }` in `.git/stet/config.json` to compile without a container. TeX can then read every file you can.
+
+### Rendered Markdown previews
+
+A change in review to a Markdown file (`*.md`) offers **Rendered preview** instead (same places, `p` in the panel). The preview panel shows the block the change is in (the paragraph, list, table or whole code block, a few dozen lines at most) as VS Code's own Markdown preview renders it, after and before, with the changed text highlighted: green in *After*, red and struck through in *Before*. Nothing is compiled and nothing needs setting up, whatever `stet.pdfPreviews` says.
+
+- Links and images that use a reference definition elsewhere in the file render as links and images. Images come from your files in *Before* and from the agent's workspace in *After*, so a new figure shows; images from the web are not loaded. Links in the preview don't open.
+- Maths (`$…$`) shows as VS Code's Markdown preview shows it, when its maths support is on.
+- It needs VS Code's built-in *Markdown Language Features* extension; if that is disabled, the panel says so.
 
 ### 4.4 Threads
 

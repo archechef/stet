@@ -24,6 +24,7 @@ export {
   matchesAny,
   profileByName,
   profileHasPreview,
+  profileRenderer,
 } from "./lang/index.js";
 export { forgetLibraryProfile, type LibraryProfile, libraryDirectory, readLibrary } from "./lang/library.js";
 export type { SpokenRules, SyntaxRules, Typesetter } from "./lang/profile.js";

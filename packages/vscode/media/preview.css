@@ -22,3 +22,17 @@ body.vscode-high-contrast .mark, body.vscode-high-contrast-light .mark { outline
 h2 { font-size: 1.1em; } h3 { font-size: 1em; margin: 1em 0 .4em; }
 .muted { color: var(--vscode-descriptionForeground); } .warn { color: var(--vscode-errorForeground); }
 pre { white-space: pre-wrap; font-size: .9em; background: var(--vscode-textCodeBlock-background); padding: 8px; }
+/* A rendered change (Markdown): the block around it as VS Code's Markdown preview shows it, the change marked. */
+.rendered { border: 1px solid var(--vscode-panel-border); padding: 4px 16px; line-height: 1.5; overflow-x: auto; background: var(--vscode-editor-background); }
+.rendered img { max-width: 100%; }
+.rendered table { border-collapse: collapse; } .rendered th, .rendered td { border: 1px solid var(--vscode-panel-border); padding: 2px 8px; }
+.rendered code { font-family: var(--vscode-editor-font-family); background: var(--vscode-textCodeBlock-background); padding: 0 2px; }
+.rendered pre code { background: none; padding: 0; }
+.rendered blockquote { margin-left: 0; padding-left: 12px; border-left: 4px solid var(--vscode-textBlockQuote-border); color: var(--vscode-textBlockQuote-foreground, inherit); }
+.rendered a { color: var(--vscode-textLink-foreground); }
+/* Maths: the browser draws KaTeX's MathML; its HTML would need KaTeX's style sheet. */
+.rendered .katex-html { display: none; }
+.rendered mark.change { color: inherit; border-radius: 2px; }
+.rendered.after mark.change { background: var(--vscode-diffEditor-insertedTextBackground, rgba(40, 180, 70, .28)); outline: 1px solid var(--vscode-diffEditor-insertedTextBorder, rgba(40, 160, 60, .7)); }
+.rendered.before mark.change { background: var(--vscode-diffEditor-removedTextBackground, rgba(220, 50, 50, .22)); outline: 1px solid var(--vscode-diffEditor-removedTextBorder, rgba(200, 40, 40, .7)); text-decoration: line-through; }
+body.vscode-high-contrast .rendered mark.change, body.vscode-high-contrast-light .rendered mark.change { outline: 2px dashed var(--vscode-contrastActiveBorder, currentColor); }

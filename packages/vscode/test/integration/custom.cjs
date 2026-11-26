@@ -1,5 +1,6 @@
 // Runs inside VS Code (--extensionTestsPath) for projects in the language of an imported profile
-// (fixture.mjs: proofs, latex-profile). Stet must start by itself, as it does for LaTeX, Typst and Lean.
+// (fixture.mjs: proofs, latex-profile), and a Markdown project (markdown). Stet must start by
+// itself, as it does for LaTeX, Typst and Lean.
 const { existsSync, readdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 const vscode = require("vscode");
@@ -33,7 +34,7 @@ exports.run = async function run() {
         if (!active) await ext.activate();
         await until("managed CLI", () => existsSync(join(store, "bin", "stet.mjs")), 30000);
         const cfg = JSON.parse(readFileSync(join(store, "config.json"), "utf8"));
-        check(`the project's language is the imported ${fx.language}`, cfg.language === fx.language, cfg.language);
+        check(`the project's language is ${fx.kind === "markdown" ? "" : "the imported "}${fx.language}`, cfg.language === fx.language, cfg.language);
       },
     ],
     [
@@ -53,6 +54,43 @@ exports.run = async function run() {
       },
     ],
   ];
+  if (fx.kind === "markdown")
+    steps.push([
+      "rendered Markdown previews",
+      async () => {
+        // A Markdown change shows rendered by VS Code's own Markdown renderer, before and after,
+        // its text between marks that the page's script turns into highlights.
+        const { preview } = vscode.extensions.getExtension("archechef.stet-vscode").exports;
+        const shown = (id) =>
+          until(
+            `the rendered preview of ${id}`,
+            () => {
+              const h = preview.html || "";
+              return h.includes(`<h2>${id} `) && h.includes('class="rendered after"') ? h : null;
+            },
+            30000,
+          ).catch(() => preview.html || "");
+        await vscode.commands.executeCommand("stet.preview", fx.items[0]);
+        const page = await shown(fx.items[0]);
+        const [after, before] = [
+          /class="rendered after"[^>]*>([\s\S]*?)<\/div><h3>Before/.exec(page)?.[1] ?? "",
+          /class="rendered before"[^>]*>([\s\S]*?)<\/div>\s*<script/.exec(page)?.[1] ?? "",
+        ];
+        check(
+          "a word change shows rendered, marked, before and after",
+          /\uE000every( change)?\uE001/.test(after) && /\uE000the( changes)?\uE001/.test(before) && /<a [^>]*href="#getting-started"/.test(after),
+          JSON.stringify({ after: after.slice(0, 400), before: before.slice(0, 400) }),
+        );
+        check("no marks in the HTML's tags", !/<[^>]*[\uE000\uE001][^>]*>/.test(page), page.slice(0, 600));
+        await vscode.commands.executeCommand("stet.preview", fx.image);
+        const img = await shown(fx.image);
+        check(
+          "a new image shows from the agent's workspace",
+          /<img[^>]+src="[^"]*vscode-resource[^"]*images\/panel\.svg"/.test(img),
+          (/<img[^>]*>/.exec(img) ?? [img.slice(0, 600)])[0],
+        );
+      },
+    ]);
   if (fx.kind === "proofs")
     steps.push([
       "long proposals in a plain-text file",

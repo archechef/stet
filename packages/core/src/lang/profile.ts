@@ -48,6 +48,16 @@ export interface LanguageProfile {
   /** A file of the document itself: new ones are part of the user's tree when Stet snapshots it. */
   document: boolean;
   /**
+   * Its files are in projects of other languages too (a README in Markdown): setup takes it for
+   * the project's language only when no other language has files there.
+   */
+  incidental?: boolean;
+  /**
+   * A front end that renders this language itself shows changes rendered, without a typesetter
+   * (VS Code: "markdown", with its own Markdown renderer).
+   */
+  renderer?: "markdown";
+  /**
    * What a build leaves next to the sources, as .gitignore patterns offered at setup: file names
    * (`*.aux`), offered when such files are there, or folders (`.lake/`), offered with the language's files.
    */
@@ -124,6 +134,8 @@ export interface SyntaxRules {
   isEnvironmentBound(text: string): boolean;
   /** How a line changes the nesting a run can't be cut inside: one count per kind (environments, braces, …). */
   lineNesting(line: string): number[];
+  /** Kinds of `lineNesting` counted modulo 2: a code fence opens and closes alike. */
+  nestingParity?: readonly number[];
   /** A token that names a command or other markup (`\alpha`), for replacements of symbols. */
   isCommand(text: string): boolean;
   /** Whether text ending here is inside maths (where `2n` is the symbols 2 and n). */

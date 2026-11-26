@@ -342,7 +342,7 @@ function blockCuts(t: string, leading: boolean, rules: SyntaxRules): number[] {
       } else if (structural) cuts.push(leading ? pos - 1 : pos);
     }
     const d = rules.lineNesting(line);
-    depth = d.map((x, k) => x + (depth[k] ?? 0));
+    depth = d.map((x, k) => (rules.nestingParity?.includes(k) ? (x + (depth[k] ?? 0)) % 2 : x + (depth[k] ?? 0)));
     if (line.trim()) prevLine = line;
     pos += line.length;
   }
