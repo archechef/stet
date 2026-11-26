@@ -267,6 +267,11 @@ export const LEAN: LanguageProfile = {
   document: true,
   // Lake's build folder, with the project's dependencies (Mathlib) checked out in it.
   buildFiles: [".lake/"],
+  fileEffects: [
+    { path: /(^|\/)lakefile\.(lean|toml)$/, reason: "Lake runs it when the Lean project is built, and fetches the packages it names" },
+    { path: /(^|\/)lean-toolchain$/, reason: "elan downloads and runs the Lean version it names" },
+    { path: /(^|\/)lake-manifest\.json$/, reason: "Lake fetches the package versions it lists" },
+  ],
   agentTerms: {
     location: 'MyProject/Basic.lean:12 "simp only"',
     linked: "a definition or lemma and the proofs that start using it, a declaration renamed and its uses",

@@ -3,17 +3,17 @@
  * the panel (preview.ts) gives it the result and the webview's URIs. Its script is
  * `webview/preview.ts` (built to `dist/preview.js`), its style `media/preview.css`.
  */
-import { changeSummary, type Item, type PageSide, type PreviewResult } from "@stet/core";
+import { changeSummary, type Item, type Missing, type PageSide, type PreviewResult } from "@stet/core";
 
 export const html = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** The zoom buttons, named for screen readers (not just − and +). */
 const ZOOM_BUTTONS = `<button id="out" title="Zoom out" aria-label="Zoom out">−</button><button id="fit" title="Whole width" aria-label="Fit to the width">Fit</button><button id="in" title="Zoom in" aria-label="Zoom in">+</button>`;
 
-/** The offer to add the extra fonts, where they may bring a missing file. */
-const extrasButton = (m: { files: string[]; extras: boolean } | undefined) =>
-  m?.extras
-    ? `<p><button id="extras">Install extra fonts for previews (about 2 GB)</button> <span class="muted">may bring ${html(m.files.join(", "))}</span></p>`
+/** The offer of the typesetter's setup action (LaTeX: the extra fonts), where it may bring a missing file. */
+const extrasButton = (m: Missing | undefined) =>
+  m?.action
+    ? `<p><button id="extras">Install ${html(m.action.label)} for previews (${html(m.action.download)})</button> <span class="muted">may bring ${html(m.files.join(", "))}</span></p>`
     : "";
 
 /**

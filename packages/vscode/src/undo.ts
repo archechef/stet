@@ -1,5 +1,5 @@
 /** Undo: the decisions made in this window, latest last, and the *Undo* button after each. */
-import { plural } from "@stet/core";
+import { type Item, plural } from "@stet/core";
 import * as vscode from "vscode";
 import { announce } from "./announce.js";
 import type { StetExtension } from "./extension.js";
@@ -18,13 +18,19 @@ export class UndoStack {
   readonly undoButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
 
   /** Decisions made in this window, latest last, for *Undo* (`u`): one per press, back to the oldest. */
-  private decisions: { project: Project; ids: string[]; what: Decision }[] = [];
+  private decisions: { project: Project; ids: string[]; what: Decision; decisions: Record<string, string> }[] = [];
   private undoTimer: ReturnType<typeof setTimeout> | undefined;
 
-  /** Remember a decision for *Undo* (`u` in the panel), and offer the button for a few seconds. */
-  noteDecision(p: Project, ids: string[], what: Decision): void {
-    if (!ids.length) return;
-    this.decisions.push({ project: p, ids, what });
+  /**
+   * Remember a decision for *Undo* (`u` in the panel), and offer the button for a few seconds.
+   * `items`: as the decision left them, with the decision's id in their history: Undo takes back
+   * that decision only, not a later one made in the CLI or another window.
+   */
+  noteDecision(p: Project, items: readonly Pick<Item, "id" | "history">[], what: Decision): void {
+    if (!items.length) return;
+    const ids = items.map((i) => i.id);
+    const decisions = Object.fromEntries(items.flatMap((i) => (i.history.at(-1)?.decision ? [[i.id, i.history.at(-1)!.decision!]] : [])));
+    this.decisions.push({ project: p, ids, what, decisions });
     if (this.decisions.length > UNDO_DEPTH) this.decisions.shift();
     this.showUndo();
   }
@@ -88,7 +94,7 @@ export class UndoStack {
           location: todo.length > 20 ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,
           title: `Stet: undoing the ${d.what} of ${plural(todo.length, "change")}…`,
         },
-        () => d.project.stet.undoMany(todo),
+        () => d.project.stet.undoMany(todo, { decisions: d.decisions }),
       );
       undone.push(...r.reopened.map((i) => i.id));
     });

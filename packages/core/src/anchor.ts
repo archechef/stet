@@ -188,6 +188,11 @@ function findOldText(item: Anchorable, target: string, ref?: string): Span | nul
   if (ref !== undefined && ref === target) return check(range.start, range.end) ? { ...range } : null;
 
   const mapper = ref !== undefined ? makeMapper(ref, target) : null;
+  /** How well the text around [s, e) matches the item's recorded context (0–1). */
+  const contextScore = (s: number, e: number) =>
+    (similarity(target.slice(Math.max(0, s - context.before.length), s), context.before) +
+      similarity(target.slice(e, e + context.after.length), context.after)) /
+    2;
   // Where the old text is in text unchanged from the reference but not at the item's place, it
   // is another occurrence (the mapped path would have found the item's own): never the item's.
   // An undo found another accepted change's words there and reverted that one.
@@ -199,7 +204,16 @@ function findOldText(item: Anchorable, target: string, ref?: string): Span | nul
     if (oldText) {
       const s = map(range.start, false);
       const e = map(range.end, true);
-      if (s !== null && e !== null && e - s === oldText.length && check(s, e)) return { start: s, end: e };
+      if (s !== null && e !== null && e - s === oldText.length && check(s, e)) {
+        // The line diff can pair the item's sentence with the same sentence elsewhere: sections
+        // that share lines, swapped, have it map into the other section, whose own text surrounds
+        // it there. Where the item's whole context is found once, somewhere else, and hardly at
+        // the mapped place, that is the item's own (decisions review db49f7d, 1). Where the
+        // mapped place still has most of its context (you edited near it), it stays.
+        const exact = exactWithContext(item, target);
+        if (exact && exact.start !== s && contextScore(s, e) < FUZZY_THRESHOLD) return exact;
+        return { start: s, end: e };
+      }
     } else {
       // A pure insertion where the target has new text of its own lands before or after that
       // text. Prefer the side its context says (an insertion after another one at the same spot
@@ -214,8 +228,12 @@ function findOldText(item: Anchorable, target: string, ref?: string): Span | nul
       // Only the following text matches here: the full context may still be found elsewhere.
       const exact = exactWithContext(item, target);
       if (exact) return exact;
-      const t = at.find((s) => target.slice(s).startsWith(head));
+      // The following text must be there: at the end of the file it is empty, and an insertion
+      // whose preceding text is gone (the document rewritten) would otherwise land at the end.
+      const t = head ? at.find((s) => target.slice(s).startsWith(head)) : undefined;
       if (t !== undefined) return { start: t, end: t };
+      // An insertion into a file that was empty: at the end of what is there now.
+      if (!ref && !tail && !head) return { start: target.length, end: target.length };
     }
   }
 

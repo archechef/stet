@@ -133,3 +133,29 @@ describe("parts and titles", () => {
     expect(joinTitles("a", "b + a + c")).toBe("a + b + c");
   });
 });
+
+describe("what other files a definition or key reaches (core profile review db49f7d, 7–8)", () => {
+  it("doesn't take a macro's name in a file of another language for a use of it", async () => {
+    const { stet } = await setup({ "main.tex": PAPER, "notes.txt": "Notes.\n" });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "\\begin{document}", "\\newcommand{\\foo}{X}\n\\begin{document}");
+    edit(wt, "notes.txt", "Notes.", "Notes. Remember \\foo.");
+    const r = await stet.submit("a", { title: "t" });
+    const notes = r.items.find((i) => i.file === "notes.txt")!;
+    expect(r.groups.filter((g) => g.kind === "linked" && g.items.includes(notes.id))).toEqual([]);
+  });
+
+  it("finds the keys of a bibliography the config maps to BibTeX, whatever its name", async () => {
+    const lit = "@article{old,\n  title = {Old},\n  year = {2020},\n}\n";
+    const { stet } = await setup({ "main.tex": PAPER.replace("holds.", "holds~\\cite{old}."), "lit.refs": lit });
+    const cfg = await stet.config();
+    await stet.store.withLock(() => stet.store.saveConfig({ ...cfg, files: { ...cfg.files, bib: ["*.bib", "*.refs"] } }));
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "lit.refs", "@article{old,", "@article{fresh,");
+    edit(wt, "main.tex", "\\cite{old}", "\\cite{fresh}");
+    const r = await stet.submit("a", { title: "t" });
+    const entry = r.items.find((i) => i.file === "lit.refs")!;
+    const cite = r.items.find((i) => i.file === "main.tex")!;
+    expect(r.groups.some((g) => g.kind === "linked" && g.items.includes(entry.id) && g.items.includes(cite.id))).toBe(true);
+  });
+});

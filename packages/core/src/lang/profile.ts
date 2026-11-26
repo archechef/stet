@@ -58,6 +58,13 @@ export interface LanguageProfile {
    */
   renderer?: "markdown";
   /**
+   * For that front end: the source to render for a change of [start, end) of `text` (the file as it
+   * is) to `newText`, before and after: the part around the change, with the changed text between
+   * the marks `MARK_OPEN` and `MARK_CLOSE`, placed where they don't change what it means. The front
+   * end renders it and turns the marks into highlights (core profile review db49f7d, 9).
+   */
+  renderSource?: (text: string, start: number, end: number, newText: string) => { before: string; after: string };
+  /**
    * What a build leaves next to the sources, as .gitignore patterns offered at setup: file names
    * (`*.aux`), offered when such files are there, or folders (`.lake/`), offered with the language's files.
    */
@@ -227,6 +234,26 @@ export interface SpokenRules {
   words(text: string): string;
 }
 
+/**
+ * Something a front end can offer to add to the previews' container image besides building it,
+ * with the texts it says it with (core profile review db49f7d, 9). `setupImage(cfg, { action: id })`
+ * does it; the user starts it (it downloads).
+ */
+export interface SetupAction {
+  /** `stet preview setup --<id>`, `setupPreview({ action: id })`: "extras". */
+  id: string;
+  /** What it adds, in buttons and questions: "TeX's extra fonts". */
+  label: string;
+  /** What it may bring a build that misses files: "dsfont, bbm, bbold and many more". */
+  brings: string;
+  /** What it downloads, and into what, for the question before it. */
+  detail: string;
+  /** How much it downloads: "about 2 GB". */
+  download: string;
+  /** It may bring files a build couldn't find: offered then, while the environment says it can still be added (`PreviewEnv.extrasAvailable`). */
+  bringsMissing?: boolean;
+}
+
 export interface Typesetter {
   /** In messages: "LaTeX" ("LaTeX reported an error"). */
   name: string;
@@ -246,8 +273,13 @@ export interface Typesetter {
   engines: readonly string[];
   /** The tool chain: installed, or the container with it. Never installs anything. */
   detect(cfg: PreviewConfig, opts: { podman?: string | null }): Promise<PreviewEnv>;
-  /** Build the previews' container image (downloads: only on the user's request). */
-  setupImage(cfg: PreviewConfig, opts: { extras?: boolean }): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }>;
+  /**
+   * Build the previews' container image, or with `action` do one of `setupActions` (downloads: only
+   * on the user's request). `extras`: the old name of the action "extras".
+   */
+  setupImage(cfg: PreviewConfig, opts: { action?: string; extras?: boolean }): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }>;
+  /** What else a front end may offer to set up (LaTeX: TeX's extra fonts). None: building the image is all. */
+  setupActions?: readonly SetupAction[];
   /** Checks for `stet doctor`; `which` gives a program's version output, or null. */
   doctor(which: (cmd: string, args: string[]) => Promise<string | null>): Promise<DoctorCheck[]>;
   /** Environment variables of every build, with the build's home folder (in a container, or a process). */

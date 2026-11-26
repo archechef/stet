@@ -14,7 +14,7 @@
 import { existsSync } from "node:fs";
 import { constants, copyFile, link, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, posix, relative, resolve } from "node:path";
+import { dirname, join, posix, relative, resolve, win32 } from "node:path";
 import { buildImage, containerRuntime, detectPreviewEnv, normWord, popplerMissing, runProgram, which } from "./kit.js";
 import type { DoctorCheck, PreviewConfig, PreviewEnv, RunIsolated, SourceBox, Typesetter } from "./profile.js";
 
@@ -72,6 +72,8 @@ COPY --from=typst /usr/local/bin/typst /usr/local/bin/typst
 
 /** Where Typst keeps downloaded packages (`@preview/…`) and local ones (`@local/…`), as the Typst CLI and Tinymist do. */
 export function typstPackageDirs(platform = process.platform, env = process.env, home = homedir()): { cache: string; local: string } {
+  // The given system's separators, not this one's (tests ask about every system on every system).
+  const { join } = platform === "win32" ? win32 : posix;
   if (platform === "darwin")
     return { cache: join(home, "Library", "Caches", "typst", "packages"), local: join(home, "Library", "Application Support", "typst", "packages") };
   if (platform === "win32") {
@@ -87,6 +89,7 @@ export function typstPackageDirs(platform = process.platform, env = process.env,
 
 /** The user's font folders: a document set in a font installed here looks the same in its preview. */
 function fontDirs(platform = process.platform, home = homedir()): string[] {
+  const { join } = platform === "win32" ? win32 : posix;
   const dirs =
     platform === "darwin"
       ? ["/System/Library/Fonts", "/Library/Fonts", join(home, "Library", "Fonts")]
@@ -164,7 +167,9 @@ async function detect(preview: PreviewConfig, opts: { podman?: string | null } =
 }
 
 /** Build the image previews need. Downloads packages: only on the user's explicit request. */
-async function setupImage(preview: PreviewConfig): Promise<{ ok: boolean; log: string }> {
+async function setupImage(preview: PreviewConfig, opts: { action?: string; extras?: boolean } = {}): Promise<{ ok: boolean; log: string }> {
+  // Typst has no extras: its fonts and packages come with the document (core profile review db49f7d, 9).
+  if (opts.action || opts.extras) return { ok: false, log: `Typst previews have nothing to set up as '${opts.action ?? "extras"}'.` };
   const env = await detectPreviewEnv(preview, TYPST_TYPESETTER);
   if (env.isolation !== "container" || !env.podman || !env.image) return { ok: false, log: `${env.message}${env.fix ? ` ${env.fix}` : ""}` };
   return buildImage(env.podman, env.image, TYPST_CONTAINERFILE);

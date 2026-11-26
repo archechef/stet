@@ -3,7 +3,7 @@
  * hover, the More… list and the editor's Quick Fix menu (Ctrl+.) all take them from here, so a
  * change offers the same actions under the same names wherever you meet it.
  */
-import { canUndo, type Item, isLiveItem, type LanguageProfile, movesOut, oneLine, plural, profileHasPreview, profileRenderer } from "@stet/core";
+import { canUndo, type Item, isLiveItem, type LanguageProfile, movesOut, oneLine, plural, profileRenderer } from "@stet/core";
 import type { Ref, TreeModel } from "./model.js";
 import { linkTitle } from "./text.js";
 
@@ -227,7 +227,7 @@ export function changeActions(model: TreeModel, mainPath: string, item: Item, op
       tier: "view",
       detail: "The change as VS Code's Markdown preview shows it, after and before.",
     });
-  } else if (modify && profileHasPreview(model.profile(item.file), item.file) && opts.previews !== false) {
+  } else if (modify && model.pdfPreview(item.file) && opts.previews !== false) {
     out.push({
       label: "PDF preview",
       icon: "file-pdf",

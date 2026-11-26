@@ -377,6 +377,7 @@ export const LATEX: LanguageProfile = {
   extensions: /\.(tex|sty|cls|ltx|dtx)$/i,
   fence: "latex",
   document: true,
+  fileEffects: [{ path: /(^|\/)\.?latexmkrc$/i, reason: "latexmk runs it as Perl code when the document is built" }],
   buildFiles: [
     "*.aux",
     "*.log",

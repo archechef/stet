@@ -5,9 +5,10 @@
  * - `not_found`: an id or name that doesn't exist;
  * - `not_applied`: an accept that applied nothing (see `StetError.lost`);
  * - `linked`: a decision that would split a linked group, which needs to be told what to do;
+ * - `scope_changed`: Finish review's commit, when what it would commit is no longer what the reviewer confirmed;
  * - `failed`: anything else.
  */
-export type ErrorCode = "usage" | "not_found" | "not_applied" | "linked" | "failed";
+export type ErrorCode = "usage" | "not_found" | "not_applied" | "linked" | "scope_changed" | "failed";
 
 /** Errors meant for the user: frontends show their message as is (no stack trace). */
 export class StetError extends Error {

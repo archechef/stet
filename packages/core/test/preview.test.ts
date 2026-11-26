@@ -13,10 +13,10 @@ import {
   plainWords,
   previewExtrasContainerfile,
 } from "../src/lang/latex-preview.js";
-import { applyChanges, cropRegion, insideDir, PreviewBuilder } from "../src/preview/builder.js";
+import { applyChanges, cropRegion, insideDir, PreviewBuilder, type PreviewRequest } from "../src/preview/builder.js";
 import { containerArgs, DEFAULT_PREVIEW, detectPreviewEnv } from "../src/preview/env.js";
 import { changeMarks, findWords, findWordsIn, markRuns, parseWords, wordDiff } from "../src/preview/words.js";
-import { edit, PAPER, setup, write } from "./helpers.js";
+import { edit, git, PAPER, setup, write } from "./helpers.js";
 
 /** The preview settings with LaTeX's own (`tex`, `texImage`, …), as a project has them. */
 const PV = defaultConfig("main").preview;
@@ -464,5 +464,189 @@ describe("the document to compile", () => {
     const doc = "\\documentclass{article}\n\\begin{document}x\\end{document}\n";
     expect(detectRoot(new Map([["-pvc.tex", doc]]), null)).toBeNull();
     expect(detectRoot(new Map([["paper.tex", doc]]), null)).toBe("paper.tex");
+  });
+});
+
+describe("the preview builder and the typesetter it is given (core profile review db49f7d, 1–4)", () => {
+  const ready = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][] };
+  /** A typesetter that compiles in JavaScript: its PDF in `out/`, and every change without a place on the page. */
+  const demo = (seen: Map<string, string>[] = [], root: string | null = "src/main.demo") => ({
+    ...LATEX,
+    typesetter: {
+      ...LATEX.typesetter!,
+      source: /^src\/[^/]*\.demo$/,
+      detectRoot: (files: Map<string, string>) => {
+        seen.push(files);
+        return root;
+      },
+      compile: async (_run: unknown, work: string) => {
+        const { mkdir, writeFile } = await import("node:fs/promises");
+        await mkdir(join(work, "out"), { recursive: true });
+        await writeFile(join(work, "out", "main.pdf"), "%PDF-1.4\n");
+        return { pdf: join(work, "out", "main.pdf"), log: "" };
+      },
+      noSpot: () => true,
+    },
+  });
+  const request = (base: string) => ({
+    base,
+    key: "1.1-abc",
+    target: 0,
+    changes: [{ file: "src/main.demo", baseText: "Hello.\n", eol: "lf" as const, range: { start: 0, end: 5 }, newText: "Hi" }],
+  });
+
+  it("matches the source pattern against the path from the top, and keeps the PDF where the typesetter put it", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER, "src/main.demo": "Hello.\n", "notes/x.demo": "No.\n" });
+    const base = git(repo, "rev-parse", "HEAD");
+    const seen: Map<string, string>[] = [];
+    const root = join(stet.store.root, "previews");
+    const b = new PreviewBuilder(stet.repo, root, PV, ready, demo(seen), "ab12");
+    expect((await b.preview(request(base))).status).toBe("no-spot");
+    expect([...seen[0]!.keys()]).toEqual(["src/main.demo"]);
+    const { readFileSync, existsSync } = await import("node:fs");
+    const build = JSON.parse(readFileSync(join(root, `${base}-ab12`, "base", "build.json"), "utf8"));
+    expect(build.pdf).toBe("out/main.pdf");
+    expect(existsSync(join(root, `${base}-ab12`, "base", "src", build.pdf))).toBe(true);
+  });
+
+  it("never takes another identity's build for its own", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER, "src/main.demo": "Hello.\n" });
+    const base = git(repo, "rev-parse", "HEAD");
+    const root = join(stet.store.root, "previews");
+    expect((await new PreviewBuilder(stet.repo, root, PV, ready, demo(), "ab12").preview(request(base))).status).toBe("no-spot");
+    // Another profile (or root, or engine): its own build, which here finds no document.
+    const seen: Map<string, string>[] = [];
+    const other = await new PreviewBuilder(stet.repo, root, PV, ready, demo(seen, null), "cd34").preview(request(base));
+    expect(other.status).toBe("unavailable");
+    expect(seen).toHaveLength(1);
+  });
+
+  it("follows a change of the project's language on the same service", async () => {
+    const { stet, repo } = await setup({ "main.typ": "= Intro\nHello world.\n", "README.md": "# Read me\n" });
+    await stet.setLanguage("markdown");
+    expect((await stet.previewStatus()).status).toBe("unavailable");
+    await stet.setLanguage("typst");
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.typ", "Hello world.", "Hello there.");
+    const { items } = await stet.submit("a", { title: "t" });
+    // Typst's own answer (no Typst here), not Markdown's builder.
+    const r = await stet.preview(items[0]!.id);
+    expect(r.status).not.toBe("no-spot");
+    expect(r.status === "unavailable" || r.status === "failed" || r.status === "ready").toBe(true);
+    void repo;
+  });
+});
+
+describe("what a preview builds with: the changes accepted with it, in any file (core profile review db49f7d, 6)", () => {
+  /** The requests a preview makes; `compiles`: which build without errors (all, unless said). */
+  const capture = async (run: () => Promise<unknown>, compiles = (_: PreviewRequest) => true) => {
+    const { vi } = await import("vitest");
+    const seen: PreviewRequest[] = [];
+    const spy = vi.spyOn(PreviewBuilder.prototype, "preview").mockImplementation(async (req) => {
+      seen.push(req);
+      return compiles(req)
+        ? { status: "ready", before: null, after: { file: "/x/after.png", page: 1 } }
+        : { status: "failed", cause: "change", message: "Undefined citation.", log: "" };
+    });
+    try {
+      return { result: await run(), seen };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+
+  it("takes along an added chapter, and says which binary file it can't", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    write(wt, "chapters/discussion.tex", "\\section{Discussion}\nIt works.\n");
+    write(wt, "figs/plot.pdf", "%PDF-1.4\n\u0000binary\n");
+    edit(wt, "main.tex", "\\end{document}", "\\input{chapters/discussion}\n\\includegraphics[width=3cm]{figs/plot}\n\\end{document}");
+    const r = await stet.submit("a", { title: "t" });
+    const main = r.items.find((i) => i.file === "main.tex")!;
+    const { result, seen } = await capture(() => stet.preview(main.id));
+    expect(seen[0]!.files).toEqual([{ file: "chapters/discussion.tex", text: "\\section{Discussion}\nIt works.\n", eol: "lf" }]);
+    const fig = r.items.find((i) => i.file === "figs/plot.pdf")!;
+    expect((result as { note?: string }).note).toContain(`Without ${fig.id}`);
+  });
+
+  it("takes along a bibliography entry a citation needs", async () => {
+    const bib = "@article{old,\n  title = {Old},\n  year = {2020},\n}\n";
+    const { stet } = await setup({ "main.tex": PAPER.replace("holds.", "holds~\\cite{old}."), "refs.bib": bib });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "refs.bib", "@article{old,", "@article{fresh,");
+    edit(wt, "main.tex", "\\cite{old}", "\\cite{fresh}");
+    const r = await stet.submit("a", { title: "t" });
+    const cite = r.items.find((i) => i.file === "main.tex")!;
+    expect(r.groups.some((g) => g.kind === "linked" && g.items.includes(cite.id))).toBe(true);
+    // Its own part may be accepted alone, so it is tried alone first; the entry comes with its round.
+    const { result, seen } = await capture(
+      () => stet.preview(cite.id),
+      (req) => req.changes.some((c) => c.file === "refs.bib"),
+    );
+    expect(result).toMatchObject({ status: "ready" });
+    expect(
+      seen
+        .at(-1)!
+        .changes.map((c) => c.file)
+        .sort(),
+    ).toEqual(["main.tex", "refs.bib"]);
+  });
+
+  it("applies whole files in the build: added, deleted", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER, "old.tex": "Old.\n" });
+    const base = git(repo, "rev-parse", "HEAD");
+    const ready = { status: "ready" as const, isolation: "container" as const, message: "", bin: "/tl/bin", mounts: [["/tl", "/tl"]] as [string, string][] };
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const trees: { added: string | null; old: boolean }[] = [];
+    const ts = {
+      ...LATEX.typesetter!,
+      detectRoot: () => "main.tex",
+      compile: async (_run: unknown, work: string) => {
+        trees.push({
+          added: existsSync(join(work, "ch/new.tex")) ? readFileSync(join(work, "ch/new.tex"), "utf8") : null,
+          old: existsSync(join(work, "old.tex")),
+        });
+        await mkdir(join(work, "stet-build"), { recursive: true });
+        await writeFile(join(work, "stet-build", "main.pdf"), "%PDF-1.4\n");
+        return { pdf: join(work, "stet-build", "main.pdf"), log: "" };
+      },
+      noSpot: () => false,
+      locate: async () => null,
+    };
+    const b = new PreviewBuilder(stet.repo, join(stet.store.root, "previews"), PV, ready, { ...LATEX, typesetter: ts }, "ab");
+    const r = await b.preview({
+      base,
+      key: "1.1-x",
+      target: 0,
+      changes: [{ file: "main.tex", baseText: PAPER, eol: "lf", range: { start: 0, end: 0 }, newText: "%" }],
+      files: [
+        { file: "ch/new.tex", text: "New.\n", eol: "crlf" },
+        { file: "old.tex", text: null, eol: "lf" },
+      ],
+    });
+    expect(r.status).toBe("no-spot");
+    expect(trees).toEqual([
+      { added: null, old: true },
+      { added: "New.\r\n", old: false },
+    ]);
+  });
+});
+
+describe("what the profiles tell the front ends (core profile review db49f7d, 9)", () => {
+  it("prepares Markdown for rendering, and names the setup actions with their texts", async () => {
+    const { MARKDOWN, TYPST } = await import("../src/lang/index.js");
+    expect(MARKDOWN.renderSource?.("A.\n\nB.\n", 0, 1, "C").after).toBe("C.\n");
+    expect(LATEX.typesetter!.setupActions?.map((a) => a.id)).toEqual(["extras"]);
+    expect(TYPST.typesetter!.setupActions ?? []).toEqual([]);
+  });
+
+  it("refuses an action the project's typesetter doesn't have, without building anything", async () => {
+    const { stet } = await setup({ "main.typ": "= Intro\nHello.\n" });
+    await stet.setLanguage("typst");
+    expect(await stet.previewSetupActions()).toEqual([]);
+    const r = await stet.setupPreview({ extras: true });
+    expect(r.ok).toBe(false);
+    expect(r.log).toBe("Typst previews have nothing to set up as 'extras'.");
   });
 });

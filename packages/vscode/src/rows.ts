@@ -21,7 +21,6 @@ import {
   partId,
   plural,
   profileByName,
-  profileHasPreview,
   profileRenderer,
   roundOf,
   spokenChange,
@@ -261,7 +260,7 @@ export function contextValueOf(node: Node, model: TreeModel): string {
       const pdf =
         it.kind !== "modify"
           ? ""
-          : profileHasPreview(model.profile(it.file), it.file)
+          : model.pdfPreview(it.file)
             ? ".pdf"
             : isLiveItem(it) && profileRenderer(model.profile(it.file)) === "markdown"
               ? ".rendered"

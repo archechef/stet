@@ -13,6 +13,7 @@
  * typesetter.
  */
 import { tokenizeWords } from "./kit.js";
+import { markdownSides } from "./markdown-render.js";
 import type { IncludeRules, Item, KeyKind, LanguageProfile, PartRules, ReferenceRules, SyntaxRules, Token, TokenType } from "./profile.js";
 
 // ---------------------------------------------------------------------------
@@ -576,6 +577,7 @@ export const MARKDOWN: LanguageProfile = {
   // A README or a changelog is in almost every project: Markdown is a project's language when it has no other.
   incidental: true,
   renderer: "markdown",
+  renderSource: markdownSides,
   agentTerms: {
     location: 'README.md:12 "suggestion"',
     linked: "a heading and the `#anchor` links to it, a reference link and its `[label]: url` definition, a new image and the `![](…)` that shows it",

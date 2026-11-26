@@ -80,3 +80,45 @@ describe("what Finish review would commit (test report v0.16, D6)", () => {
     expect((await stet.uncommittedAccepted()).length).toBe(items.length);
   });
 });
+
+describe("Finish review commits only what it asked about (decisions review db49f7d, 4)", () => {
+  it("refuses when another change was accepted, or a file edited, since the question", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER, "other.tex": "Other.\n" });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    edit(wt, "other.tex", "Other.", "Another.");
+    const { items } = await stet.submit("a", { title: "t" });
+    const [main, other] = [items.find((i) => i.file === "main.tex")!, items.find((i) => i.file === "other.tex")!];
+    await stet.accept([main.id]);
+    const head = git(repo, "rev-parse", "HEAD");
+    const asked = await stet.commitPreview();
+    expect(asked.items.map((i) => i.id)).toEqual([main.id]);
+
+    // Meanwhile, in the CLI: another accept, in another file with a private draft line.
+    write(repo, "other.tex", "Other.\nMy private draft.\n");
+    await stet.accept([other.id]);
+    await expect(stet.commitAcceptedItems({ subject: "s", scope: asked.scope })).rejects.toMatchObject({ code: "scope_changed" });
+    expect(git(repo, "rev-parse", "HEAD")).toBe(head);
+
+    // Asked again, it commits both.
+    const again = await stet.commitPreview();
+    expect(again.items.map((i) => i.id).sort()).toEqual([main.id, other.id].sort());
+    edit(repo, "main.tex", "It scales", "It also scales"); // and edited once more after that question
+    await expect(stet.commitAcceptedItems({ subject: "s", scope: again.scope })).rejects.toMatchObject({ code: "scope_changed" });
+    const last = await stet.commitPreview();
+    expect((await stet.commitAcceptedItems({ subject: "s", scope: last.scope })).commit).toBeTruthy();
+  });
+
+  it("takes the text you chose to save into the scope", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    const { items } = await stet.submit("a", { title: "t" });
+    await stet.accept([items[0]!.id]);
+    const editor = read(repo, "main.tex").replace("It scales", "It also scales");
+    const asked = await stet.commitPreview({ unsaved: { "main.tex": editor } });
+    expect(asked.scopeSaved).not.toBe(asked.scope);
+    write(repo, "main.tex", editor); // saved
+    expect((await stet.commitAcceptedItems({ subject: "s", scope: asked.scopeSaved })).commit).toBeTruthy();
+  });
+});

@@ -193,10 +193,15 @@ async function detect(preview: PreviewConfig, opts: { podman?: string | null } =
  * Build the image previews need here: with the user's TeX mounted (Debian, Perl and Poppler), or
  * with its own TeX Live. Downloads packages: only on the user's explicit request.
  */
-async function setupImage(preview: PreviewConfig, opts: { extras?: boolean } = {}): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }> {
-  const r = await buildImages(preview as TexPreview, opts);
+async function setupImage(
+  preview: PreviewConfig,
+  opts: { action?: string; extras?: boolean } = {},
+): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }> {
+  if (opts.action && opts.action !== "extras") return { ok: false, log: `LaTeX previews have nothing to set up as '${opts.action}'.` };
+  const extras = opts.extras || opts.action === "extras";
+  const r = await buildImages(preview as TexPreview, { extras });
   // From now on the image with the extra fonts.
-  return r.ok && opts.extras ? { ...r, settings: { texExtras: true } } : r;
+  return r.ok && extras ? { ...r, settings: { texExtras: true } } : r;
 }
 
 async function buildImages(cfg: TexPreview, opts: { extras?: boolean }): Promise<{ ok: boolean; log: string }> {
@@ -392,6 +397,16 @@ export const LATEX_TYPESETTER: Typesetter = {
   settings: { defaults: { ...TEX_SETTINGS }, check: checkSettings },
   detect,
   setupImage,
+  setupActions: [
+    {
+      id: "extras",
+      label: "TeX's extra fonts",
+      brings: "dsfont, bbm, bbold and many more",
+      detail: "Podman downloads Debian's texlive-fonts-extra (about 2 GB) into a second preview image. Previews then use that image.",
+      download: "about 2 GB",
+      bringsMissing: true,
+    },
+  ],
   doctor: async (whichVersion) => {
     const latexmk = await whichVersion("latexmk", ["-v"]);
     const check: DoctorCheck = latexmk

@@ -153,6 +153,9 @@ describe("Typst previews: the document", () => {
     expect(typstPackageDirs("linux", {}, "/home/u")).toEqual({ cache: "/home/u/.cache/typst/packages", local: "/home/u/.local/share/typst/packages" });
     expect(typstPackageDirs("linux", { XDG_CACHE_HOME: "/c" }, "/home/u").cache).toBe("/c/typst/packages");
     expect(typstPackageDirs("darwin", {}, "/Users/u").cache).toBe("/Users/u/Library/Caches/typst/packages");
+    expect(typstPackageDirs("win32", { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" }, "C:\\Users\\u").cache).toBe(
+      "C:\\Users\\u\\AppData\\Local\\typst\\packages",
+    );
   });
 });
 

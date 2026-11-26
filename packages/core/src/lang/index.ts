@@ -112,6 +112,16 @@ export function profileHasPreview(profile: LanguageProfile, path: string): boole
   return !!profile.typesetter?.source.test(path);
 }
 
+/**
+ * Whether a change to `path` (of `profile`) has a PDF preview in this project: one in a source file
+ * of the project's own document language, which is what is compiled (a .typ file in a LaTeX
+ * project has none). The service and the front ends ask this alike (core profile review db49f7d, 5).
+ */
+export function hasPdfPreview(cfg: (ProfileScope & { language?: string }) | undefined, profile: LanguageProfile, path: string): boolean {
+  const doc = documentProfile(cfg);
+  return profile.id === doc.id && !!doc.typesetter?.source.test(path);
+}
+
 /** How a front end renders changes to the profile's files itself (VS Code's Markdown), if it can. */
 export function profileRenderer(profile: LanguageProfile): LanguageProfile["renderer"] | null {
   return profile.renderer ?? null;

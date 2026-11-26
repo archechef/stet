@@ -1,7 +1,7 @@
 /** One Stet-enabled repository open in VS Code: service access, snapshot and live updates. */
 import { type FSWatcher, watch } from "node:fs";
 import { relative, resolve } from "node:path";
-import { CHANGED_FILE, foldPath, isSafeRepoPath, isUncommitted, itemEffect, profileByName, type Stet } from "@stet/core";
+import { CHANGED_FILE, foldPath, hasPdfPreview, isSafeRepoPath, isUncommitted, itemEffect, profileByName, profileHasPreview, type Stet } from "@stet/core";
 import * as vscode from "vscode";
 import { warn } from "./log.js";
 import { type Snapshot, shownAgentText } from "./model.js";
@@ -23,6 +23,9 @@ export class Project implements vscode.Disposable {
   constructor(readonly stet: Stet) {}
 
   profile = (path: string) => (this.config ? this.stet.profile(this.config, path) : profileByName(path));
+
+  /** Whether a change to `path` has a PDF preview here: as the service decides (a .typ file in a LaTeX project has none). */
+  pdfPreview = (path: string) => (this.config ? hasPdfPreview(this.config, this.profile(path), path) : profileHasPreview(profileByName(path), path));
 
   effect = (item: Parameters<typeof itemEffect>[0]) => itemEffect(item, this.config);
 

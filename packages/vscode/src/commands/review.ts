@@ -1,5 +1,5 @@
 /** Deciding changes: accept, reject, edit, comment, revise, review a file, finish the review. */
-import { type Group, type Item, isLiveItem, itemEffect, partId, pendingInRound, plural, roundOf } from "@stet/core";
+import { type Group, type Item, isLiveItem, itemEffect, partId, pendingInRound, plural, roundOf, StetError } from "@stet/core";
 import * as vscode from "vscode";
 import { acceptAction, acceptQuestion, changeActions, withIcon } from "../actions.js";
 import { announce } from "../announce.js";
@@ -213,11 +213,7 @@ export class ReviewCommands {
       this.ext.run(p, async () => {
         const r = await p.stet.reject(ids, { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
         const warnings = await p.stet.partlyDecided(r);
-        this.ext.undos.noteDecision(
-          p,
-          r.map((i) => i.id),
-          "rejection",
-        );
+        this.ext.undos.noteDecision(p, r, "rejection");
         this.rejected(p, r, warnings);
       }),
     );
@@ -316,11 +312,7 @@ export class ReviewCommands {
       }
       await this.ext.saveFiles(p, files);
       const r = await p.stet.accept(ids, opts);
-      this.ext.undos.noteDecision(
-        p,
-        r.accepted.map((i) => i.id),
-        "accept",
-      );
+      this.ext.undos.noteDecision(p, r.accepted, "accept");
       const msg = [
         `Accepted ${r.accepted.map((i) => i.id).join(", ")}${this.ext.replies.inWhich(p)}${r.committed ? ` (committed ${r.committed.slice(0, 7)})` : ""}.`,
       ];
@@ -450,11 +442,7 @@ export class ReviewCommands {
       this.ext.run(p, async () => {
         const r = await p.stet.reject(own, { ...(reason ? { reason } : {}), ...(mode ? { mode } : {}) });
         const warnings = await p.stet.partlyDecided(r);
-        this.ext.undos.noteDecision(
-          p,
-          r.map((i) => i.id),
-          "rejection",
-        );
+        this.ext.undos.noteDecision(p, r, "rejection");
         this.rejected(p, r, warnings);
       }),
     );
@@ -556,11 +544,7 @@ export class ReviewCommands {
     await this.ext.panel.decide(p, ids[0]!, panel, () =>
       this.ext.run(p, async () => {
         const r = await p.stet.reject(ids, { ...(reason ? { reason } : {}), mode: "all" });
-        this.ext.undos.noteDecision(
-          p,
-          r.map((i) => i.id),
-          "rejection",
-        );
+        this.ext.undos.noteDecision(p, r, "rejection");
         this.rejected(p, r);
       }),
     );
@@ -579,11 +563,7 @@ export class ReviewCommands {
     await this.ext.panel.decide(p, s.ids[0]!, fromPanel(arg), () =>
       this.ext.run(p, async () => {
         const r = await p.stet.reject(s.ids, { ...(reason ? { reason } : {}), mode: "all" });
-        this.ext.undos.noteDecision(
-          p,
-          r.map((i) => i.id),
-          "rejection",
-        );
+        this.ext.undos.noteDecision(p, r, "rejection");
         this.rejected(p, r);
       }),
     );
@@ -736,9 +716,9 @@ export class ReviewCommands {
     if (!text) return;
     await this.ext.panel.decide(t.project, t.item.id, fromPanel(arg), () =>
       this.ext.run(t.project, async () => {
-        await t.project.stet.requestRevision(t.item.id, text);
+        const it = await t.project.stet.requestRevision(t.item.id, text);
         // Undoable like the other decisions: `u` after `v` undid an older accept.
-        this.ext.undos.noteDecision(t.project, [t.item.id], "revision request");
+        this.ext.undos.noteDecision(t.project, [it], "revision request");
         announce(`$(sync) Revision of ${t.item.id}${this.ext.replies.inWhich(t.project)} requested: it waits for the agent's new version.`);
       }),
     );
@@ -767,15 +747,27 @@ export class ReviewCommands {
             )
           )?.x;
     if (!p) return;
-    const items = p.snapshot.uncommitted;
-    const files = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
-    const preview = await this.ext.run(p, () => p.stet.commitPreview());
+    await this.finishProject(p);
+  }
+
+  /**
+   * Finish review of one project: ask, then commit exactly what the question showed. When another
+   * window or the CLI changed the accepted changes or their files meanwhile, nothing is committed
+   * and the question comes again with what is there now (decisions review db49f7d, 4).
+   */
+  private async finishProject(p: Project, changed?: string): Promise<void> {
+    const files0 = [...new Set(p.snapshot.uncommitted.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
+    const preview = await this.ext.run(p, () => p.stet.commitPreview({ unsaved: this.ext.unsavedTexts(p, files0) }));
     if (!preview) return;
+    const items = preview.items;
+    if (!items.length) return void vscode.window.showInformationMessage("Nothing to commit: all accepted changes are committed.");
+    const files = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
     // What the commit takes, said before it happens: your own edits in these files, and that undo
     // ends here. Unsaved text is not committed unless you choose to save it.
-    const unsaved = Object.keys(this.ext.unsavedTexts(p, files));
-    const q = finishQuestion(preview.items.length, files, preview.yourEdits, unsaved, this.ext.replies.inWhich(p).replace(/^ in /, ""));
-    const ok = await vscode.window.showWarningMessage(q.message, { modal: true, detail: q.detail }, ...q.buttons);
+    const texts = this.ext.unsavedTexts(p, files);
+    const unsaved = Object.keys(texts);
+    const q = finishQuestion(items.length, files, preview.yourEdits, unsaved, this.ext.replies.inWhich(p).replace(/^ in /, ""));
+    const ok = await vscode.window.showWarningMessage(changed ? `${changed}\n\n${q.message}` : q.message, { modal: true, detail: q.detail }, ...q.buttons);
     if (!ok) return;
     const { subject } = await p.stet.commitMessage(items);
     const edited = await vscode.window.showInputBox({
@@ -785,12 +777,31 @@ export class ReviewCommands {
       validateInput: (v) => (v.trim() ? undefined : "Enter a summary line."),
     });
     if (edited === undefined) return;
+    let again: string | undefined;
     await this.ext.run(p, async () => {
-      if (ok === FINISH_SAVE) await this.ext.saveFiles(p, files);
-      const r = await p.stet.commitAcceptedItems({ subject: edited });
-      if (r.commit) this.ext.undos.forgetAccepts(p);
-      announce(r.commit ? `$(git-commit) Committed ${r.items.map((i) => i.id).join(", ")}` : "Nothing to commit", 5000);
+      // The files as they were asked about: what the editor holds now, if you save it.
+      const save = ok === FINISH_SAVE;
+      const scope = save ? preview.scopeSaved : preview.scope;
+      if (save) {
+        if (JSON.stringify(this.ext.unsavedTexts(p, files)) !== JSON.stringify(texts)) {
+          again = "Your unsaved edits changed since you were asked.";
+          return;
+        }
+        await this.ext.saveFiles(p, files);
+      }
+      try {
+        const r = await p.stet.commitAcceptedItems({ subject: edited, scope });
+        if (r.commit) this.ext.undos.forgetAccepts(p);
+        announce(r.commit ? `$(git-commit) Committed ${r.items.map((i) => i.id).join(", ")}` : "Nothing to commit", 5000);
+      } catch (e) {
+        if (!(e instanceof StetError && e.code === "scope_changed")) throw e;
+        again = "Nothing was committed: the accepted changes or their files changed since you were asked (in the CLI or another window).";
+      }
     });
+    if (again) {
+      await p.refresh();
+      await this.finishProject(p, again);
+    }
   }
 
   /** *Share my edits*: save the project's open files and let agents see them at their next sync. */

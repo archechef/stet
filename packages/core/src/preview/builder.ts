@@ -6,12 +6,12 @@
 import { randomBytes } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { basename, dirname, join, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { filterOverrides, type Repo } from "../git.js";
 import { inlineDiff } from "../inline.js";
-import type { LanguageProfile, Typesetter } from "../lang/profile.js";
+import type { LanguageProfile, SetupAction, Typesetter } from "../lang/profile.js";
 import { writeInside } from "../safefs.js";
-import { type Eol, fromLf, lineOf } from "../text.js";
+import { type Eol, fromLf, isSafeRepoPath, lineOf } from "../text.js";
 import type { Token } from "../tokenizer.js";
 import { type PreviewConfig, type PreviewEnv, runIsolated } from "./env.js";
 import { type Box, changeMarks, findWordsIn, type Located, markRuns, type PdfWord, parseWords, type SyncBox, wordBoxes, wordDiff } from "./words.js";
@@ -75,6 +75,8 @@ export type PreviewResult =
 export interface Missing {
   files: string[];
   extras: boolean;
+  /** The setup action that may bring them (`extras` is true then): its texts, for the offer. */
+  action?: SetupAction;
 }
 
 /** One version's page with the change: its image, size (points), the document's page count, and the marked words. */
@@ -104,6 +106,13 @@ export interface PreviewChange {
   newText: string;
 }
 
+/** A whole file as a change leaves it: added or renamed to (`text`), or deleted (null). */
+export interface PreviewFile {
+  file: string;
+  text: string | null;
+  eol: Eol;
+}
+
 export interface PreviewRequest {
   /** The commit the changes were proposed against. */
   base: string;
@@ -115,6 +124,8 @@ export interface PreviewRequest {
    */
   changes: PreviewChange[];
   target: number;
+  /** Files the changes shown with it add, delete or rename (an added chapter its \include needs). */
+  files?: PreviewFile[];
 }
 
 const RESOLUTION = 200; // dpi of the rendered region: sharp enough to zoom in
@@ -129,14 +140,21 @@ export class PreviewBuilder {
   private readonly ts: Typesetter;
   private readonly tokenize: ((text: string) => Token[]) | undefined;
 
-  /** `profile`: the document's language, which has the typesetter. */
+  /**
+   * `profile`: the document's language, which has the typesetter. `identity`: what else makes a
+   * build (the profile's version, the preview settings), a hash: builds are cached per base commit
+   * and identity, so a build made with another profile, root or engine is never taken for this
+   * one's (core profile review db49f7d, 2).
+   */
   constructor(
     private readonly repo: Repo,
     private readonly root: string,
     private readonly cfg: PreviewConfig,
     private readonly env: PreviewEnv,
     profile: LanguageProfile,
+    private readonly identity = "",
   ) {
+    if (identity && !/^[0-9a-f]{1,64}$/.test(identity)) throw new Error("A preview build's identity is a hash.");
     if (!profile.typesetter) throw new Error(`${profile.name} has no PDF previews.`);
     this.ts = profile.typesetter;
     this.tokenize = profile.syntax?.tokenize;
@@ -151,7 +169,7 @@ export class PreviewBuilder {
     if (!/^[0-9a-f]{40,64}$/.test(req.base) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(req.key)) {
       return { status: "unavailable", message: "This change's record looks damaged; no preview." };
     }
-    const baseDir = join(this.root, req.base);
+    const baseDir = this.baseDir(req.base);
     const itemDir = join(baseDir, "items", req.key);
     const cached = await readFile(join(itemDir, "result.json"), "utf8").then(
       (t) => JSON.parse(t) as PreviewResult,
@@ -173,6 +191,11 @@ export class PreviewBuilder {
       await writeFile(join(itemDir, "result.json"), JSON.stringify(result));
       return result;
     });
+  }
+
+  /** The folder of a base commit's builds, for this identity. */
+  private baseDir(base: string): string {
+    return join(this.root, this.identity ? `${base}-${this.identity}` : base);
   }
 
   /** Run `fn` once per key at a time in this process; later callers share the result. */
@@ -205,10 +228,11 @@ export class PreviewBuilder {
       let log = "";
       if (root) {
         const r = await this.ts.compile(this.run, join(tmp, "src"), root, this.cfg);
-        pdf = r.pdf;
+        // Where the typesetter put it, relative to the tree (core profile review db49f7d, 3).
+        pdf = r.pdf && pdfIn(join(tmp, "src"), r.pdf);
         log = r.log;
       }
-      const info = { root, pdf: pdf && relPdf(pdf), log };
+      const info = { root, pdf, log };
       await writeFile(join(tmp, "build.json"), JSON.stringify(info));
       await rename(tmp, dir).catch(async () => rm(tmp, { recursive: true, force: true })); // someone else was first
       const now = JSON.parse(await readFile(done, "utf8"));
@@ -250,6 +274,12 @@ export class PreviewBuilder {
     const applied = applyChanges(req.changes, req.target);
     if (!applied) return { status: "failed", cause: "change", message: "The changes to preview overlap; Stet can't apply them together.", log: "" };
     for (const [file, text] of applied.files) await writeInside(work, file, fromLf(text, req.changes.find((c) => c.file === file)!.eol));
+    for (const f of req.files ?? []) {
+      if (applied.files.has(f.file) || !isSafeRepoPath(f.file))
+        return { status: "failed", cause: "change", message: "The changes to preview overlap; Stet can't apply them together.", log: "" };
+      if (f.text === null) await rm(join(work, f.file), { force: true });
+      else await writeInside(work, f.file, fromLf(f.text, f.eol));
+    }
     const built = await this.ts.compile(this.run, work, base.root, this.cfg);
     if (!built.pdf) return this.failure("change", "The document doesn't compile with this change.", built.log);
 
@@ -365,7 +395,7 @@ export class PreviewBuilder {
   async page(base: string, key: string, version: "after" | "before", n: number): Promise<{ file: string; width: number; height: number } | null> {
     if (this.env.status !== "ready" || !/^[0-9a-f]{40,64}$/.test(base) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(key) || !Number.isInteger(n) || n < 1)
       return null;
-    const baseDir = join(this.root, base);
+    const baseDir = this.baseDir(base);
     const itemDir = join(baseDir, "items", key);
     if (version === "after") {
       const info = existsSync(join(itemDir, "after.pdf")) ? await this.pdfInfo(itemDir, "after.pdf", n) : null;
@@ -376,7 +406,7 @@ export class PreviewBuilder {
       (t) => JSON.parse(t) as { pdf: string | null },
       () => null,
     );
-    if (!build?.pdf || !/^stet-build\/[^/]+\.pdf$/.test(build.pdf.replace(/\\/g, "/"))) return null;
+    if (!build?.pdf || !safeRel(build.pdf)) return null;
     const work = join(baseDir, "base", "src");
     const info = await this.pdfInfo(work, build.pdf, n);
     if (!info || n > info.count) return null;
@@ -417,7 +447,8 @@ export class PreviewBuilder {
 
   private missingIn(log: string): { missing?: Missing } {
     const files = this.ts.missingFiles(log);
-    return files.length ? { missing: { files, extras: !!this.env.extrasAvailable } } : {};
+    const action = this.env.extrasAvailable ? this.ts.setupActions?.find((a) => a.bringsMissing) : undefined;
+    return files.length ? { missing: { files, extras: !!action, ...(action ? { action } : {}) } } : {};
   }
 
   /**
@@ -511,7 +542,9 @@ export class PreviewBuilder {
       const p = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         if (!e.name.startsWith(".")) await this.sourceFiles(dir, p, out);
-      } else if (e.isFile() && this.ts.source.test(e.name) && (await stat(join(dir, p))).size < 4_000_000) {
+      } else if (e.isFile() && this.ts.source.test(p) && (await stat(join(dir, p))).size < 4_000_000) {
+        // The path from the project's top, as everywhere else the source pattern is matched (core
+        // profile review db49f7d, 4).
         out.set(p, await readFile(join(dir, p), "utf8"));
       }
     }
@@ -595,6 +628,16 @@ export function insideDir(file: unknown, dir: string): boolean {
   return typeof file === "string" && dirname(file) === dir && !basename(file).startsWith(".");
 }
 
-const relPdf = (pdf: string) => join("stet-build", basename(pdf));
+/** A PDF the typesetter made in `work`, relative to it (forward slashes); null if it is outside. */
+export function pdfIn(work: string, pdf: string): string | null {
+  const rel = relative(work, isAbsolute(pdf) ? pdf : join(work, pdf)).replace(/\\/g, "/");
+  return safeRel(rel) ? rel : null;
+}
+
+/** A path in a build tree: relative, without `..`, and to a PDF. */
+const safeRel = (p: string) => {
+  const s = p.replace(/\\/g, "/");
+  return !isAbsolute(s) && !/^[a-zA-Z]:/.test(s) && /\.pdf$/i.test(s) && !s.split("/").some((x) => x === ".." || x === "" || x === ".");
+};
 
 const relTo = (work: string, p: string) => (p.startsWith(work) ? p.slice(work.length + 1) : p).replace(/\\/g, "/");

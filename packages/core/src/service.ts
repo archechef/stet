@@ -999,6 +999,11 @@ export class Stet {
     return this.decisionOps.undoMany(...a);
   }
 
+  /** {@link Previews.previewSetupActions} */
+  previewSetupActions(...a: Parameters<Previews["previewSetupActions"]>): ReturnType<Previews["previewSetupActions"]> {
+    return this.previewOps.previewSetupActions(...a);
+  }
+
   /** {@link Previews.previewStatus} */
   previewStatus(...a: Parameters<Previews["previewStatus"]>): ReturnType<Previews["previewStatus"]> {
     return this.previewOps.previewStatus(...a);

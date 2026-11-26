@@ -19,6 +19,7 @@ import {
   partId,
   partIndexOf,
   profileByName,
+  profileHasPreview,
   roundOf,
 } from "@stet/core";
 import { noLinks, STATUS_TEXT } from "./text.js";
@@ -183,6 +184,8 @@ export class TreeModel {
     readonly effect: (item: Item) => string | null = itemEffect,
     /** How the tree groups changes; read on each call, so a setting's change shows at the next redraw. */
     readonly view: () => TreeView = () => ROUND_VIEW,
+    /** Whether a change to a file has a PDF preview in this project (`Project.pdfPreview`). */
+    readonly pdfPreview: (path: string) => boolean = (path) => profileHasPreview(profileByName(path), path),
   ) {
     for (const i of snap.items) this.items.set(i.id, i);
     for (const g of snap.groups) this.groups.set(g.id, g);

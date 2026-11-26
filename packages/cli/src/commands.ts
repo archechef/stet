@@ -784,7 +784,13 @@ export const COMMANDS: Command[] = [
       for (const a of args) {
         if (isRoundId(a)) ids.push(...(await roundItems(stet, a)));
         else if (!isGroupId(a)) ids.push(a);
-        else ids.push(...(await stet.groupTarget(a)).pending);
+        else {
+          // Like accept: a group with nothing left to reject is an error, not an empty success
+          // (decisions review db49f7d, 6).
+          const { pending } = await stet.groupTarget(a);
+          if (!pending.length) throw new StetError(`${a.toUpperCase()} has no pending items.`);
+          ids.push(...pending);
+        }
       }
       ids = [...new Set(ids.map((i) => i.toUpperCase()))];
       try {
@@ -828,7 +834,7 @@ export const COMMANDS: Command[] = [
       "                                      PDF preview: images of the page region before and after the change",
       "                                      (--page: a whole page, with the change or --before it)",
       "stet preview status|setup [--extras]  what previews can use here | build their container image (downloads;",
-      "                                      --extras: add TeX's extra fonts to it, about 2 GB)",
+      "                                      --extras: add the typesetter's extras to it; LaTeX: TeX's extra fonts, about 2 GB)",
     ],
     options: ["page", "before", "extras"],
     project: true,
@@ -841,16 +847,19 @@ export const COMMANDS: Command[] = [
       if (what === "setup") {
         // Downloads packages into a container image: only ever on this explicit command.
         const before = await stet.previewStatus(true);
+        // What --extras adds, and its texts, are the typesetter's (core profile review db49f7d, 9).
+        const action = opt.extras ? (await stet.previewSetupActions()).find((a) => a.id === "extras") : undefined;
+        if (opt.extras && !action) throw new StetError("This project's PDF previews have no extras to add: `stet preview setup` builds all they need.");
         printError(
           forTerminal(
             dim(
-              opt.extras
-                ? "Adding the extra fonts to the preview image (downloads about 2 GB; this takes a while)…"
+              action
+                ? `Adding ${action.label} to the preview image (downloads ${action.download}; this takes a while)…`
                 : `Building the preview image${before.download ? ` (downloads ${before.download}; this can take a while)` : ""}…`,
             ),
           ),
         );
-        const r = await stet.setupPreview({ extras: !!opt.extras });
+        const r = await stet.setupPreview(action ? { action: action.id } : {});
         if (!r.ok) throw new StetError(`Building the preview image failed:\n${r.log.split("\n").slice(-15).join("\n")}`);
         return out(() => `${green("Done.")} ${r.status.message}${r.status.fix ? `\n  ${r.status.fix}` : ""}`, r.status);
       }
@@ -872,7 +881,7 @@ export const COMMANDS: Command[] = [
               `  after:  ${r.after.file}`,
             ].join("\n");
           case "failed":
-            return `${red(r.message)}${r.missing?.extras ? `\n  ${yellow("Add the extra fonts with `stet preview setup --extras` (downloads about 2 GB).")}` : ""}\n${r.log}`;
+            return `${red(r.message)}${r.missing?.action ? `\n  ${yellow(`Add ${r.missing.action.label} with \`stet preview setup --${r.missing.action.id}\` (downloads ${r.missing.action.download}).`)}` : ""}\n${r.log}`;
           case "unavailable":
             return `${yellow(r.message)}${r.fix ? `\n  ${r.fix}` : ""}`;
           default:

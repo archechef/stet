@@ -170,9 +170,10 @@ export async function detectPreviewEnv(
 export function setupPreviewImage(
   cfg: PreviewConfig,
   typesetter: Typesetter,
-  opts: { extras?: boolean } = {},
+  opts: { action?: string } = {},
 ): Promise<{ ok: boolean; log: string; settings?: Record<string, unknown> }> {
-  return typesetter.setupImage(cfg, opts);
+  // `extras` too, for typesetters that know the action by its old name.
+  return typesetter.setupImage(cfg, opts.action ? { action: opts.action, extras: opts.action === "extras" } : {});
 }
 
 /**

@@ -26,7 +26,7 @@ import {
   parsePartId,
 } from "../model.js";
 import type { AcceptResult, Stet, UndoResult } from "../service.js";
-import { detectEol, isSafeRepoPath, oneLine, toLf } from "../text.js";
+import { detectEol, isSafeRepoPath, oneLine, sha256, toLf } from "../text.js";
 import { now, requirePending } from "./common.js";
 import type { Records } from "./pending.js";
 
@@ -60,29 +60,55 @@ export class Decisions {
    * also hold edits of the user's (committed along, whole files). For its question. Updates the
    * review base first (`ensureBase`), which records items the user has committed by hand.
    */
-  async commitPreview(): Promise<{ items: Item[]; yourEdits: string[] }> {
+  async commitPreview(opts: { unsaved?: Record<string, string> } = {}): Promise<{ items: Item[]; yourEdits: string[]; scope: string; scopeSaved: string }> {
     return this.stet.store.withLock(async () => {
       const cfg = await this.stet.config();
       await this.stet.baseOps.ensureBase();
       const items = (await this.uncommittedAccepted()).sort((a, b) => compareItemIds(a.id, b.id));
-      if (!items.length) return { items, yourEdits: [] };
       const paths = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
-      return { items, yourEdits: await this.filesWithOtherEdits(items, paths, await this.stet.mainHead(cfg)) };
+      const [scope, scopeSaved] = [await this.commitScope(items, paths), await this.commitScope(items, paths, opts.unsaved)];
+      if (!items.length) return { items, yourEdits: [], scope, scopeSaved };
+      return { items, yourEdits: await this.filesWithOtherEdits(items, paths, await this.stet.mainHead(cfg)), scope, scopeSaved };
     });
   }
 
   /**
-   * Commit accepted-but-uncommitted items ("Finish review"). Commits their whole files,
-   * so the user's own edits in those files are included.
+   * What a commit of `items` takes: the changes, their wording, and the content of each of their
+   * files (`unsaved`: text that will be saved into a file first). Finish review asks, then commits
+   * only what it asked about (decisions review db49f7d, 4).
    */
-  async commitAcceptedItems(opts: { subject?: string } = {}): Promise<{ commit: string | null; items: Item[]; yourEdits: string[] }> {
+  private async commitScope(items: Item[], paths: string[], unsaved: Record<string, string> = {}): Promise<string> {
+    const view = this.stet.workingView();
+    const files: string[] = [];
+    for (const p of [...paths].sort()) {
+      if (unsaved[p] !== undefined) files.push(`${p}\0t${sha256(toLf(unsaved[p]))}`);
+      else {
+        const f = await view.read(p).catch(() => undefined);
+        files.push(`${p}\0${f === null ? "-" : f ? `t${sha256(f.text)}` : `b${await view.blobId(p)}`}`);
+      }
+    }
+    return sha256(JSON.stringify([items.map((i) => [i.id, i.resolution?.appliedText ?? ""]), files]));
+  }
+
+  /**
+   * Commit accepted-but-uncommitted items ("Finish review"). Commits their whole files,
+   * so the user's own edits in those files are included. `scope`: what the reviewer was shown
+   * (`commitPreview`); when the accepted changes or their files differ from it now (decided or
+   * edited elsewhere meanwhile), nothing is committed (code `scope_changed`).
+   */
+  async commitAcceptedItems(opts: { subject?: string; scope?: string } = {}): Promise<{ commit: string | null; items: Item[]; yourEdits: string[] }> {
     return this.stet.store.withLock(async () => {
       const cfg = await this.stet.config();
       await this.requireMainBranch(cfg.mainBranch, "first");
       await this.stet.baseOps.ensureBase(); // marks items the user already committed
       const items = (await this.uncommittedAccepted()).sort((a, b) => compareItemIds(a.id, b.id));
-      if (!items.length) return { commit: null, items, yourEdits: [] };
       const paths = [...new Set(items.flatMap((i) => [i.file, ...(i.oldFile ? [i.oldFile] : [])]))];
+      if (opts.scope !== undefined && (await this.commitScope(items, paths)) !== opts.scope)
+        throw new StetError(
+          `The accepted changes or their files changed since you were asked (now: ${items.map((i) => i.id).join(", ") || "none"}). Nothing was committed.`,
+          { code: "scope_changed" },
+        );
+      if (!items.length) return { commit: null, items, yourEdits: [] };
       const yourEdits = await this.filesWithOtherEdits(items, paths, await this.stet.mainHead(cfg));
       const commit = await this.commitAccepted(items, paths, opts.subject, yourEdits);
       await this.stet.baseOps.ensureBase();
@@ -511,23 +537,23 @@ export class Decisions {
    * Undo the decisions of several changes at once, in one lock and one write: undoing an accept
    * of 400 changes one by one took 16 s. Accepted changes are taken out
    * together; all of them, or none when one can't be.
+   *
+   * `decisions`: for each id, the decision (`HistoryEntry.decision`) that is to be undone. A change
+   * whose latest decision is another one was decided again since, in another window or the CLI, and
+   * is left alone: checked here, in the lock (decisions review db49f7d, 5).
    */
-  async undoMany(ids: string[]): Promise<UndoResult> {
+  async undoMany(ids: string[], opts: { decisions?: Record<string, string> } = {}): Promise<UndoResult> {
     return this.stet.store.withLock(async () => {
       await this.stet.recoverInterrupted();
-      const items = await this.stet.requireItems([...new Set(ids)]);
+      const want = opts.decisions;
+      const items = (await this.stet.requireItems([...new Set(ids)])).filter((it) => !want?.[it.id] || it.history.at(-1)?.decision === want[it.id]);
+      if (!items.length) return { reopened: [], restored: [] };
       for (const it of items) {
         // A committed accept is refused below, with its commit.
         if (!canUndo(it) && it.status !== "accepted")
           throw new StetError(`${it.id} is ${it.status}: only accepted and rejected changes, and revision requests, can be undone.`);
       }
       const reopened = new Map<string, Item>();
-      for (const item of items.filter((i) => i.status === "needs_revision")) {
-        // A revision request the agent hasn't answered yet (an answer supersedes the change):
-        // taken back, the change is pending again, and the agent is told.
-        await this.reopen(item, "revision request taken back", "needs_revision");
-        reopened.set(item.id, item);
-      }
       const rejected: { unit: Item[]; revised: Item[] }[] = [];
       for (const item of items.filter((i) => i.status === "rejected")) {
         // The revision requests this rejection sent to the rest of its linked group (reject
@@ -539,20 +565,23 @@ export class Decisions {
       // A rejected change comes back only if it can still be applied: checked for all of them
       // first, so nothing is undone when one can't.
       await this.requireReopenable(rejected.flatMap((r) => r.unit));
+      // The accepts next: undoing them can still refuse (you edited their text since), and then
+      // no rejection may have been undone either (decisions review db49f7d, 3).
+      const accepted = items.filter((i) => i.status === "accepted");
+      const units = new Map<string, Accepted>();
+      for (const item of accepted) if (!units.has(item.id)) for (const it of (await this.decidedWith(item)).filter(isAccepted)) units.set(it.id, it);
+      const result = units.size ? await this.undoAccepted([...units.values()]) : { reopened: [], restored: [] };
+      for (const item of items.filter((i) => i.status === "needs_revision")) {
+        // A revision request the agent hasn't answered yet (an answer supersedes the change):
+        // taken back, the change is pending again, and the agent is told.
+        await this.reopen(item, "revision request taken back", "needs_revision");
+        reopened.set(item.id, item);
+      }
       for (const { unit, revised } of rejected) {
         for (const it of unit) if (it.status === "rejected") await this.reopen(it, "rejection undone", "rejected");
         for (const it of revised) if (it.status === "needs_revision") await this.reopen(it, "rejection of a linked change undone", "needs_revision");
         for (const it of [...unit, ...revised]) reopened.set(it.id, it);
       }
-      const accepted = items.filter((i) => i.status === "accepted");
-      if (!accepted.length) {
-        await this.stet.groupOps.updateGroups([...reopened.values()]);
-        return { reopened: [...reopened.values()], restored: [] };
-      }
-      const units = new Map<string, Accepted>();
-      for (const item of accepted) if (!units.has(item.id)) for (const it of (await this.decidedWith(item)).filter(isAccepted)) units.set(it.id, it);
-      const unit = [...units.values()];
-      const result = await this.undoAccepted(unit);
       if (reopened.size) await this.stet.groupOps.updateGroups([...reopened.values()]);
       return { reopened: [...reopened.values(), ...result.reopened], restored: result.restored };
     });
@@ -731,7 +760,8 @@ export class Decisions {
     return this.stet.store.withLock(async () => {
       const [it] = await this.stet.requireItems([id]);
       requirePending(it!);
-      await this.requestRevisionLocked(it!, text);
+      // A decision of its own, so that Undo can tell it from a later one.
+      await this.requestRevisionLocked(it!, text, randomUUID());
       return it!;
     });
   }

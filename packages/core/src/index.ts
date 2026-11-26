@@ -19,6 +19,7 @@ export {
   buildIgnores,
   DOCUMENT_LANGUAGES,
   documentProfile,
+  hasPdfPreview,
   hasPreview,
   type LanguageProfile,
   matchesAny,
@@ -27,7 +28,8 @@ export {
   profileRenderer,
 } from "./lang/index.js";
 export { forgetLibraryProfile, type LibraryProfile, libraryDirectory, readLibrary } from "./lang/library.js";
-export type { SpokenRules, SyntaxRules, Typesetter } from "./lang/profile.js";
+export { MARK_CLOSE, MARK_OPEN } from "./lang/markdown-render.js";
+export type { SetupAction, SpokenRules, SyntaxRules, Typesetter } from "./lang/profile.js";
 export { describeFeedback, StetMcpServer, serveStdio } from "./mcp.js";
 export * from "./model.js";
 export { type MoveChange, moveChangesOf } from "./moves.js";

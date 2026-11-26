@@ -85,6 +85,64 @@ describe("undo", () => {
     expect(read(repo, "main.tex")).toContain("$a+b=d$");
   });
 
+  it("a refused batch undo changes nothing: not the rejections in it either (decisions review db49f7d, 3)", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", { title: "t" });
+    const [task, sum] = [items.find((i) => i.newText.includes("task"))!, items.find((i) => i.newText.includes("d$"))!];
+    await stet.reject([sum.id]);
+    await stet.accept([task.id], { commit: false });
+    // You reworded the accepted text since: its undo must refuse.
+    edit(repo, "main.tex", "the task of reviewing", "the job of reviewing");
+    const before = read(repo, "main.tex");
+    await stet.feedback("a"); // drain what the decisions sent
+    await expect(stet.undoMany([sum.id, task.id])).rejects.toThrow(/Nothing was undone/);
+    expect((await stet.getItem(sum.id))!.status).toBe("rejected");
+    expect((await stet.getItem(task.id))!.status).toBe("accepted");
+    expect(read(repo, "main.tex")).toBe(before);
+    expect(await stet.feedback("a")).toEqual([]);
+  });
+
+  it("takes back only the decision it names, not a later one in another window (decisions review db49f7d, 5)", async () => {
+    const { stet, repo } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem", "the task");
+    edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", { title: "t" });
+    const ids = items.map((i) => i.id);
+    // This window accepts both and remembers that decision.
+    const first = await stet.accept(ids, { commit: false });
+    const decisions = Object.fromEntries(first.accepted.map((i) => [i.id, i.history.at(-1)!.decision!]));
+    expect(new Set(Object.values(decisions)).size).toBe(1);
+    // Elsewhere: undone, and one accepted again in other words.
+    await stet.undoMany(ids);
+    const task = items.find((i) => i.newText.includes("task"))!;
+    await stet.accept([task.id], { commit: false, edited: { [task.id]: task.newText.replace("task", "job") } });
+    const now = read(repo, "main.tex");
+    expect(now).toContain("the job");
+
+    // This window's Undo: its decision is gone, the later one stays.
+    const r = await stet.undoMany(ids, { decisions });
+    expect(r.reopened).toEqual([]);
+    expect(read(repo, "main.tex")).toBe(now);
+    expect((await stet.getItem(task.id))!.status).toBe("accepted");
+    // While its own decision stands, the same call undoes it.
+    const again = await stet.undoMany([task.id], { decisions: { [task.id]: (await stet.getItem(task.id))!.history.at(-1)!.decision! } });
+    expect(again.reopened.map((i) => i.id)).toEqual([task.id]);
+    expect(read(repo, "main.tex")).toBe(PAPER);
+  });
+
+  it("gives a revision request a decision of its own", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "$a+b=c$", "$a+b=d$");
+    const { items } = await stet.submit("a", { title: "t" });
+    const it = await stet.requestRevision(items[0]!.id, "shorter");
+    expect(it.history.at(-1)!.decision).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   it("doesn't reopen a rejection the agent has revised since", async () => {
     const { stet } = await setup({ "main.tex": PAPER });
     const { worktree: wt } = await stet.newAgent("a");

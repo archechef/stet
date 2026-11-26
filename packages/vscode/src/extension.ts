@@ -2,20 +2,7 @@
 
 import { closeSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
-import {
-  type CliCommand,
-  doctor,
-  foldPath,
-  type Item,
-  isLiveItem,
-  parseId,
-  pathExists,
-  plural,
-  profileHasPreview,
-  SHARE_MODES,
-  type ShareMode,
-  Stet,
-} from "@stet/core";
+import { type CliCommand, doctor, foldPath, type Item, isLiveItem, parseId, pathExists, plural, SHARE_MODES, type ShareMode, Stet } from "@stet/core";
 import * as vscode from "vscode";
 import type { ChangeAction } from "./actions.js";
 import { announce } from "./announce.js";
@@ -144,7 +131,7 @@ export class StetExtension implements Host, vscode.Disposable {
         return live.slice(i + 1, i + 1 + n).map((e) => ({ project: e.project, item: (e.node as { item: Item }).item }));
       },
       (p) => this.previews.installExtras(p),
-      (p, files) => void this.previews.offerExtras(p, files),
+      (p, missing) => void this.previews.offerExtras(p, missing),
       ctx.extensionUri,
       { applies: (t) => isRendered(t.project, t.item), render: (t) => this.previews.renderMarkdown(t) },
     );
@@ -300,7 +287,7 @@ export class StetExtension implements Host, vscode.Disposable {
   /** The PDF preview for a change's hover: the image once built, else a note while it builds. */
   previewHover(p: Project, item: Item): string | undefined {
     const place = previewPlace();
-    if ((place !== "hover" && place !== "both") || item.kind !== "modify" || !profileHasPreview(p.profile(item.file), item.file)) return undefined;
+    if ((place !== "hover" && place !== "both") || item.kind !== "modify" || !p.pdfPreview(item.file)) return undefined;
     const t = { project: p, item };
     const r = this.preview.peek(t);
     if (!r) {
@@ -318,7 +305,7 @@ export class StetExtension implements Host, vscode.Disposable {
       ].join("\n\n");
     }
     if (r.status === "failed")
-      return `⚠ *${esc(r.message)}* The ${esc(r.typesetter ?? "build")} error is in *Preview in PDF*${r.missing?.extras ? ", with the offer to install the extra fonts" : ""}.`;
+      return `⚠ *${esc(r.message)}* The ${esc(r.typesetter ?? "build")} error is in *Preview in PDF*${r.missing?.action ? `, with the offer to install ${esc(r.missing.action.label)}` : ""}.`;
     return undefined; // no spot on the page, or previews unavailable (said once, elsewhere)
   }
 
@@ -426,7 +413,10 @@ export class StetExtension implements Host, vscode.Disposable {
     const key = `${mode}|${p.mainPath}`;
     let m = this.models.get(key);
     if (!m)
-      this.models.set(key, (m = new TreeModel(p.snapshot, mode, mode === "review" ? this.panel.filter : null, p.profile, p.effect, () => this.treeView(p))));
+      this.models.set(
+        key,
+        (m = new TreeModel(p.snapshot, mode, mode === "review" ? this.panel.filter : null, p.profile, p.effect, () => this.treeView(p), p.pdfPreview)),
+      );
     return m;
   }
 

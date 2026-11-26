@@ -143,8 +143,9 @@ export const BIBTEX: LanguageProfile = {
   parts: LATEX_PARTS,
   references: {
     // Entries define citation keys; a new file of entries only adds them ("Add reference knuth").
+    // Whatever the file is called: the config's `files.bib` chose this profile for it (core profile
+    // review db49f7d, 8).
     definitions: (it: Item) => {
-      if (!it.file.toLowerCase().endsWith(".bib")) return [];
       const [o, n] = [bibKeys(it.oldText), bibKeys(it.newText)];
       return [{ kind: CITATION, removed: diffSets(o, n), added: diffSets(n, o), fresh: !o.size }];
     },

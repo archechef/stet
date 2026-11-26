@@ -226,7 +226,7 @@ export async function settleParts(
     for (const kind of rules.kinds) {
       for (const name of defs[kind] ?? []) {
         for (const u of members) {
-          if (u !== d && find(at(u)) !== find(at(d)) && rules.usesIn(changedLines(u), name, kind)) {
+          if (u !== d && profileOf(u.file).definitions === rules && find(at(u)) !== find(at(d)) && rules.usesIn(changedLines(u), name, kind)) {
             join(at(d), at(u), `${d.id} defines ${rules.described(name, kind)}, which ${u.id} uses`);
           }
         }

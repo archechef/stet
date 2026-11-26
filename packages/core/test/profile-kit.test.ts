@@ -26,7 +26,8 @@ const FAMILY: Record<string, string[]> = {
   "typst.ts": ["./typst-preview.js"],
   "typst-preview.ts": [],
   "lean.ts": [],
-  "markdown.ts": [],
+  // markdown-render.ts imports nothing.
+  "markdown.ts": ["./markdown-render.js"],
   "plain.ts": [],
 };
 

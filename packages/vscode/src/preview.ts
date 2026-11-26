@@ -9,7 +9,7 @@
 
 import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
-import type { Item, PreviewEnv, PreviewResult } from "@stet/core";
+import type { Item, Missing, PreviewEnv, PreviewResult } from "@stet/core";
 import * as vscode from "vscode";
 import { localImages } from "./markdownPreview.js";
 import { type PanelResult, previewPage, type RenderedResult } from "./previewPage.js";
@@ -33,7 +33,7 @@ export class PreviewPanel implements vscode.Disposable {
     private readonly next: (t: Target, n: number) => Target[],
     /** Install the extra fonts (asks first) / a preview found files missing that they may bring. */
     private readonly extras: (p: Project) => Promise<void>,
-    private readonly onMissing: (p: Project, files: string[]) => void,
+    private readonly onMissing: (p: Project, missing: Missing) => void,
     /** The extension's folder: the page's script and style are in it. */
     private readonly extensionUri: vscode.Uri,
     /** Changes shown rendered rather than compiled (Markdown): which ones, and their rendering. */
@@ -125,7 +125,7 @@ export class PreviewPanel implements vscode.Disposable {
         }
         this.results.set(keyOf(t), r);
         const missing = r.status === "failed" ? r.missing : r.status === "ready" ? r.warning?.missing : undefined;
-        if (missing?.extras) this.onMissing(t.project, missing.files);
+        if (missing?.action) this.onMissing(t.project, missing);
         if (this.current && keyOf(this.current) === keyOf(t)) this.render();
       }
     } finally {

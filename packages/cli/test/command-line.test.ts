@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { edit, outsideDir, PAPER, read, setup, write } from "../../core/test/helpers.js";
+import { edit, outsideDir, PAPER, read, renamed, setup, write } from "../../core/test/helpers.js";
 import { COMMANDS } from "../src/commands.js";
 import { EXIT, help, main } from "../src/main.js";
 import { GLOBAL_OPTIONS, OPTIONS } from "../src/options.js";
@@ -118,5 +118,26 @@ describe("the version (code quality report 6a517ae)", () => {
     const file = /const CLI_SRC = "([^"]+)";/.exec(release)?.[1];
     expect(file).toBeDefined();
     expect(/const VERSION = "([^"]+)";/.exec(readFileSync(join(root, file!), "utf8"))?.[1]).toBe(pkg.version);
+  });
+});
+
+describe("deciding a group that has nothing pending (decisions review db49f7d, 6)", () => {
+  it("is an error for reject, as for accept", async () => {
+    const { repo, g } = await renamed();
+    expect((await stet(repo, "accept", g.id)).code).toBe(0);
+    const r = await stet(repo, "reject", g.id);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain(`${g.id} has no pending items.`);
+    expect((await stet(repo, "accept", g.id)).err).toContain(`${g.id} has no pending items.`);
+  });
+});
+
+describe("stet preview setup --extras (core profile review db49f7d, 9)", () => {
+  it("says a typesetter without extras has none, and downloads nothing", async () => {
+    const { stet: s, repo } = await setup({ "main.typ": "= Intro\nHello.\n" });
+    await s.setLanguage("typst");
+    const r = await stet(repo, "preview", "setup", "--extras");
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("have no extras to add");
   });
 });

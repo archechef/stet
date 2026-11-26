@@ -200,3 +200,18 @@ describe("what a failed accept says, for code to act on (code quality report 6a5
     expect(await stet.reject([items[0]!.id]).catch((x) => x.code)).toBe("linked");
   });
 });
+
+describe("the effects of a language's own files are its profile's (core profile review db49f7d, 10)", () => {
+  it("in the profiles, and in every project, whatever its language", async () => {
+    const { LATEX, LEAN } = await import("../src/lang/index.js");
+    const { effectOf: of } = await import("../src/effects.js");
+    expect(LATEX.fileEffects?.some((r) => r.path.test(".latexmkrc"))).toBe(true);
+    expect(LEAN.fileEffects?.some((r) => r.path.test("lakefile.lean"))).toBe(true);
+    const { stet } = await setup({ "Main.lean": "def x := 1\n", "main.tex": PAPER });
+    await stet.setLanguage("lean");
+    const cfg = await stet.config();
+    expect(of("paper/latexmkrc", cfg)).toMatch(/Perl/);
+    expect(of("sub/lean-toolchain", cfg)).toMatch(/elan/);
+    expect(of("README.md", cfg)).toBeNull();
+  });
+});

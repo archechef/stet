@@ -8,7 +8,7 @@ import { defaultConfig } from "../src/config.js";
 import { autoGroups } from "../src/grouping.js";
 import { inlineDiff } from "../src/inline.js";
 import { agentInstructions } from "../src/instructions.js";
-import { BIBTEX, documentProfile, hasPreview, LATEX, PLAIN, profileByName, profileFor } from "../src/lang/index.js";
+import { BIBTEX, documentProfile, hasPdfPreview, hasPreview, LATEX, PLAIN, profileByName, profileFor, TYPST } from "../src/lang/index.js";
 import type { LanguageProfile, SyntaxRules } from "../src/lang/profile.js";
 import type { Item } from "../src/model.js";
 import { settleParts } from "../src/parts.js";
@@ -147,5 +147,17 @@ describe("build files at setup (test report v0.16.0)", () => {
     const files = ["main.tex", "main.aux", "main.log", "main.pdf", "main.synctex.gz", "figs/plot.pdf", "refs.bib", "ch/one.tex"];
     expect(buildIgnores(files)).toEqual(["*.aux", "*.log", "*.synctex.gz", "/main.pdf"]);
     expect(buildIgnores(["main.tex", "refs.bib"])).toEqual([]);
+  });
+});
+
+describe("which changes have a PDF preview in a project (core profile review db49f7d, 5)", () => {
+  it("only those in the source files of the project's own language", () => {
+    const latex = { ...defaultConfig("main"), language: "latex" };
+    const typst = { ...defaultConfig("main"), language: "typst" };
+    expect(hasPdfPreview(latex, LATEX, "main.tex")).toBe(true);
+    expect(hasPdfPreview(latex, TYPST, "notes.typ")).toBe(false);
+    expect(hasPdfPreview(typst, TYPST, "notes.typ")).toBe(true);
+    expect(hasPdfPreview(typst, LATEX, "main.tex")).toBe(false);
+    expect(hasPdfPreview(latex, BIBTEX, "refs.bib")).toBe(false);
   });
 });

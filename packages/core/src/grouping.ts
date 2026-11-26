@@ -215,9 +215,12 @@ export function autoGroups(items: Item[], cfg: GroupingConfig, profileOf: (file:
         const removed = [...a].filter((x) => !b.has(x));
         const added = [...b].filter((x) => !a.has(x));
         if (!removed.length && !added.length) continue;
+        // Uses in files of the same language only: a macro's name in a .txt file isn't a use (core
+        // profile review db49f7d, 7). Citations across languages are keys, matched above.
         const users = [...sides].filter(
           ([u, us]) =>
             u !== def &&
+            profileOf(u.file).definitions === rules &&
             (added.some((x) => rules.usesIn(us.new, x, kind) && !rules.usesIn(us.old, x, kind)) ||
               removed.some((x) => rules.usesIn(us.old, x, kind) && !rules.usesIn(us.new, x, kind))),
         );
