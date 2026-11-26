@@ -363,7 +363,12 @@ export class TreeModel {
    * part of their move or linked group (or part) is in another file.
    */
   standAlone(ids: string[], file: string): string[] {
-    return ids.filter((id) => this.linkedRest([id]).every((r) => r.file === file));
+    return this.standAloneIn(ids, (r) => r.file === file);
+  }
+
+  /** Of `ids`, those decided with nothing but changes `inside` (a file's, a group's). */
+  standAloneIn(ids: string[], inside: (it: Item) => boolean): string[] {
+    return ids.filter((id) => this.linkedRest([id]).every(inside));
   }
 
   /** Resolved notes for an agent, shown in History only. */

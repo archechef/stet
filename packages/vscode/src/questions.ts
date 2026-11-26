@@ -94,6 +94,38 @@ export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what
   return `${verb} all ${s.count} changes of ${s.what}?`;
 }
 
+export interface ScopeQuestion {
+  message: string;
+  detail?: string;
+  choices: { label: string; take: "all" | "alone" }[];
+}
+
+/**
+ * What to ask before deciding all changes of a file or a group (`what`: "in main.tex", "of G2
+ * “Polish”") whose changes are linked with changes outside it (`outside`, with where each is: a
+ * file, a group): whether to take those along, or to decide only the changes that stand alone
+ * (`alone`: how many). `elsewhere` names the places when there are several ("other files").
+ */
+export function scopeQuestion(
+  verb: "Accept" | "Reject",
+  s: { what: string; count: number; alone: number; outside: { id: string; where: string }[]; elsewhere: string },
+): ScopeQuestion {
+  const done = `${verb.toLowerCase()}ed`;
+  const linked = s.count - s.alone;
+  const places = [...new Set(s.outside.map((o) => o.where))];
+  return {
+    message: `${verb} all changes ${s.what}?`,
+    detail:
+      `${linked === s.count ? (s.count === 1 ? "Its change is" : `All ${s.count} of its changes are`) : `${linked} of its ${s.count} changes ${linked === 1 ? "is" : "are"}`} ` +
+      `linked with ${plural(s.outside.length, "change")} in ${places.join(", ")} (${s.outside.map((o) => o.id).join(", ")}), which must be ${done} with ${linked === 1 ? "it" : "them"}.` +
+      (s.alone ? ` The other ${s.alone} can be ${done} on ${s.alone === 1 ? "its" : "their"} own.` : ""),
+    choices: [
+      { label: `${verb} all ${s.count + s.outside.length}, with those in ${places.length === 1 ? places[0] : s.elsewhere}`, take: "all" },
+      ...(s.alone ? [{ label: `${verb} only the ${s.alone} without links elsewhere`, take: "alone" as const }] : []),
+    ],
+  };
+}
+
 /**
  * What to ask before deciding all of a file's changes: nothing for one change alone; with changes
  * linked with others in other files, whether to take those along or to decide only the file's
@@ -102,23 +134,16 @@ export function bulkQuestion(verb: "Accept" | "Reject", s: { count: number; what
 export function fileQuestion(
   verb: "Accept" | "Reject",
   s: { file: string; count: number; alone: number; outside: { id: string; file: string }[] },
-): { message: string; detail?: string; choices: { label: string; take: "all" | "alone" }[] } | null {
-  const done = `${verb.toLowerCase()}ed`;
+): ScopeQuestion | null {
   if (!s.outside.length)
     return s.count < 2 ? null : { message: `${verb} all ${s.count} changes in ${s.file}?`, choices: [{ label: `${verb} all`, take: "all" }] };
-  const linked = s.count - s.alone;
-  const files = [...new Set(s.outside.map((o) => o.file))];
-  return {
-    message: `${verb} all changes in ${s.file}?`,
-    detail:
-      `${linked === s.count ? (s.count === 1 ? "Its change is" : `All ${s.count} of its changes are`) : `${linked} of its ${s.count} changes ${linked === 1 ? "is" : "are"}`} ` +
-      `linked with ${plural(s.outside.length, "change")} in ${files.join(", ")} (${s.outside.map((o) => o.id).join(", ")}), which must be ${done} with ${linked === 1 ? "it" : "them"}.` +
-      (s.alone ? ` The other ${s.alone} can be ${done} on ${s.alone === 1 ? "its" : "their"} own.` : ""),
-    choices: [
-      { label: `${verb} all ${s.count + s.outside.length}, with those in ${files.length === 1 ? files[0] : "other files"}`, take: "all" },
-      ...(s.alone ? [{ label: `${verb} only the ${s.alone} without links elsewhere`, take: "alone" as const }] : []),
-    ],
-  };
+  return scopeQuestion(verb, {
+    what: `in ${s.file}`,
+    count: s.count,
+    alone: s.alone,
+    outside: s.outside.map((o) => ({ id: o.id, where: o.file })),
+    elsewhere: "other files",
+  });
 }
 
 /** The question before dissolving a group, or null: a linked group's changes can then be decided apart, which can break the document. */

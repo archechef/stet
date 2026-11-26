@@ -17,6 +17,7 @@ import {
   isAccepted,
   isLive,
   isUncommitted,
+  type Lookup,
   linkedRest,
   linkedUnit,
   moveFrom,
@@ -28,6 +29,17 @@ import type { AcceptResult, Stet, UndoResult } from "../service.js";
 import { detectEol, isSafeRepoPath, oneLine, toLf } from "../text.js";
 import { now, requirePending } from "./common.js";
 import type { Records } from "./pending.js";
+
+/** Changes with the linked group each is in, for messages: "1.2 (G1 “Terms”), 1.5". */
+export function linkedNames(items: Item[], look: Lookup): string {
+  const byGroup = new Map<string, string[]>();
+  for (const it of items) {
+    const g = it.groups.map((x) => look.group(x)).find((x) => x?.kind === "linked");
+    const key = g ? `${g.id} “${oneLine(g.title, 60)}”` : "";
+    byGroup.set(key, [...(byGroup.get(key) ?? []), it.id]);
+  }
+  return [...byGroup].map(([g, ids]) => (g ? `${ids.join(", ")} (${g})` : ids.join(", "))).join(", ");
+}
 
 export class Decisions {
   constructor(private readonly stet: Stet) {}
@@ -244,15 +256,16 @@ export class Decisions {
       );
     }
     const warnings: string[] = [];
+    const look = await this.stet.lookup();
     const missing = linkedRest(
       items.map((i) => i.id),
-      await this.stet.lookup(),
+      look,
     );
     if (missing.length) {
       if (!opts.overrideLinked) {
         throw new StetError(
-          `${items.map((i) => i.id).join(", ")} ${items.length > 1 ? "are" : "is"} linked with ${missing.map((m) => m.id).join(", ")}: ` +
-            `accepting only part of a linked group can break the document. Accept the whole group, or override explicitly.`,
+          `${items.map((i) => i.id).join(", ")} ${items.length > 1 ? "are" : "is"} linked with ${linkedNames(missing, look)}: ` +
+            `accepting only part of a linked group can break the document. Accept them together (${[...items, ...missing].map((i) => i.id).join(" ")}), or override explicitly.`,
         );
       }
       // Typst stops at a reference to a missing label; say so.
@@ -443,13 +456,14 @@ export class Decisions {
     return this.stet.store.withLock(async () => {
       const items = opts.mode === "only" ? await this.stet.requireItems(ids) : await this.withMovePartners(await this.stet.requireItems(ids));
       for (const it of items) requirePending(it);
+      const look = await this.stet.lookup();
       const rest = linkedRest(
         items.map((i) => i.id),
-        await this.stet.lookup(),
+        look,
       );
       if (rest.length && !opts.mode) {
         throw new StetError(
-          `${items.map((i) => i.id).join(", ")} is linked with ${rest.map((m) => m.id).join(", ")}. ` +
+          `${items.map((i) => i.id).join(", ")} ${items.length > 1 ? "are" : "is"} linked with ${linkedNames(rest, look)}. ` +
             `Choose: reject all of them, reject this one and request revision of the rest, or reject only this one.`,
           { code: "linked" },
         );

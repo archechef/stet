@@ -22,6 +22,9 @@
 - **A file's row has Accept all and Reject all,** and the editor's right-click menu has *Accept all changes in this file* and *Reject all changes in this file…*. When some of its changes are linked with changes in other files, Stet asks whether to take those along or to decide only the changes that stand alone; the linked ones stay pending.
 - **History by file shows each file's latest rounds,** 3 by default (`stet.historyRoundsPerFile`, also under View options: 1, 3, 5, 10 or all). *Show older rounds* at the end of a file shows more.
 
+Fixes:
+- **Accept all on a group no longer fails when one of its changes is also in a linked group** with changes outside it (a related group and a linked group sharing a change, in one round). Stet now asks whether to take the linked changes along, naming their group, or to decide only the changes that stand alone; *Reject all* asks the same, where it used to reject the other group's changes without a word. Links are followed to the end (a change in two linked groups brings both), and the refusal from `stet accept` names the group ("linked with 1.2 (G1 “Terms”)") instead of saying to accept the whole group.
+
 Also:
 - A typesetter's `locate` also gets the document's root file, and a preview environment can say what building its image downloads (`download`); both optional, so existing profiles work as before.
 - Profiles can say their files are *incidental* (detected as the project's language only when no other language has files), that front ends render them (`renderer`), and which nesting counts go modulo 2 (`nestingParity`).

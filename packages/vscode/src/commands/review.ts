@@ -10,7 +10,17 @@ import type { StetExtension } from "../extension.js";
 import { fromPanel, type Ref } from "../model.js";
 import { previewPlace } from "../preview.js";
 import type { Project } from "../project.js";
-import { bulkQuestion, dissolveQuestion, FINISH_SAVE, failedAcceptActions, fileQuestion, finishQuestion, manyQuestion } from "../questions.js";
+import {
+  bulkQuestion,
+  dissolveQuestion,
+  FINISH_SAVE,
+  failedAcceptActions,
+  fileQuestion,
+  finishQuestion,
+  manyQuestion,
+  type ScopeQuestion,
+  scopeQuestion,
+} from "../questions.js";
 import { ReviewFiles } from "../review.js";
 import { actionsTitle } from "../rows.js";
 import { editedPart, editFrame, noLinks, oneLine, toLf } from "../text.js";
@@ -383,6 +393,7 @@ export class ReviewCommands {
     const s = await this.scope(arg);
     if (!s) return;
     if (s.file) return this.decideScopeOfFile("Accept", { ...s, file: s.file }, fromPanel(arg));
+    if (!s.changeset && this.ext.model(s.project).linkedRest(s.ids).length) return this.decideScopeOfGroup("Accept", s, fromPanel(arg));
     let ids = s.ids;
     if (s.changeset)
       ids = [
@@ -478,13 +489,51 @@ export class ReviewCommands {
    * with, or (asked first) only those that stand alone.
    */
   private async decideScopeOfFile(verb: "Accept" | "Reject", s: DecisionScope & { file: string }, panel: boolean): Promise<void> {
-    const p = s.project;
-    const model = this.ext.model(p);
+    const model = this.ext.model(s.project);
     const rest = model.linkedRest(s.ids);
     const outside = rest.filter((r) => r.file !== s.file);
     const alone = outside.length ? model.standAlone(s.ids, s.file) : s.ids;
     const q = fileQuestion(verb, { file: s.file, count: s.ids.length, alone: alone.length, outside: outside.map((o) => ({ id: o.id, file: o.file })) });
-    let ids = [...s.ids, ...rest.map((r) => r.id)];
+    return this.decideScope(verb, s, panel, q, [...s.ids, ...rest.map((r) => r.id)], alone, `in ${s.file}`);
+  }
+
+  /**
+   * All pending changes of a group or a part whose changes are linked with changes outside it (a
+   * change in a related group and in a linked one): with those, or (asked first) only the ones
+   * that stand alone. Deciding the group's own changes alone would be refused, or would break the
+   * other group.
+   */
+  private async decideScopeOfGroup(verb: "Accept" | "Reject", s: DecisionScope, panel: boolean): Promise<void> {
+    const model = this.ext.model(s.project);
+    const own = new Set(s.ids);
+    const rest = model.linkedRest(s.ids);
+    const alone = model.standAloneIn(s.ids, (r) => own.has(r.id));
+    const where = (it: Item) => {
+      const g = model.linkedGroup(it);
+      return g ? `${g.id} “${oneLine(g.title, 60)}”` : `round ${roundOf(it.changeset)}`;
+    };
+    const q = scopeQuestion(verb, {
+      what: `of ${s.what}`,
+      count: s.ids.length,
+      alone: alone.length,
+      outside: rest.map((r) => ({ id: r.id, where: where(r) })),
+      elsewhere: "other groups",
+    });
+    return this.decideScope(verb, s, panel, q, [...s.ids, ...rest.map((r) => r.id)], alone, `of ${s.what}`);
+  }
+
+  /** Ask `q` (if any), then decide `all`, or `alone` when that is the choice. */
+  private async decideScope(
+    verb: "Accept" | "Reject",
+    s: DecisionScope,
+    panel: boolean,
+    q: ScopeQuestion | null,
+    all: string[],
+    alone: string[],
+    what: string,
+  ): Promise<void> {
+    const p = s.project;
+    let ids = all;
     if (q) {
       const labels = q.choices.map((c) => c.label);
       const pick = await vscode.window.showWarningMessage(q.message, { modal: true, ...(q.detail ? { detail: q.detail } : {}) }, ...labels);
@@ -493,7 +542,7 @@ export class ReviewCommands {
       if (choice.take === "alone") ids = alone;
     }
     if (verb === "Accept") return this.ext.panel.decide(p, ids[0]!, panel, () => this.doAccept(p, ids));
-    const reason = await this.reason(`Reject ${plural(ids.length, "change")} in ${s.file}`);
+    const reason = await this.reason(`Reject ${plural(ids.length, "change")} ${what}`);
     if (reason === undefined) return;
     await this.ext.panel.decide(p, ids[0]!, panel, () =>
       this.ext.run(p, async () => {
@@ -512,6 +561,7 @@ export class ReviewCommands {
     const s = await this.scope(arg);
     if (!s) return;
     if (s.file) return this.decideScopeOfFile("Reject", { ...s, file: s.file }, fromPanel(arg));
+    if (!s.changeset && this.ext.model(s.project).linkedRest(s.ids).length) return this.decideScopeOfGroup("Reject", s, fromPanel(arg));
     const ask = bulkQuestion("Reject", { ...s, count: s.ids.length });
     if (ask && (await vscode.window.showWarningMessage(ask, { modal: true }, "Reject all")) !== "Reject all") return;
     const reason = await this.reason(`Reject all ${s.ids.length} changes of ${s.what}`);

@@ -281,7 +281,8 @@ export interface Lookup {
  * The pending changes that are decided together with `ids`, not counting `ids`: the other ends of
  * their moves (part of a move alone drops or doubles the passage), and the rest of the linked
  * group, or of its part, of each of them (accepting part of a linked group can break the
- * document). Core refuses to decide `ids` without them unless told to; the front ends ask first.
+ * document); and so on, for the changes these bring along (a change in two linked groups brings
+ * the other group). Core refuses to decide `ids` without them unless told to; the front ends ask first.
  */
 export function linkedRest(ids: readonly string[], look: Lookup): Item[] {
   const given = new Set(ids.map((i) => i.toUpperCase()));
@@ -289,31 +290,37 @@ export function linkedRest(ids: readonly string[], look: Lookup): Item[] {
     const it = look.item(id);
     return it && isLive(it.status) ? it : undefined;
   };
-  // The changes themselves with the other ends of their moves, then their linked units.
-  const unit = new Map<string, Item>();
-  for (const id of given) {
-    const it = look.item(id);
-    if (!it) continue;
-    unit.set(it.id, it);
+  /** The changes decided with `it`: the other ends of its move, its linked units. */
+  const with1 = (it: Item): Item[] => {
+    const out: Item[] = [];
     for (const o of moveOthers(it)) {
       const oi = live(o);
-      if (oi) unit.set(oi.id, oi);
+      if (oi) out.push(oi);
     }
-  }
-  const out = new Map<string, Item>();
-  for (const it of unit.values()) {
-    out.set(it.id, it);
     for (const gid of it.groups) {
       const g = look.group(gid);
       if (g?.kind !== "linked") continue;
       for (const m of linkedUnit(g, it.id)) {
         const mi = live(m);
-        if (mi) out.set(mi.id, mi);
+        if (mi) out.push(mi);
       }
     }
-    for (const o of moveOthers(it)) {
-      const oi = live(o);
-      if (oi) out.set(oi.id, oi);
+    return out;
+  };
+  const out = new Map<string, Item>();
+  const todo: Item[] = [];
+  for (const id of given) {
+    const it = look.item(id);
+    if (it && !out.has(it.id)) {
+      out.set(it.id, it);
+      todo.push(it);
+    }
+  }
+  while (todo.length) {
+    for (const m of with1(todo.pop()!)) {
+      if (out.has(m.id)) continue;
+      out.set(m.id, m);
+      todo.push(m);
     }
   }
   return [...out.values()].filter((i) => !given.has(i.id.toUpperCase()) && isLive(i.status)).sort((a, b) => compareItemIds(a.id, b.id));

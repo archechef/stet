@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Agent, Changeset, Group, Item } from "@stet/core";
 import { describe, expect, it } from "vitest";
 import { fileParent, type Node, type Snapshot, TreeModel, type TreeView } from "../src/model.js";
-import { fileQuestion } from "../src/questions.js";
+import { fileQuestion, scopeQuestion } from "../src/questions.js";
 import { contextValueOf, rowView } from "../src/rows.js";
 import { makeItem } from "./fixtures.js";
 
@@ -197,6 +197,48 @@ describe("deciding all of a file's changes", () => {
       choices: [{ label: "Accept all", take: "all" }],
     });
     expect(fileQuestion("Accept", { file: "a.tex", count: 1, alone: 1, outside: [] })).toBeNull();
+  });
+});
+
+describe("deciding all of a group whose changes are linked with others outside it", () => {
+  // In one round: G1 links 1.1 and 1.2; the related group G2 has 1.1 and 1.3.
+  const items = [
+    item("1.1", "main.tex", "C1", 0, { groups: ["G1", "G2"] }),
+    item("1.2", "main.tex", "C1", 10, { groups: ["G1"] }),
+    item("1.3", "main.tex", "C1", 20, { groups: ["G2"] }),
+  ];
+  const m = new TreeModel(
+    snap(items, [linked("G1", ["1.1", "1.2"], { title: "Terms" }), linked("G2", ["1.1", "1.3"], { kind: "related", title: "Polish" })]),
+    "review",
+  );
+
+  it("knows what comes along and what stands alone", () => {
+    expect(m.linkedRest(["1.1", "1.3"]).map((i) => i.id)).toEqual(["1.2"]);
+    const own = new Set(["1.1", "1.3"]);
+    expect(m.standAloneIn(["1.1", "1.3"], (r) => own.has(r.id))).toEqual(["1.3"]);
+  });
+
+  it("asks whether to take them along, naming their group, or to decide only those that stand alone", () => {
+    const q = scopeQuestion("Accept", { what: "of G2 “Polish”", count: 2, alone: 1, outside: [{ id: "1.2", where: "G1 “Terms”" }], elsewhere: "other groups" });
+    expect(q.message).toBe("Accept all changes of G2 “Polish”?");
+    expect(q.detail).toBe(
+      "1 of its 2 changes is linked with 1 change in G1 “Terms” (1.2), which must be accepted with it. The other 1 can be accepted on its own.",
+    );
+    expect(q.choices).toEqual([
+      { label: "Accept all 3, with those in G1 “Terms”", take: "all" },
+      { label: "Accept only the 1 without links elsewhere", take: "alone" },
+    ]);
+    const two = scopeQuestion("Reject", {
+      what: "of G2 “Polish”",
+      count: 1,
+      alone: 0,
+      outside: [
+        { id: "1.2", where: "G1 “Terms”" },
+        { id: "1.5", where: "G4 “Moves”" },
+      ],
+      elsewhere: "other groups",
+    });
+    expect(two.choices).toEqual([{ label: "Reject all 3, with those in other groups", take: "all" }]);
   });
 });
 

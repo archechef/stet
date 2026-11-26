@@ -187,6 +187,9 @@ describe("rules both front ends share (code quality report 6a517ae, refactoring 
     const groups = new Map([
       ["G1", group("G1", ["1.1", "1.2", "1.3"], [["1.1", "1.2"], ["1.3"]])],
       ["G2", group("G2", ["1.5", "1.6"])],
+      // A chain: 1.9 is in both, so 1.8 brings 1.9, which brings 1.10.
+      ["G3", group("G3", ["1.8", "1.9"])],
+      ["G4", group("G4", ["1.9", "1.10"])],
     ]);
     add("1.1", { groups: ["G1"] });
     add("1.2", { groups: ["G1"] });
@@ -197,13 +200,43 @@ describe("rules both front ends share (code quality report 6a517ae, refactoring 
     add("1.5", { move, groups: ["G2"] });
     add("1.6", { groups: ["G2"] });
     add("1.7", { status: "accepted", groups: ["G2"] });
+    add("1.8", { groups: ["G3"] });
+    add("1.9", { groups: ["G3", "G4"] });
+    add("1.10", { groups: ["G4"] });
     const look = { item: (id: string) => items.get(id), group: (id: string) => groups.get(id) };
     const ids = (xs: Item[]) => xs.map((i) => i.id);
     expect(ids(linkedRest(["1.1"], look))).toEqual(["1.2"]);
     expect(ids(linkedRest(["1.3"], look))).toEqual([]);
     expect(ids(linkedRest(["1.4"], look))).toEqual(["1.5", "1.6"]);
     expect(ids(linkedRest(["1.1", "1.2"], look))).toEqual([]);
-    expect(ids(pendingInRound([...items.values()], "C1"))).toEqual(["1.1", "1.2", "1.3", "1.4", "1.5", "1.6"]);
+    expect(ids(linkedRest(["1.8"], look))).toEqual(["1.9", "1.10"]);
+    expect(ids(linkedRest(["1.10"], look))).toEqual(["1.8", "1.9"]);
+    expect(ids(pendingInRound([...items.values()], "C1"))).toEqual(["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.8", "1.9", "1.10"]);
+  });
+
+  it("a group whose change is also in a linked group: its accept names that group, and they are accepted together", async () => {
+    const { stet } = await setup({ "main.tex": PAPER });
+    const { worktree: wt } = await stet.newAgent("a");
+    edit(wt, "main.tex", "the problem of reviewing", "the task of reviewing");
+    edit(wt, "main.tex", "proposed by an AI", "proposed by an agent");
+    edit(wt, "main.tex", "effective in practice", "effective in real use");
+    await stet.submit("a", {
+      title: "t",
+      groups: [
+        { kind: "linked", title: "Terms", where: ['main.tex "task"', 'main.tex "agent"'], reason: "the same wording" },
+        { kind: "related", title: "Polish", where: ['main.tex "task"', 'main.tex "real use"'] },
+      ],
+    });
+    const groups = await stet.store.groups();
+    const terms = groups.find((g) => g.title === "Terms")!;
+    const polish = groups.find((g) => g.title === "Polish")!;
+    expect(polish.items).toEqual(["1.1", "1.3"]);
+    await expect(stet.acceptGroup(polish.id)).rejects.toThrow(
+      `1.1, 1.3 are linked with 1.2 (${terms.id} “Terms”): accepting only part of a linked group can break the document. Accept them together (1.1 1.3 1.2), or override explicitly.`,
+    );
+    await expect(stet.reject(["1.1"])).rejects.toThrow(`1.1 is linked with 1.2 (${terms.id} “Terms”).`);
+    const r = await stet.accept(["1.1", "1.3", "1.2"]);
+    expect(r.accepted.map((i) => i.id).sort()).toEqual(["1.1", "1.2", "1.3"]);
   });
 
   it("describes a change once: what it revises, your wording, its move, and the first lines of a whole file", () => {
