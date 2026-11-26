@@ -244,7 +244,7 @@ describe("deciding all of a group whose changes are linked with others outside i
 
 describe("menus of file rows", () => {
   const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf8"));
-  const entries = pkg.contributes.menus["view/item/context"] as { command: string; when?: string }[];
+  const entries = pkg.contributes.menus["view/item/context"] as { command: string; when?: string; group?: string }[];
   const on = (value: string) =>
     entries
       .filter((e) => e.when?.startsWith("view == stet.review && viewItem =~ "))
@@ -256,5 +256,13 @@ describe("menus of file rows", () => {
     const value = contextValueOf({ type: "file", agent, file: "main.tex" }, m);
     expect(value).toBe("file.live");
     expect(on(value)).toEqual(expect.arrayContaining(["stet.acceptGroup", "stet.rejectGroup", "stet.reviewFile"]));
+    // Its buttons: the diff of the whole file (Review file), then Accept all and Reject all.
+    const inline = entries
+      .filter((e) => e.group?.startsWith("inline") && e.when?.startsWith("view == stet.review && viewItem =~ "))
+      .filter((e) => new RegExp(e.when!.replace("view == stet.review && viewItem =~ ", "").slice(1, -1)).test(value))
+      .sort((a, b) => a.group!.localeCompare(b.group!))
+      .map((e) => e.command);
+    expect(inline).toEqual(["stet.reviewFile", "stet.acceptGroup", "stet.rejectGroup"]);
+    expect(on("file.done")).not.toContain("stet.reviewFile");
   });
 });

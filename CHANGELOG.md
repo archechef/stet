@@ -20,6 +20,7 @@
 
 - **View options → Group changes by file** (`stet.groupBy`) lists each agent's changes as agent → file → change, rounds merged, in the order they come in the file. Each change says its line, round and group.
 - **A file's row has Accept all and Reject all,** and the editor's right-click menu has *Accept all changes in this file* and *Reject all changes in this file…*. When some of its changes are linked with changes in other files, Stet asks whether to take those along or to decide only the changes that stand alone; the linked ones stay pending.
+- **A file's row has a diff button** (*Review file*): the whole file, yours ↔ with its pending changes, editable, as from the editor. When other agents also have changes in the file, it shows only that row's agent's.
 - **History by file shows each file's latest rounds,** 3 by default (`stet.historyRoundsPerFile`, also under View options: 1, 3, 5, 10 or all). *Show older rounds* at the end of a file shows more.
 
 Fixes:

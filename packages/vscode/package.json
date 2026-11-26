@@ -707,6 +707,11 @@
           "group": "4_other@1"
         },
         {
+          "command": "stet.reviewFile",
+          "when": "view == stet.review && viewItem =~ /^file\\.live/",
+          "group": "inline@0"
+        },
+        {
           "command": "stet.acceptGroup",
           "when": "view == stet.review && viewItem =~ /^(group|part|file)\\.live/",
           "group": "inline@1"

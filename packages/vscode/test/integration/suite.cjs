@@ -884,6 +884,22 @@ exports.run = async function run() {
             .map((c) => c.node.item.id);
           const t = await tree.getTreeItem(row);
           check("a file's row offers Accept all", t.contextValue === "file.live", t.contextValue);
+          // Its diff button (Review file): the whole file, yours ↔ with its pending changes.
+          await vscode.commands.executeCommand("stet.reviewFile", row);
+          const diff = await until(
+            "file diff tab",
+            async () => {
+              const t = vscode.window.tabGroups.activeTabGroup.activeTab;
+              return t && t.input instanceof vscode.TabInputTextDiff && t.input.modified.scheme === "stet-review" ? t.input : null;
+            },
+            10000,
+          ).catch(() => null);
+          check(
+            "a file's diff button opens the whole file's review",
+            !!diff && diff.modified.path.endsWith(`/${row.node.file}`),
+            diff ? diff.modified.toString() : String(vscode.window.tabGroups.activeTabGroup.activeTab?.label),
+          );
+          if (diff) await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
           if (pending.length === 1) {
             await vscode.commands.executeCommand("stet.acceptGroup", row);
             const done = await until("accepted", () => statusOf(pending[0]) === "accepted", 15000).catch(() => false);

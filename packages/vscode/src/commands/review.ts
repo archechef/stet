@@ -51,18 +51,24 @@ export class ReviewCommands {
     await vscode.commands.executeCommand("setContext", "stet.fileHasChanges", has);
   }
 
-  /** Open the review of a file: the file now ↔ the file with all its pending changes, editable. */
+  /**
+   * Open the review of a file: the file now ↔ the file with all its pending changes, editable.
+   * From a file's row (the panel grouped by file), the changes of that row's agent, when another
+   * agent has changes in the file too.
+   */
   async reviewFile(arg: unknown): Promise<void> {
     let p: Project | undefined;
     let file: string | null | undefined;
+    let agent: string | undefined;
     if (arg instanceof vscode.Uri) {
       p = this.ext.projectFor(arg);
       file = p?.relPath(arg);
     } else if (arg && typeof arg === "object" && (arg as { node?: { type?: string } }).node?.type === "file") {
       // A file's row (the panel grouped by file).
-      const row = arg as { project: { mainPath: string }; node: { file: string } };
+      const row = arg as { project: { mainPath: string }; node: { file: string; agent: { id: string } } };
       p = this.ext.allProjects().find((x) => x.mainPath === row.project.mainPath);
       file = row.node.file;
+      agent = row.node.agent.id;
     } else if (arg !== undefined) {
       const t = await this.ext.targetItem(arg);
       if (t) [p, file] = [t.project, t.item.file];
@@ -72,14 +78,17 @@ export class ReviewCommands {
       file = p && uri ? p.relPath(uri) : undefined;
     }
     if (!p || !file) return void vscode.window.showInformationMessage("Open a file of a Stet project, or select one of its changes in the Stet panel.");
-    const live = p.snapshot.items.filter((i) => i.file === file && i.kind === "modify" && isLiveItem(i)).length;
-    if (!live) return void vscode.window.showInformationMessage(`${file} has no pending changes.`);
+    const all = p.snapshot.items.filter((i) => i.file === file && i.kind === "modify" && isLiveItem(i));
+    const others = agent !== undefined && all.some((i) => i.agent !== agent);
+    const shown = others ? all.filter((i) => i.agent === agent) : all;
+    if (!shown.length) return void vscode.window.showInformationMessage(`${file} has no pending changes${others ? ` of ${agent}'s` : ""}.`);
+    const right = ReviewFiles.uriFor(p, file, others ? shown.map((i) => i.id) : undefined);
     await vscode.commands.executeCommand(
       "vscode.diff",
       this.ext.navigation.diffLeft(p, file),
-      ReviewFiles.uriFor(p, file),
-      `${file}${inProject(p)}: yours ↔ ${plural(live, "proposed change")} (editable)`,
-      { preview: false, viewColumn: this.ext.navigation.columnFor(ReviewFiles.uriFor(p, file)) },
+      right,
+      `${file}${inProject(p)}: yours ↔ ${plural(shown.length, "proposed change")}${others ? ` of ${agent}` : ""} (editable)`,
+      { preview: false, viewColumn: this.ext.navigation.columnFor(right) },
     );
   }
 
