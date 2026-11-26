@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 — 2026-11-26
 
 **Markdown.** Stet reviews Markdown (`*.md`, `*.markdown`) as prose, like LaTeX and Typst, where it used to propose whole changed lines.
 

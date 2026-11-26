@@ -94,16 +94,16 @@ stet commit -m "Polish the introduction"   # commits the files whole, your own e
 
 ## Status
 
-Version 0.19.0. Milestones M1–M3 and M5 are done:
+Version 0.20.0. Milestones M1–M3 and M5 are done:
 - **M1:** core library and CLI.
 - **M2:** MCP server and guardrails.
 - **M3:** VS Code extension.
-- **M5:** PDF previews of a change (LaTeX).
+- **M5:** PDF previews of a change (LaTeX and Typst).
 
 **Tested:**
 - live with the Claude desktop app;
 - hands-on in VS Code;
-- by about 630 automated tests, which CI runs on Windows, macOS and Linux with Node.js 22, 24 and 26, and the VS Code integration test (59 checks in real VS Code, run by hand).
+- by about 720 automated tests, which CI runs on Windows, macOS and Linux with Node.js 22, 24 and 26, and the VS Code integration test (149 checks in real VS Code, run by hand).
 
 **Still to do:** live runs with the Claude Code CLI and with Codex ([docs/live-tests.md](docs/live-tests.md)).
 
